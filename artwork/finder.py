@@ -50,6 +50,7 @@ class ArtworkFinder:
 
         return ArtworkResponse(
             artwork_url=best.artwork_url,
+            release_url=best.release_url,
             album=best.album,
             artist=best.artist,
             source=best.source,

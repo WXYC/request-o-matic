@@ -74,9 +74,15 @@ class DiscogsProvider:
 
                 confidence = self._calculate_confidence(request, artist, album)
 
+                # Construct release URL from id and type
+                release_id = item.get("id")
+                release_type = item.get("type", "release")
+                release_url = f"https://www.discogs.com/{release_type}/{release_id}"
+
                 results.append(
                     SearchResult(
                         artwork_url=cover_url,
+                        release_url=release_url,
                         album=album,
                         artist=artist,
                         source=self.name,

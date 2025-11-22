@@ -76,6 +76,7 @@ class TestDiscogsProvider:
 
         assert len(results) == 2
         assert results[0].artwork_url == "https://i.discogs.com/stone-roses.jpg"
+        assert results[0].release_url == "https://www.discogs.com/release/123"
         assert results[0].artist == "The Stone Roses"
         assert results[0].album == "The Stone Roses"
         assert results[0].source == "discogs"
@@ -178,6 +179,8 @@ class TestDiscogsProvider:
                 "pagination": {"items": 1},
                 "results": [
                     {
+                        "id": 999,
+                        "type": "release",
                         "title": "The Stone Roses - The Stone Roses",
                         "thumb": "https://example.com/cover.jpg",
                     }
@@ -190,6 +193,7 @@ class TestDiscogsProvider:
 
         assert len(results) == 1
         assert results[0].confidence >= 0.8
+        assert results[0].release_url == "https://www.discogs.com/release/999"
         await discogs_provider.close()
 
 
@@ -205,6 +209,8 @@ class TestArtworkFinder:
                 "pagination": {"items": 1},
                 "results": [
                     {
+                        "id": 12345,
+                        "type": "release",
                         "title": "The Stone Roses - The Stone Roses",
                         "thumb": "https://example.com/cover.jpg",
                     }
@@ -219,6 +225,7 @@ class TestArtworkFinder:
         response = await finder.find(request)
 
         assert response.artwork_url == "https://example.com/cover.jpg"
+        assert response.release_url == "https://www.discogs.com/release/12345"
         assert response.source == "discogs"
         assert response.confidence > 0
         await provider.close()
