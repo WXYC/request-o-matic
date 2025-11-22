@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from parser import ParsedRequest, parse_request
 from artwork_service import router as artwork_router, init_artwork_service, shutdown_artwork_service
+from library_service import router as library_router, init_library_service, shutdown_library_service
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ app = FastAPI(
 )
 
 app.include_router(artwork_router)
+app.include_router(library_router)
 
 client: Groq | None = None
 
@@ -39,11 +41,13 @@ async def startup():
     logger.info("Groq client initialized")
 
     init_artwork_service()
+    await init_library_service()
 
 
 @app.on_event("shutdown")
 async def shutdown():
     await shutdown_artwork_service()
+    await shutdown_library_service()
     logger.info("Services shut down")
 
 
