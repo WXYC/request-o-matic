@@ -7,6 +7,7 @@ from groq import Groq
 from pydantic import BaseModel
 
 from parser import ParsedRequest, parse_request
+from artwork_service import router as artwork_router, init_artwork_service, shutdown_artwork_service
 
 load_dotenv()
 
@@ -18,9 +19,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Request Parser",
-    description="Parse unstructured song requests into structured metadata",
+    description="Parse unstructured song requests into structured metadata and find album artwork",
     version="1.0.0",
 )
+
+app.include_router(artwork_router)
 
 client: Groq | None = None
 
@@ -34,6 +37,14 @@ async def startup():
         raise RuntimeError("GROQ_API_KEY environment variable not set")
     client = Groq(api_key=api_key)
     logger.info("Groq client initialized")
+
+    init_artwork_service()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await shutdown_artwork_service()
+    logger.info("Services shut down")
 
 
 class ParseRequest(BaseModel):
