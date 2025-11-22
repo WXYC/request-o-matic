@@ -1,10 +1,11 @@
 import logging
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
-from library.models import LibrarySearchResponse, LibrarySearchRequest
+from library.models import LibrarySearchResponse
 from library.db import LibraryDB
 
 logger = logging.getLogger(__name__)
@@ -25,19 +26,11 @@ async def init_library_service():
     """Initialize the library database connection."""
     global _db
 
-    host = os.getenv("MYSQL_HOST", "localhost")
-    port = int(os.getenv("MYSQL_PORT", "3306"))
-    user = os.getenv("MYSQL_USER", "root")
-    password = os.getenv("MYSQL_PASSWORD", "")
-    database = os.getenv("MYSQL_DATABASE", "wxyc_library")
+    # Optional: allow overriding database path via env var
+    db_path_str = os.getenv("LIBRARY_DB_PATH")
+    db_path = Path(db_path_str) if db_path_str else None
 
-    _db = LibraryDB(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-    )
+    _db = LibraryDB(db_path=db_path)
     await _db.connect()
     logger.info("Library service initialized")
 

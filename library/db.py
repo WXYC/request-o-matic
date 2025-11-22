@@ -1,52 +1,42 @@
 import logging
+from pathlib import Path
 from typing import Optional
 
-import aiomysql
+import aiosqlite
 
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
 
+# Default path to SQLite database (relative to project root)
+DEFAULT_DB_PATH = Path(__file__).parent.parent / "library.db"
+
 
 class LibraryDB:
-    """Async MySQL client for library catalog searches."""
+    """Async SQLite client for library catalog searches."""
 
-    def __init__(
-        self,
-        host: str = "localhost",
-        port: int = 3306,
-        user: str = "root",
-        password: str = "",
-        database: str = "wxyc_library",
-    ):
-        self.host = host
-        self.port = port
-        self.user = user
-        self.password = password
-        self.database = database
-        self._pool: Optional[aiomysql.Pool] = None
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = db_path or DEFAULT_DB_PATH
+        self._conn: Optional[aiosqlite.Connection] = None
 
     async def connect(self):
-        """Create connection pool."""
-        self._pool = await aiomysql.create_pool(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            db=self.database,
-            autocommit=True,
-            minsize=1,
-            maxsize=10,
-        )
-        logger.info(f"Connected to MySQL database: {self.database}")
+        """Open database connection."""
+        if not self.db_path.exists():
+            raise FileNotFoundError(
+                f"Library database not found at {self.db_path}. "
+                "Run 'python scripts/export_to_sqlite.py' to create it."
+            )
+
+        self._conn = await aiosqlite.connect(self.db_path)
+        self._conn.row_factory = aiosqlite.Row
+        logger.info(f"Connected to SQLite database: {self.db_path}")
 
     async def close(self):
-        """Close connection pool."""
-        if self._pool:
-            self._pool.close()
-            await self._pool.wait_closed()
-            self._pool = None
-            logger.info("Closed MySQL connection pool")
+        """Close database connection."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+            logger.info("Closed SQLite connection")
 
     async def search(
         self,
@@ -67,41 +57,42 @@ class LibraryDB:
         Returns:
             List of matching LibraryItems
         """
-        if not self._pool:
+        if not self._conn:
             raise RuntimeError("Database not connected")
 
-        async with self._pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                if query:
-                    # Full-text search
-                    sql = """
-                        SELECT id, title, artist, call_letters, call_numbers, genre, format
-                        FROM LIBRARY_SEARCH
-                        WHERE MATCH(title, artist) AGAINST(%s IN NATURAL LANGUAGE MODE)
-                        LIMIT %s
-                    """
-                    await cursor.execute(sql, (query, limit))
-                elif artist or title:
-                    # Filtered search
-                    conditions = []
-                    params = []
-                    if artist:
-                        conditions.append("artist LIKE %s")
-                        params.append(f"%{artist}%")
-                    if title:
-                        conditions.append("title LIKE %s")
-                        params.append(f"%{title}%")
-                    params.append(limit)
+        if query:
+            # Full-text search using FTS5
+            sql = """
+                SELECT l.id, l.title, l.artist, l.call_letters, l.call_numbers, l.genre, l.format
+                FROM library l
+                JOIN library_fts fts ON l.id = fts.rowid
+                WHERE library_fts MATCH ?
+                LIMIT ?
+            """
+            cursor = await self._conn.execute(sql, (query, limit))
 
-                    sql = f"""
-                        SELECT id, title, artist, call_letters, call_numbers, genre, format
-                        FROM LIBRARY_SEARCH
-                        WHERE {' AND '.join(conditions)}
-                        LIMIT %s
-                    """
-                    await cursor.execute(sql, params)
-                else:
-                    return []
+        elif artist or title:
+            # Filtered search
+            conditions = []
+            params = []
+            if artist:
+                conditions.append("artist LIKE ?")
+                params.append(f"%{artist}%")
+            if title:
+                conditions.append("title LIKE ?")
+                params.append(f"%{title}%")
+            params.append(limit)
 
-                rows = await cursor.fetchall()
-                return [LibraryItem(**row) for row in rows]
+            sql = f"""
+                SELECT id, title, artist, call_letters, call_numbers, genre, format
+                FROM library
+                WHERE {' AND '.join(conditions)}
+                LIMIT ?
+            """
+            cursor = await self._conn.execute(sql, params)
+
+        else:
+            return []
+
+        rows = await cursor.fetchall()
+        return [LibraryItem(**dict(row)) for row in rows]
