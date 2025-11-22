@@ -23,8 +23,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Request Parser",
-    description="Parse unstructured song requests into structured metadata and find album artwork",
+    title="Request-O-Matic",
+    description="Supplement song requests with structured metadata, album artwork, and library catalog info",
     version="1.0.0",
 )
 
