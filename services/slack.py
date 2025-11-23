@@ -4,6 +4,7 @@ from typing import Optional
 
 import httpx
 
+from artwork.models import ArtworkResponse
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ async def shutdown_slack_service():
     logger.info("Slack service shut down")
 
 
-def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem, Optional[str]]]) -> list[dict]:
+def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]]) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""
     blocks = [
         {
@@ -57,19 +58,28 @@ def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem,
         }
     ]
 
-    for item, artwork_url in items_with_artwork:
+    for item, artwork in items_with_artwork:
+        # Build text with optional Discogs link
+        text_lines = [
+            f"*{item.artist or 'Unknown Artist'}*",
+            item.title or "Unknown Title",
+            f"_{item.call_number}_",
+        ]
+        if artwork and artwork.release_url:
+            text_lines.append(f"<{artwork.release_url}|View on Discogs>")
+
         block: dict = {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*{item.artist or 'Unknown Artist'}*\n{item.title or 'Unknown Title'}\n_{item.call_number}_"
+                "text": "\n".join(text_lines)
             }
         }
 
-        if artwork_url:
+        if artwork and artwork.artwork_url:
             block["accessory"] = {
                 "type": "image",
-                "image_url": artwork_url,
+                "image_url": artwork.artwork_url,
                 "alt_text": f"{item.title} album cover"
             }
 

@@ -37,15 +37,15 @@ class UnifiedResponse(BaseModel):
     library_results: list[LibraryItem] = []
 
 
-async def fetch_artwork_for_item(item: LibraryItem) -> Optional[str]:
-    """Fetch artwork URL for a library item from Discogs."""
+async def fetch_artwork_for_item(item: LibraryItem) -> Optional[ArtworkResponse]:
+    """Fetch artwork for a library item from Discogs."""
     try:
         finder = get_finder()
         result = await finder.find(ArtworkRequest(
             album=item.title,
             artist=item.artist,
         ))
-        return result.artwork_url if result else None
+        return result
     except Exception as e:
         logger.warning(f"Artwork lookup failed for {item.title}: {e}")
         return None
@@ -107,22 +107,13 @@ async def handle_request(request: RequestBody):
 
             # Step 4: Fetch artwork for each library item in parallel
             if library_results:
-                artwork_urls = await asyncio.gather(
+                artwork_results = await asyncio.gather(
                     *[fetch_artwork_for_item(item) for item in library_results]
                 )
-                items_with_artwork = list(zip(library_results, artwork_urls))
+                items_with_artwork = list(zip(library_results, artwork_results))
 
                 # Use first artwork as the main artwork response
-                first_artwork_url = next((url for url in artwork_urls if url), None)
-                if first_artwork_url:
-                    first_item = library_results[0]
-                    artwork = ArtworkResponse(
-                        artwork_url=first_artwork_url,
-                        album=first_item.title,
-                        artist=first_item.artist,
-                        source="discogs",
-                        confidence=0.5,
-                    )
+                artwork = next((result for result in artwork_results if result), None)
 
         # Step 5: Build and post to Slack
         if items_with_artwork:
