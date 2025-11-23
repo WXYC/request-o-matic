@@ -97,6 +97,23 @@ class DiscogsProvider:
             response.raise_for_status()
             data = response.json()
 
+            # If strict search returned nothing, try a fuzzy query search
+            if not data.get("results") and (request.artist or request.album):
+                query_parts = []
+                if request.artist:
+                    query_parts.append(request.artist)
+                if request.album:
+                    query_parts.append(request.album)
+                fallback_params = {
+                    "type": "release",
+                    "per_page": 5,
+                    "q": " ".join(query_parts),
+                }
+                logger.info(f"Strict search empty, trying fuzzy query: {fallback_params}")
+                response = await client.get("/database/search", params=fallback_params)
+                response.raise_for_status()
+                data = response.json()
+
             results = []
             for item in data.get("results", []):
                 # Search results return 'thumb' for thumbnail URL

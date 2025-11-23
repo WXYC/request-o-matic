@@ -77,7 +77,8 @@ async def handle_request(request: RequestBody):
 
         artwork: Optional[ArtworkResponse] = None
         library_results: list[LibraryItem] = []
-        items_with_artwork: list[tuple[LibraryItem, Optional[str]]] = []
+        items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]] = []
+        song_not_found = False  # Track if we couldn't find the requested song
 
         # Step 2: If we have a song but no album, look up the album from Discogs
         album_for_search = parsed.album
@@ -87,8 +88,13 @@ async def handle_request(request: RequestBody):
                 if album_from_track:
                     album_for_search = album_from_track
                     logger.info(f"Found album '{album_from_track}' for song '{parsed.song}'")
+                else:
+                    # Song requested but album not found - we'll fall back to artist search
+                    song_not_found = True
+                    logger.info(f"Could not find album for song '{parsed.song}'")
             except Exception as e:
                 logger.warning(f"Track lookup failed: {e}")
+                song_not_found = True
 
         # Step 3: If we have artist/album info, search library
         has_search_info = parsed.artist or album_for_search
@@ -117,8 +123,11 @@ async def handle_request(request: RequestBody):
 
         # Step 5: Build and post to Slack
         if items_with_artwork:
-            # We have library results with artwork
-            blocks = build_slack_blocks(request.message, items_with_artwork)
+            # Build context message if song wasn't found
+            context = None
+            if song_not_found and parsed.song:
+                context = f"\"{parsed.song}\" is not on any album in the library, but here are some albums by that artist:"
+            blocks = build_slack_blocks(request.message, items_with_artwork, context)
         elif not parsed.is_request:
             # Feedback or other non-request message
             label = MESSAGE_TYPE_LABELS.get(parsed.message_type, "Other")

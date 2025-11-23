@@ -46,7 +46,11 @@ async def shutdown_slack_service():
     logger.info("Slack service shut down")
 
 
-def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]]) -> list[dict]:
+def build_slack_blocks(
+    message: str,
+    items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]],
+    context: Optional[str] = None,
+) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""
     blocks = [
         {
@@ -57,6 +61,13 @@ def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem,
             }
         }
     ]
+
+    # Add context message if provided (e.g., "song not found, showing artist albums")
+    if context:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": context}]
+        })
 
     for item, artwork in items_with_artwork:
         # Build text with optional Discogs link
