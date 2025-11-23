@@ -38,6 +38,42 @@ class DiscogsProvider:
             await self._client.aclose()
             self._client = None
 
+    async def search_track(self, track: str, artist: Optional[str] = None) -> Optional[str]:
+        """Search Discogs for a track and return the album name that contains it."""
+        params: dict = {
+            "type": "release",
+            "track": track,
+            "per_page": 5,
+        }
+        if artist:
+            params["artist"] = artist
+
+        logger.info(f"Searching Discogs for track: {track}, artist: {artist}")
+        client = await self._get_client()
+
+        try:
+            response = await client.get("/database/search", params=params)
+
+            if response.status_code == 429:
+                logger.warning("Discogs rate limit hit")
+                return None
+
+            response.raise_for_status()
+            data = response.json()
+
+            results = data.get("results", [])
+            if results:
+                title = results[0].get("title", "")
+                _, album = self._parse_title(title)
+                logger.info(f"Found album '{album}' for track '{track}'")
+                return album
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Discogs track search failed: {e}")
+            return None
+
     async def search(self, request: ArtworkRequest) -> list[SearchResult]:
         """Search Discogs for album artwork."""
         params = self._build_search_params(request)

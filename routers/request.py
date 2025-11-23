@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
-from artwork.router import get_finder
+from artwork.router import get_finder, lookup_album_by_track
 from library.models import LibraryItem
 from library.router import get_db
 from services.groq import get_groq_client
@@ -71,22 +71,33 @@ async def handle_request(request: RequestBody):
         library_results: list[LibraryItem] = []
         items_with_artwork: list[tuple[LibraryItem, Optional[str]]] = []
 
-        # Step 2: If we have artist/album info, search library first
-        has_search_info = parsed.artist or parsed.album
+        # Step 2: If we have a song but no album, look up the album from Discogs
+        album_for_search = parsed.album
+        if parsed.song and not parsed.album:
+            try:
+                album_from_track = await lookup_album_by_track(parsed.song, parsed.artist)
+                if album_from_track:
+                    album_for_search = album_from_track
+                    logger.info(f"Found album '{album_from_track}' for song '{parsed.song}'")
+            except Exception as e:
+                logger.warning(f"Track lookup failed: {e}")
+
+        # Step 3: If we have artist/album info, search library
+        has_search_info = parsed.artist or album_for_search
         if has_search_info:
             try:
                 db = get_db()
                 query_parts = []
                 if parsed.artist:
                     query_parts.append(parsed.artist)
-                if parsed.album:
-                    query_parts.append(parsed.album)
+                if album_for_search:
+                    query_parts.append(album_for_search)
                 query = " ".join(query_parts)
                 library_results = await db.search(query=query, limit=5)
             except Exception as e:
                 logger.warning(f"Library search failed: {e}")
 
-            # Step 3: Fetch artwork for each library item in parallel
+            # Step 4: Fetch artwork for each library item in parallel
             if library_results:
                 artwork_urls = await asyncio.gather(
                     *[fetch_artwork_for_item(item) for item in library_results]
@@ -105,7 +116,7 @@ async def handle_request(request: RequestBody):
                         confidence=0.5,
                     )
 
-        # Step 4: Build and post to Slack
+        # Step 5: Build and post to Slack
         if items_with_artwork:
             blocks = build_slack_blocks(request.message, items_with_artwork)
             try:

@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -51,6 +52,18 @@ async def shutdown_artwork_service():
                 await provider.close()
     _finder = None
     logger.info("Artwork service shut down")
+
+
+async def lookup_album_by_track(track: str, artist: Optional[str] = None) -> Optional[str]:
+    """Look up an album name by track title using Discogs."""
+    if _finder is None:
+        return None
+
+    for provider in _finder.providers:
+        if isinstance(provider, DiscogsProvider):
+            return await provider.search_track(track, artist)
+
+    return None
 
 
 @router.post("", response_model=ArtworkResponse)
