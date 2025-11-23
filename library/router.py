@@ -1,9 +1,9 @@
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
 
 from library.models import LibrarySearchResponse
 from library.db import LibraryDB
