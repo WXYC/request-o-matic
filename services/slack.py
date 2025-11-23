@@ -65,8 +65,8 @@ def build_slack_blocks(
     # Add context message if provided (e.g., "song not found, showing artist albums")
     if context:
         blocks.append({
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": context}]
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": context}
         })
 
     for item, artwork in items_with_artwork:
