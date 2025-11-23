@@ -63,7 +63,7 @@ class LibraryDB:
         if query:
             # Full-text search using FTS5
             sql = """
-                SELECT l.id, l.title, l.artist, l.call_letters, l.call_numbers, l.genre, l.format
+                SELECT l.id, l.title, l.artist, l.call_letters, l.artist_call_number, l.release_call_number, l.genre, l.format
                 FROM library l
                 JOIN library_fts fts ON l.id = fts.rowid
                 WHERE library_fts MATCH ?
@@ -84,7 +84,7 @@ class LibraryDB:
             params.append(limit)
 
             sql = f"""
-                SELECT id, title, artist, call_letters, call_numbers, genre, format
+                SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
                 FROM library
                 WHERE {' AND '.join(conditions)}
                 LIMIT ?

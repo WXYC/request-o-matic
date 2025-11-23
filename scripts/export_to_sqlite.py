@@ -53,7 +53,8 @@ def export():
             title TEXT,
             artist TEXT,
             call_letters TEXT,
-            call_numbers INTEGER,
+            artist_call_number INTEGER,
+            release_call_number INTEGER,
             genre TEXT,
             format TEXT
         )
@@ -69,12 +70,23 @@ def export():
         )
     """)
 
-    # Read from MySQL
-    print("Reading from MySQL LIBRARY_SEARCH...")
+    # Read from MySQL source tables
+    print("Reading from MySQL source tables...")
     with mysql_conn.cursor() as mysql_cur:
         mysql_cur.execute("""
-            SELECT id, title, artist, call_letters, call_numbers, genre, format
-            FROM LIBRARY_SEARCH
+            SELECT
+                r.ID as id,
+                r.TITLE as title,
+                lc.PRESENTATION_NAME as artist,
+                lc.CALL_LETTERS as call_letters,
+                lc.CALL_NUMBERS as artist_call_number,
+                r.CALL_NUMBERS as release_call_number,
+                g.REFERENCE_NAME as genre,
+                f.REFERENCE_NAME as format
+            FROM LIBRARY_RELEASE r
+            JOIN LIBRARY_CODE lc ON r.LIBRARY_CODE_ID = lc.ID
+            JOIN FORMAT f ON r.FORMAT_ID = f.ID
+            JOIN GENRE g ON lc.GENRE_ID = g.ID
         """)
         rows = mysql_cur.fetchall()
 
@@ -84,15 +96,16 @@ def export():
     for row in rows:
         sqlite_cur.execute(
             """
-            INSERT INTO library (id, title, artist, call_letters, call_numbers, genre, format)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO library (id, title, artist, call_letters, artist_call_number, release_call_number, genre, format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
                 row["title"],
                 row["artist"],
                 row["call_letters"],
-                row["call_numbers"],
+                row["artist_call_number"],
+                row["release_call_number"],
                 row["genre"],
                 row["format"],
             ),

@@ -19,16 +19,26 @@ class LibraryItem(BaseModel):
     title: Optional[str]
     artist: Optional[str]
     call_letters: Optional[str]
-    call_numbers: Optional[int]
+    artist_call_number: Optional[int]
+    release_call_number: Optional[int]
     genre: Optional[str]
     format: Optional[str]
 
     @property
     def call_number(self) -> str:
-        """Combined call number for shelf lookup."""
-        letters = self.call_letters or ""
-        numbers = self.call_numbers or ""
-        return f"{letters} {numbers}".strip()
+        """Full call number for shelf lookup: <Genre> <Format> <Letters> <ArtistNum>/<ReleaseNum>"""
+        parts = []
+        if self.genre:
+            parts.append(self.genre)
+        if self.format:
+            parts.append(self.format)
+        if self.call_letters:
+            parts.append(self.call_letters)
+        if self.artist_call_number is not None:
+            parts.append(str(self.artist_call_number))
+        if self.release_call_number is not None:
+            parts[-1] = f"{parts[-1]}/{self.release_call_number}"
+        return " ".join(parts)
 
 
 class LibrarySearchResponse(BaseModel):
