@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 
 class LibrarySearchRequest(BaseModel):
@@ -39,6 +39,12 @@ class LibraryItem(BaseModel):
         if self.release_call_number is not None:
             parts[-1] = f"{parts[-1]}/{self.release_call_number}"
         return " ".join(parts)
+
+    @computed_field
+    @property
+    def library_url(self) -> str:
+        """URL to view this release in the WXYC library."""
+        return f"http://www.wxyc.info/wxycdb/libraryRelease?id={self.id}"
 
 
 class LibrarySearchResponse(BaseModel):

@@ -70,10 +70,10 @@ def build_slack_blocks(
         })
 
     for item, artwork in items_with_artwork:
-        # Build text with optional Discogs link
+        # Build text with links to library and Discogs
         text_lines = [
             f"*{item.artist or 'Unknown Artist'}*",
-            item.title or "Unknown Title",
+            f"<{item.library_url}|{item.title or 'Unknown Title'}>",
             f"_{item.call_number}_",
         ]
         if artwork and artwork.release_url:
