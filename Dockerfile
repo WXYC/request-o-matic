@@ -7,9 +7,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY *.py ./
+COPY main.py ./
 COPY artwork/ ./artwork/
 COPY library/ ./library/
+COPY routers/ ./routers/
+COPY services/ ./services/
 
 # Copy the pre-built SQLite database
 COPY library.db .
