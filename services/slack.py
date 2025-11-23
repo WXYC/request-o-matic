@@ -78,6 +78,32 @@ def build_slack_blocks(message: str, items_with_artwork: list[tuple[LibraryItem,
     return blocks
 
 
+def build_simple_slack_blocks(message: str, context: Optional[str] = None) -> list[dict]:
+    """Build simple Slack message blocks for feedback or no-results messages."""
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{message}*"
+            }
+        }
+    ]
+
+    if context:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": context
+                }
+            ]
+        })
+
+    return blocks
+
+
 async def post_to_slack(blocks: list[dict]) -> None:
     """Post message blocks to Slack webhook."""
     if not _webhook_url or not _http_client:

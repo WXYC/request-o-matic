@@ -10,8 +10,16 @@ from artwork.router import get_finder, lookup_album_by_track
 from library.models import LibraryItem
 from library.router import get_db
 from services.groq import get_groq_client
-from services.parser import ParsedRequest, parse_request
-from services.slack import build_slack_blocks, post_to_slack
+from services.parser import MessageType, ParsedRequest, parse_request
+
+# Friendly labels for message types in Slack
+MESSAGE_TYPE_LABELS = {
+    MessageType.REQUEST: "Song Request",
+    MessageType.DJ_MESSAGE: "Message to DJ",
+    MessageType.FEEDBACK: "Feedback",
+    MessageType.OTHER: "Other",
+}
+from services.slack import build_slack_blocks, build_simple_slack_blocks, post_to_slack
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +126,29 @@ async def handle_request(request: RequestBody):
 
         # Step 5: Build and post to Slack
         if items_with_artwork:
+            # We have library results with artwork
             blocks = build_slack_blocks(request.message, items_with_artwork)
-            try:
-                await post_to_slack(blocks)
-            except Exception as e:
-                logger.error(f"Failed to post to Slack: {e}")
-                raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}")
+        elif not parsed.is_request:
+            # Feedback or other non-request message
+            label = MESSAGE_TYPE_LABELS.get(parsed.message_type, "Other")
+            blocks = build_simple_slack_blocks(request.message, f"_{label}_")
+        else:
+            # Request but no results found
+            context_parts = []
+            if parsed.artist:
+                context_parts.append(f"Artist: {parsed.artist}")
+            if parsed.album:
+                context_parts.append(f"Album: {parsed.album}")
+            if parsed.song:
+                context_parts.append(f"Song: {parsed.song}")
+            context = " | ".join(context_parts) if context_parts else None
+            blocks = build_simple_slack_blocks(request.message, f"_No results found_ {context or ''}")
+
+        try:
+            await post_to_slack(blocks)
+        except Exception as e:
+            logger.error(f"Failed to post to Slack: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}")
 
         return UnifiedResponse(
             parsed=parsed,
