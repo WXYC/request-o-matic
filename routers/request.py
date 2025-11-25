@@ -108,6 +108,14 @@ async def handle_request(request: RequestBody):
                     query_parts.append(album_for_search)
                 query = " ".join(query_parts)
                 library_results = await db.search(query=query, limit=5)
+                
+                # If no results and we had both artist and album, try just artist
+                if not library_results and parsed.artist and album_for_search:
+                    logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
+                    library_results = await db.search(query=parsed.artist, limit=5)
+                    if library_results:
+                        # Mark that we're showing artist albums, not the requested album
+                        song_not_found = True
             except Exception as e:
                 logger.warning(f"Library search failed: {e}")
 
@@ -123,10 +131,13 @@ async def handle_request(request: RequestBody):
 
         # Step 5: Build and post to Slack
         if items_with_artwork:
-            # Build context message if song wasn't found
+            # Build context message if song/album wasn't found in library
             context = None
-            if song_not_found and parsed.song:
-                context = f"\"{parsed.song}\" is not on any album in the library, but here are some albums by that artist:"
+            if song_not_found:
+                if parsed.song and parsed.album:
+                    context = f"\"{parsed.album}\" not found in the library, but here are other albums by {parsed.artist}:"
+                elif parsed.song:
+                    context = f"\"{parsed.song}\" is not on any album in the library, but here are some albums by {parsed.artist}:"
             blocks = build_slack_blocks(request.message, items_with_artwork, context)
         elif not parsed.is_request:
             # Feedback or other non-request message
