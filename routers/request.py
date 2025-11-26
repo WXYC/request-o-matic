@@ -117,7 +117,7 @@ async def search_compilations_for_track(
         parsed: Parsed request with song/artist info
         
     Returns:
-        List of matching library items from compilations
+        List of unique matching library items from compilations (deduplicated by ID)
     """
     if not parsed.song or not parsed.artist:
         return []
@@ -125,6 +125,7 @@ async def search_compilations_for_track(
     logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
     
     results = []
+    seen_ids = set()  # Track IDs to avoid duplicates
     
     # First, try a direct library keyword search
     try:
@@ -142,7 +143,10 @@ async def search_compilations_for_track(
             
             if keyword_results:
                 logger.info(f"Found {len(keyword_results)} potential matches via keyword search")
-                results.extend(keyword_results[:1])
+                for item in keyword_results[:1]:
+                    if item.id not in seen_ids:
+                        results.append(item)
+                        seen_ids.add(item.id)
     except Exception as e:
         logger.warning(f"Keyword search failed: {e}")
     
@@ -169,7 +173,12 @@ async def search_compilations_for_track(
                         f"Found '{parsed.song}' in library on '{matches[0].title}' "
                         f"(matched from Discogs: '{release_album}')"
                     )
-                    results.extend(matches)
+                    # Add matches, deduplicating by ID
+                    for match in matches:
+                        if match.id not in seen_ids:
+                            results.append(match)
+                            seen_ids.add(match.id)
+                    
                     if len(results) >= 5:
                         break
         except Exception as e:
@@ -398,10 +407,10 @@ async def handle_request(
             if song_not_found and parsed.song and parsed.artist:
                 compilation_results = await search_compilations_for_track(db, parsed)
                 if compilation_results:
-                    library_results.extend(compilation_results)
+                    # Replace artist albums with compilation results since we found the actual song
+                    library_results = compilation_results[:5]
                     found_on_compilation = True
                     song_not_found = False
-                    library_results = library_results[:5]
 
         # Step 4: Fetch artwork for library items
         if library_results:
