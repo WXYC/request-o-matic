@@ -1,9 +1,11 @@
+"""Parse router with dependency injection."""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from groq import Groq
 from pydantic import BaseModel
 
-from services.groq import get_groq_client
+from core.dependencies import get_groq_client
 from services.parser import ParsedRequest, parse_request
 
 logger = logging.getLogger(__name__)
@@ -12,17 +14,41 @@ router = APIRouter(tags=["parse"])
 
 
 class ParseRequestBody(BaseModel):
+    """Request body for parsing messages."""
     message: str
 
 
-@router.post("/parse", response_model=ParsedRequest)
-async def parse(request: ParseRequestBody):
+@router.post(
+    "/parse",
+    response_model=ParsedRequest,
+    summary="Parse listener message",
+    description="""
+    Parse a natural language listener message and extract structured metadata.
+    
+    Returns information about:
+    - Song, album, and artist
+    - Whether it's a request or other message type
+    - Message classification (request, dj_message, feedback, other)
+    
+    Example request:
+    ```json
+    {
+        "message": "Play Bohemian Rhapsody by Queen"
+    }
+    ```
+    """,
+    responses={
+        200: {"description": "Successfully parsed message"},
+        400: {"description": "Invalid request (empty message)"},
+        500: {"description": "Parsing failed"},
+        503: {"description": "Groq service unavailable"},
+    },
+)
+async def parse(
+    request: ParseRequestBody,
+    client: Groq = Depends(get_groq_client),
+):
     """Parse a listener message and extract song request metadata."""
-    try:
-        client = get_groq_client()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="Groq client not initialized")
-
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 

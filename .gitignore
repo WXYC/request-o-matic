@@ -8,3 +8,8 @@ __pycache__/
 dist/
 build/
 .cursor/
+logs/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/

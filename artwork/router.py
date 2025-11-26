@@ -1,65 +1,38 @@
+"""Artwork router with dependency injection."""
 import logging
-import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from artwork.models import ArtworkRequest, ArtworkResponse
 from artwork.finder import ArtworkFinder
+from artwork.models import ArtworkRequest, ArtworkResponse
 from artwork.providers.discogs import DiscogsProvider
+from core.dependencies import get_artwork_finder
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/artwork", tags=["artwork"])
 
-_finder: ArtworkFinder | None = None
 
-
-def get_finder() -> ArtworkFinder:
-    """Get or create the ArtworkFinder instance."""
-    global _finder
-    if _finder is None:
-        raise RuntimeError("ArtworkFinder not initialized")
-    return _finder
-
-
-def init_artwork_service():
-    """Initialize the artwork service with configured providers."""
-    global _finder
-
-    providers = []
-
-    discogs_token = os.getenv("DISCOGS_TOKEN")
-    if discogs_token:
-        providers.append(DiscogsProvider(discogs_token))
-        logger.info("Discogs provider initialized")
-    else:
-        logger.warning("DISCOGS_TOKEN not set - Discogs provider disabled")
-
-    if not providers:
-        logger.warning("No artwork providers configured")
-
-    _finder = ArtworkFinder(providers)
-    logger.info(f"Artwork service initialized with {len(providers)} provider(s)")
-
-
-async def shutdown_artwork_service():
-    """Clean up artwork service resources."""
-    global _finder
-    if _finder:
-        for provider in _finder.providers:
-            if hasattr(provider, "close"):
-                await provider.close()
-    _finder = None
-    logger.info("Artwork service shut down")
-
-
-async def lookup_album_by_track(track: str, artist: Optional[str] = None) -> Optional[str]:
-    """Look up an album name by track title using Discogs."""
-    if _finder is None:
+async def lookup_album_by_track(
+    track: str,
+    artist: Optional[str] = None,
+    finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
+) -> Optional[str]:
+    """Look up an album name by track title using Discogs.
+    
+    Args:
+        track: Track title
+        artist: Optional artist name
+        finder: Artwork finder instance
+        
+    Returns:
+        Album name if found, None otherwise
+    """
+    if finder is None:
         return None
 
-    for provider in _finder.providers:
+    for provider in finder.providers:
         if isinstance(provider, DiscogsProvider):
             return await provider.search_track(track, artist)
 
@@ -67,27 +40,64 @@ async def lookup_album_by_track(track: str, artist: Optional[str] = None) -> Opt
 
 
 async def lookup_releases_by_track(
-    track: str, artist: Optional[str] = None, limit: int = 20
+    track: str,
+    artist: Optional[str] = None,
+    limit: int = 20,
 ) -> list[tuple[str, str]]:
-    """
-    Look up all releases containing a track using Discogs.
+    """Look up all releases containing a track using Discogs.
     
+    Note: This function creates a temporary finder instance to avoid
+    dependency injection complexity in helper functions.
+    
+    Args:
+        track: Track title
+        artist: Optional artist name
+        limit: Maximum number of results
+        
     Returns:
         List of (artist, album) tuples for releases containing the track.
         Useful for finding compilations and alternate releases.
     """
-    if _finder is None:
+    # Import here to avoid circular imports
+    from config.settings import get_settings
+    
+    settings = get_settings()
+    if not settings.discogs_token:
         return []
-
-    for provider in _finder.providers:
-        if isinstance(provider, DiscogsProvider):
-            return await provider.search_releases_by_track(track, artist, limit)
-
-    return []
+    
+    provider = DiscogsProvider(settings.discogs_token)
+    return await provider.search_releases_by_track(track, artist, limit)
 
 
-@router.post("", response_model=ArtworkResponse)
-async def find_artwork(request: ArtworkRequest):
+@router.post(
+    "",
+    response_model=ArtworkResponse,
+    summary="Find album artwork",
+    description="""
+    Find album artwork for a given song, album, or artist from external providers.
+    
+    Searches multiple artwork providers (currently Discogs) to find the best match.
+    
+    Example request:
+    ```json
+    {
+        "song": "Bohemian Rhapsody",
+        "artist": "Queen",
+        "album": "A Night at the Opera"
+    }
+    ```
+    """,
+    responses={
+        200: {"description": "Artwork found and returned"},
+        400: {"description": "Invalid request (no search parameters)"},
+        503: {"description": "Artwork service not available"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def find_artwork(
+    request: ArtworkRequest,
+    finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
+):
     """Find album artwork for the given song/album/artist."""
     if not request.song and not request.album and not request.artist:
         raise HTTPException(
@@ -95,13 +105,15 @@ async def find_artwork(request: ArtworkRequest):
             detail="At least one of song, album, or artist must be provided",
         )
 
+    if finder is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Artwork lookup is disabled or not configured",
+        )
+
     try:
-        finder = get_finder()
         result = await finder.find(request)
         return result
-    except RuntimeError as e:
-        logger.error(f"Service not initialized: {e}")
-        raise HTTPException(status_code=503, detail="Artwork service not initialized")
     except Exception as e:
         logger.error(f"Error finding artwork: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

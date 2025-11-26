@@ -1,55 +1,48 @@
+"""Library router with dependency injection."""
 import logging
-import os
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from library.models import LibrarySearchResponse
+from core.dependencies import get_library_db
 from library.db import LibraryDB
+from library.models import LibrarySearchResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/library", tags=["library"])
 
-_db: LibraryDB | None = None
 
-
-def get_db() -> LibraryDB:
-    """Get the database client."""
-    if _db is None:
-        raise RuntimeError("Library database not initialized")
-    return _db
-
-
-async def init_library_service():
-    """Initialize the library database connection."""
-    global _db
-
-    # Optional: allow overriding database path via env var
-    db_path_str = os.getenv("LIBRARY_DB_PATH")
-    db_path = Path(db_path_str) if db_path_str else None
-
-    _db = LibraryDB(db_path=db_path)
-    await _db.connect()
-    logger.info("Library service initialized")
-
-
-async def shutdown_library_service():
-    """Close library database connection."""
-    global _db
-    if _db:
-        await _db.close()
-        _db = None
-    logger.info("Library service shut down")
-
-
-@router.get("/search", response_model=LibrarySearchResponse)
+@router.get(
+    "/search",
+    response_model=LibrarySearchResponse,
+    summary="Search library catalog",
+    description="""
+    Search the music library catalog using full-text search or filters.
+    
+    You can search by:
+    - `q`: Full-text search across artist and title
+    - `artist`: Filter by artist name
+    - `title`: Filter by album title
+    
+    Example request:
+    ```
+    GET /api/v1/library/search?q=Queen+Bohemian+Rhapsody&limit=5
+    ```
+    """,
+    responses={
+        200: {"description": "Search results returned"},
+        400: {"description": "Invalid request (no search parameters)"},
+        503: {"description": "Library service unavailable"},
+        500: {"description": "Internal server error"},
+    },
+)
 async def search_library(
     q: Optional[str] = Query(None, description="Full-text search query"),
     artist: Optional[str] = Query(None, description="Filter by artist name"),
     title: Optional[str] = Query(None, description="Filter by album title"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
+    db: LibraryDB = Depends(get_library_db),
 ):
     """
     Search the library catalog.
@@ -64,7 +57,6 @@ async def search_library(
         )
 
     try:
-        db = get_db()
         results = await db.search(query=q, artist=artist, title=title, limit=limit)
 
         return LibrarySearchResponse(
@@ -72,9 +64,6 @@ async def search_library(
             total=len(results),
             query=q or f"artist={artist}, title={title}",
         )
-    except RuntimeError as e:
-        logger.error(f"Database not initialized: {e}")
-        raise HTTPException(status_code=503, detail="Library service not available")
     except Exception as e:
         logger.error(f"Library search failed: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

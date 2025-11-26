@@ -1,27 +1,11 @@
-import logging
-import os
+"""Groq client utilities.
 
-from groq import Groq
+Note: Client initialization is now handled by core.dependencies.
+This module retains only helper functions if needed.
+"""
+import logging
 
 logger = logging.getLogger(__name__)
 
-_client: Groq | None = None
-
-
-def init_groq_client() -> Groq:
-    """Initialize and return the Groq client."""
-    global _client
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        logger.error("GROQ_API_KEY environment variable not set")
-        raise RuntimeError("GROQ_API_KEY environment variable not set")
-    _client = Groq(api_key=api_key)
-    logger.info("Groq client initialized")
-    return _client
-
-
-def get_groq_client() -> Groq:
-    """Get the Groq client instance."""
-    if _client is None:
-        raise RuntimeError("Groq client not initialized")
-    return _client
+# All client management is now in core/dependencies.py
+# This file is kept for backwards compatibility if needed

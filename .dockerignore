@@ -1,12 +1,63 @@
-.env
-.env.example
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+
+# Testing
 .pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Type checking and linting
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.cursor/
+
+# Git
 .git/
 .gitignore
-.dockerignore
+.gitattributes
+
+# Documentation
 *.md
-scripts/
+docs/
+COMPILATION_SEARCH.md
+EXAMPLE_REQUEST_FLOW.md
+
+# Tests
 tests/
+pytest.ini
+
+# Development
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Scripts
+scripts/

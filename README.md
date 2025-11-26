@@ -13,7 +13,7 @@ A FastAPI service that supplements song requests with structured metadata, album
 ## Prerequisites
 
 - Python 3.12 or higher
-- pip (Python package installer)
+- pip (Python package installer) or use the included `pyproject.toml` for modern package management
 
 ## Local Setup
 
@@ -24,26 +24,57 @@ git clone <repository-url>
 cd request-parser
 ```
 
-### 2. Install Dependencies
+### 2. Create Virtual Environment (Recommended)
 
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+### 3. Install Dependencies
+
+**Option A: Using requirements.txt**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
+**Option B: Using pyproject.toml (Recommended)**
+```bash
+pip install -e .
+```
 
-Create a `.env` file in the project root:
+**Option C: With development dependencies**
+```bash
+pip install -e ".[dev]"
+```
+
+### 4. Configure Environment Variables
+
+Copy the example environment file and update with your values:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your actual configuration:
 
 ```bash
 # Required
 GROQ_API_KEY=your_groq_api_key_here
 
-# Optional - for artwork lookup
+# Optional - Artwork Lookup
 DISCOGS_TOKEN=your_discogs_token_here
 
-# Optional - for Slack integration
-# If not provided, will attempt to fetch from Railway endpoint
+# Optional - Slack Integration
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Application Configuration
+LOG_LEVEL=INFO
+PORT=8000
+
+# Feature Flags
+ENABLE_SLACK_INTEGRATION=true
+ENABLE_ARTWORK_LOOKUP=true
 ```
 
 #### Getting API Keys
@@ -82,7 +113,9 @@ The application will start on `http://localhost:8000`
 
 - **Interactive API Documentation**: http://localhost:8000/docs (Swagger UI - Try out endpoints here!)
 - **Read-Only Docs**: http://localhost:8000/redoc (ReDoc - Beautiful documentation)
-- **Health Check**: http://localhost:8000/health (Simple status endpoint)
+- **Health Check**: http://localhost:8000/health (Detailed service status)
+
+**Note**: All API endpoints (except `/health`) are now versioned under `/api/v1/` prefix.
 
 ## Docker Setup
 
@@ -128,83 +161,171 @@ docker-compose up
 
 ## API Endpoints
 
-### Core Endpoints
+### Core Endpoints (v1)
 
-- `GET /health` - Health check endpoint
-- `POST /parse` - Parse a natural language song request into structured metadata
-- `POST /request` - Full request workflow: parse → search library → find artwork → post to Slack
-- `POST /artwork` - Find album artwork for a given song/album/artist
-- `GET /library/search` - Search the library catalog
+All endpoints except `/health` are prefixed with `/api/v1`:
 
-### Example Request
+- `GET /health` - Health check with service status details
+- `POST /api/v1/parse` - Parse a natural language song request into structured metadata
+- `POST /api/v1/request` - Full request workflow: parse → search library → find artwork → post to Slack
+- `POST /api/v1/artwork` - Find album artwork for a given song/album/artist
+- `GET /api/v1/library/search` - Search the library catalog
 
+### Example Requests
+
+**Parse a message:**
 ```bash
-curl -X POST "http://localhost:8000/parse" \
+curl -X POST "http://localhost:8000/api/v1/parse" \
   -H "Content-Type: application/json" \
-  -d '{"text": "Play Bohemian Rhapsody by Queen"}'
+  -d '{"message": "Play Bohemian Rhapsody by Queen"}'
+```
+
+**Full request workflow:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/request" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Play Abele Dance (85 remix) by Manu Dibango"}'
+```
+
+**Search library:**
+```bash
+curl "http://localhost:8000/api/v1/library/search?q=Queen+Bohemian&limit=5"
+```
+
+**Health check:**
+```bash
+curl "http://localhost:8000/health"
 ```
 
 ## Project Structure
 
 ```
 request-parser/
-├── main.py              # Application entry point
-├── requirements.txt     # Python dependencies
-├── library.db          # SQLite music library database
-├── .env                # Environment variables (create this)
-├── artwork/            # Artwork lookup module
-│   ├── finder.py       # Artwork search orchestration
-│   ├── models.py       # Data models
-│   ├── router.py       # API routes
-│   └── providers/      # Provider implementations
-│       ├── base.py     # Base provider interface
-│       └── discogs.py  # Discogs API integration
-├── library/            # Library catalog module
-│   ├── db.py          # SQLite database client
-│   ├── models.py      # Data models
-│   └── router.py      # API routes
-├── routers/           # API route handlers
-│   ├── health.py     # Health check
-│   ├── parse.py      # Text parsing
-│   └── request.py    # Main request workflow
-├── services/         # Core services
-│   ├── groq.py      # Groq AI client
-│   ├── parser.py    # Song request parser
-│   └── slack.py     # Slack integration
-├── scripts/         # Utility scripts
+├── main.py                  # Application entry point with lifespan management
+├── pyproject.toml          # Modern Python project configuration
+├── requirements.txt        # Python dependencies
+├── .env                    # Environment variables (create from .env.example)
+├── .env.example           # Environment template
+├── .dockerignore          # Docker build exclusions
+├── Dockerfile             # Multi-stage Docker build
+├── library.db             # SQLite music library database
+│
+├── config/                # Configuration management
+│   ├── __init__.py
+│   └── settings.py        # Centralized settings with Pydantic
+│
+├── core/                  # Core utilities and shared components
+│   ├── __init__.py
+│   ├── dependencies.py    # FastAPI dependency injection
+│   ├── exceptions.py      # Custom exception classes
+│   └── logging.py         # Logging configuration
+│
+├── artwork/               # Artwork lookup module
+│   ├── finder.py          # Artwork search orchestration
+│   ├── models.py          # Data models
+│   ├── router.py          # API routes with dependency injection
+│   └── providers/         # Provider implementations
+│       ├── base.py        # Base provider interface
+│       └── discogs.py     # Discogs API integration
+│
+├── library/               # Library catalog module
+│   ├── db.py             # SQLite database client
+│   ├── models.py         # Data models
+│   └── router.py         # API routes with dependency injection
+│
+├── routers/              # API route handlers
+│   ├── health.py        # Enhanced health check with service status
+│   ├── parse.py         # Text parsing with full documentation
+│   └── request.py       # Main workflow (refactored into smaller functions)
+│
+├── services/            # Core services
+│   ├── groq.py         # Groq utilities (managed by dependencies)
+│   ├── parser.py       # Song request parser
+│   └── slack.py        # Slack message building utilities
+│
+├── scripts/            # Utility scripts
 │   └── export_to_sqlite.py  # Database export tool
-└── tests/           # Test suite
-    └── test_artwork.py
+│
+├── tests/              # Test suite
+│   ├── conftest.py    # Shared test fixtures
+│   ├── unit/          # Unit tests
+│   │   ├── test_config.py
+│   │   ├── test_exceptions.py
+│   │   ├── test_request_helpers.py
+│   │   ├── test_artwork.py
+│   │   └── test_library.py
+│   └── integration/   # Integration tests
+│       └── test_integration.py
+│
+└── logs/              # Application logs (created at runtime)
 ```
 
 ## Development
 
 ### Running Tests
 
+**Run all tests (excluding integration):**
 ```bash
 pytest
 ```
 
-### Running Tests with Coverage
+**Run unit tests only:**
+```bash
+pytest tests/unit/
+```
 
+**Run integration tests:**
+```bash
+pytest tests/integration/ -m integration
+```
+
+**Run with coverage:**
 ```bash
 pytest --cov=. --cov-report=html
 ```
 
 ### Code Quality
 
-The project uses standard Python tooling:
+The project is configured with modern Python tooling via `pyproject.toml`:
 
+**Format code:**
 ```bash
-# Type checking
-mypy .
-
-# Linting
-flake8 .
-
-# Formatting
 black .
 ```
+
+**Lint code:**
+```bash
+ruff check .
+```
+
+**Fix linting issues automatically:**
+```bash
+ruff check --fix .
+```
+
+**Type checking:**
+```bash
+mypy .
+```
+
+**Run all quality checks:**
+```bash
+black . && ruff check --fix . && mypy . && pytest
+```
+
+### Development Workflow
+
+1. Create a feature branch
+2. Make your changes
+3. Run tests and linters
+4. Submit a pull request
+
+The project uses:
+- **Pydantic Settings** for type-safe configuration
+- **FastAPI dependency injection** for clean architecture
+- **Async/await** throughout for performance
+- **Comprehensive logging** with structured output
+- **Custom exceptions** for better error handling
 
 ## Troubleshooting
 
@@ -245,8 +366,31 @@ If Slack integration fails:
 |----------|----------|---------|-------------|
 | `GROQ_API_KEY` | Yes | - | API key for Groq AI service |
 | `DISCOGS_TOKEN` | No | - | Personal access token for Discogs API |
-| `SLACK_WEBHOOK_URL` | No | - | Slack incoming webhook URL |
+| `SLACK_WEBHOOK_URL` | No | - | Slack incoming webhook URL (fetches from Railway if not set) |
 | `PORT` | No | 8000 | Port for the application to listen on |
+| `HOST` | No | 0.0.0.0 | Host to bind the server to |
+| `LOG_LEVEL` | No | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `LIBRARY_DB_PATH` | No | library.db | Path to SQLite library database |
+| `ENABLE_SLACK_INTEGRATION` | No | true | Enable/disable Slack notifications |
+| `ENABLE_ARTWORK_LOOKUP` | No | true | Enable/disable artwork lookup from external APIs |
+
+## Architecture
+
+### Key Design Decisions
+
+1. **Dependency Injection**: FastAPI's dependency injection system manages service lifecycle and makes testing easier
+2. **Centralized Configuration**: Pydantic Settings for type-safe, validated configuration
+3. **Modular Structure**: Each feature (artwork, library, parsing) is self-contained
+4. **Async Throughout**: All I/O operations use async/await for optimal performance
+5. **Custom Exceptions**: Domain-specific exceptions for better error handling and debugging
+6. **Comprehensive Logging**: Structured logging at appropriate levels throughout the application
+
+### Service Lifecycle
+
+Services are managed through FastAPI's lifespan context manager:
+- Database connections are established at startup
+- HTTP clients are reused across requests
+- Resources are properly cleaned up at shutdown
 
 ## License
 
