@@ -119,6 +119,85 @@ def test_build_context_message_for_artist_fallback():
 
 
 @pytest.mark.asyncio
+async def test_song_on_multiple_albums_returns_all():
+    """Test that when a song is on multiple albums in the library, all are returned.
+    
+    Example: "Goon Gumpas" by Aphex Twin is on both:
+    - Richard D. James Album (by Aphex Twin)
+    - Morvern Callar soundtrack (Various Artists)
+    
+    If BOTH albums are in the library and Discogs returns both,
+    both should be in the results (this is different from the Manu Dibango
+    case where the song is ONLY on a Various Artists compilation).
+    """
+    from routers.request import search_compilations_for_track
+    
+    mock_db = AsyncMock()
+    
+    richard_d_james = LibraryItem(
+        id=1,
+        title="Richard D. James Album",
+        artist="Aphex Twin",
+        call_letters="AP",
+        artist_call_number=1,
+        release_call_number=3,
+        genre="Electronic",
+        format="cd",
+    )
+    
+    morvern_callar = LibraryItem(
+        id=2,
+        title="Morvern Callar",
+        artist="Soundtracks - M",
+        call_letters="Z-M",
+        artist_call_number=0,
+        release_call_number=73,
+        genre="Soundtracks",
+        format="cd",
+    )
+    
+    parsed = ParsedRequest(
+        song="Goon Gumpas",
+        artist="Aphex Twin",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Goon Gumpas by Aphex Twin",
+    )
+    
+    # Simulate Discogs returning both releases, and library having both
+    with patch('routers.request.lookup_releases_by_track', new_callable=AsyncMock) as mock_lookup:
+        mock_lookup.return_value = [
+            ("Aphex Twin", "Richard D. James Album"),
+            ("Various", "Morvern Callar (Original Motion Picture Soundtrack)"),
+        ]
+        
+        # Mock fuzzy search to return the matching album for each Discogs result
+        search_count = 0
+        async def mock_search(**kwargs):
+            nonlocal search_count
+            search_count += 1
+            if search_count == 1:
+                return []  # Keyword search
+            elif search_count == 2:
+                return [richard_d_james]  # First Discogs match
+            elif search_count == 3:
+                return [morvern_callar]  # Second Discogs match
+            return []
+        
+        mock_db.search = mock_search
+        
+        results = await search_compilations_for_track(mock_db, parsed)
+    
+    # Should return BOTH albums since both are in the library
+    assert len(results) == 2
+    assert results[0].id == 1
+    assert results[1].id == 2
+    assert results[0].title == "Richard D. James Album"
+    assert results[1].title == "Morvern Callar"
+
+
+@pytest.mark.asyncio
 async def test_compilation_found_replaces_artist_albums():
     """Test that finding a song on compilation replaces artist album results.
     
