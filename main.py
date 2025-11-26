@@ -22,7 +22,11 @@ load_dotenv()
 settings = get_settings()
 
 # Configure logging
-log_file = Path("logs/request-parser.log") if settings.log_level != "DEBUG" else None
+# In production, log to /app/logs which is writable by appuser
+log_file = None
+if settings.log_level != "DEBUG":
+    log_dir = Path("/app/logs") if Path("/app/logs").exists() else Path("logs")
+    log_file = log_dir / "request-parser.log"
 setup_logging(level=settings.log_level, log_file=log_file)
 
 logger = logging.getLogger(__name__)

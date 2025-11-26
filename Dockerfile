@@ -27,12 +27,14 @@ COPY library/ ./library/
 COPY routers/ ./routers/
 COPY services/ ./services/
 
-# Create data directory for writable files (database, logs)
-RUN mkdir -p /app/data /app/logs && \
-    chown -R appuser:appuser /app/data /app/logs
+# Copy database to data directory
+COPY library.db /app/data/library.db
 
-# Copy database to data directory with proper ownership
-COPY --chown=appuser:appuser library.db /app/data/library.db
+# Create data and logs directories with proper permissions
+RUN mkdir -p /app/data /app/logs && \
+    chown -R appuser:appuser /app/data /app/logs && \
+    chmod -R 755 /app/data /app/logs && \
+    chmod 644 /app/data/library.db
 
 # Switch to non-root user
 USER appuser
