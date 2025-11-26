@@ -167,6 +167,15 @@ async def search_compilations_for_track(
             
             # Check each release against our library
             for release_artist, release_album in releases:
+                # Skip if the "album" is just the artist name (Discogs artifact)
+                if parsed.artist and release_album.lower().strip() == parsed.artist.lower().strip():
+                    logger.debug(f"Skipping '{release_album}' - appears to be artist name, not album")
+                    continue
+                
+                # Skip very short album titles (likely artifacts)
+                if len(release_album.strip()) < 3:
+                    continue
+                
                 matches = await search_album_fuzzy(db, release_album)
                 if matches:
                     logger.info(
