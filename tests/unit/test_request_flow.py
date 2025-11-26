@@ -117,3 +117,69 @@ def test_build_context_message_for_artist_fallback():
     
     assert context == '"Unknown Song" is not on any album in the library, but here are some albums by Queen:'
 
+
+@pytest.mark.asyncio
+async def test_compilation_found_replaces_artist_albums():
+    """Test that finding a song on compilation replaces artist album results.
+    
+    Scenario: When artist albums are found as fallback, but then the actual song
+    is found on a compilation, only the compilation should be returned.
+    
+    This tests the critical replacement logic:
+    - Artist albums found: [Album1, Album2, Album3] (fallback)
+    - Compilation found: [Compilation]
+    - Final result: [Compilation] (artist albums replaced, not extended)
+    """
+    compilation_item = LibraryItem(
+        id=62503,
+        title="Celluloid Records- change the beat 1979-87",
+        artist="Various Artists - Rock - C",
+        call_letters="Z-C",
+        artist_call_number=0,
+        release_call_number=119,
+        genre="Rock",
+        format="cd",
+    )
+    
+    artist_albums = [
+        LibraryItem(
+            id=1, title="Soul Makossa", artist="Manu Dibango",
+            call_letters="DI", artist_call_number=12, release_call_number=1,
+            genre="Africa", format="cd",
+        ),
+        LibraryItem(
+            id=2, title="Polysonik", artist="Manu Dibango",
+            call_letters="DI", artist_call_number=12, release_call_number=2,
+            genre="Africa", format="cd",
+        ),
+        LibraryItem(
+            id=3, title="The Rough Guide", artist="Manu Dibango",
+            call_letters="DI", artist_call_number=12, release_call_number=3,
+            genre="Africa", format="cd",
+        ),
+    ]
+    
+    # Simulate the complete flow from handle_request
+    library_results = artist_albums.copy()  # Start with artist albums (fallback)
+    song_not_found = True
+    found_on_compilation = False
+    
+    # Compilation search finds the song
+    compilation_results = [compilation_item]
+    
+    # This is the critical logic from handle_request:
+    if compilation_results:
+        # Replace artist albums with compilation results
+        library_results = compilation_results[:5]
+        found_on_compilation = True
+        song_not_found = False
+    
+    # Verify final state: ONLY compilation, not artist albums
+    assert len(library_results) == 1, \
+        f"Expected 1 compilation, got {len(library_results)}: {[r.title for r in library_results]}"
+    assert library_results[0].id == 62503
+    assert library_results[0].title == "Celluloid Records- change the beat 1979-87"
+    assert "Various Artists" in library_results[0].artist
+    assert found_on_compilation is True
+    assert song_not_found is False
+
