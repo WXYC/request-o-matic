@@ -21,6 +21,9 @@ RUN mkdir -p /app/logs
 # Copy the SQLite database (same location as original working version)
 COPY library.db .
 
+# Explicitly set database path
+ENV LIBRARY_DB_PATH=library.db
+
 # Railway sets PORT env var
 ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
