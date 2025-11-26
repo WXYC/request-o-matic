@@ -1,7 +1,6 @@
 """FastAPI dependency injection providers."""
 import logging
 from functools import lru_cache
-from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -75,11 +74,9 @@ async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryD
     if _library_db is None:
         try:
             db_path = settings.resolved_library_db_path
-            logger.info(f"Connecting to library database: {db_path}")
-            logger.info(f"DB exists: {db_path.exists()}, size: {db_path.stat().st_size if db_path.exists() else 'N/A'}")
             _library_db = LibraryDB(db_path=db_path)
             await _library_db.connect()
-            logger.info(f"Library database connected")
+            logger.info(f"Library database connected: {db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize library database: {e}")
             raise ServiceInitializationError(f"Database initialization failed: {e}")
