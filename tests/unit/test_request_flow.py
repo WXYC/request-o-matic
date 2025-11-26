@@ -25,8 +25,17 @@ async def test_compilation_search_deduplication(mock_library_db):
         format="cd",
     )
     
-    # Mock the search to return the same item multiple times
-    mock_library_db.search.return_value = [duplicate_item]
+    # Mock search to return empty for keyword search, then return item for fuzzy searches
+    search_count = 0
+    async def mock_search(**kwargs):
+        nonlocal search_count
+        search_count += 1
+        if search_count == 1:
+            return []  # Keyword search returns nothing
+        # Fuzzy search for Discogs albums returns the item
+        return [duplicate_item]
+    
+    mock_library_db.search = mock_search
     
     parsed = ParsedRequest(
         song="Abele Dance",
@@ -46,12 +55,15 @@ async def test_compilation_search_deduplication(mock_library_db):
             ("Various", "Change The Beat Vol 4"),
         ]
         
-        results = await search_compilations_for_track(mock_library_db, parsed)
+        results, discogs_titles = await search_compilations_for_track(mock_library_db, parsed)
     
     # Should only return 1 unique result despite 4 Discogs releases
     assert len(results) == 1
     assert results[0].id == 62503
     assert results[0].title == "Celluloid Records- change the beat 1979-87"
+    # Should have discogs title mapped (from first Discogs result)
+    assert 62503 in discogs_titles
+    assert discogs_titles[62503] == "Change The Beat Vol 1"
 
 
 @pytest.mark.asyncio
@@ -66,8 +78,9 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
         raw_message="Soul Makossa by Manu Dibango",
     )
     
-    results = await search_compilations_for_track(mock_library_db, parsed_no_song)
+    results, discogs_titles = await search_compilations_for_track(mock_library_db, parsed_no_song)
     assert results == []
+    assert discogs_titles == {}
     
     parsed_no_artist = ParsedRequest(
         song="Abele Dance",
@@ -78,8 +91,9 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
         raw_message="Abele Dance",
     )
     
-    results = await search_compilations_for_track(mock_library_db, parsed_no_artist)
+    results, discogs_titles = await search_compilations_for_track(mock_library_db, parsed_no_artist)
     assert results == []
+    assert discogs_titles == {}
 
 
 def test_build_context_message_for_found_compilation():
@@ -187,7 +201,7 @@ async def test_song_on_multiple_albums_returns_all():
         
         mock_db.search = mock_search
         
-        results = await search_compilations_for_track(mock_db, parsed)
+        results, discogs_titles = await search_compilations_for_track(mock_db, parsed)
     
     # Should return BOTH albums since both are in the library
     assert len(results) == 2
@@ -195,6 +209,8 @@ async def test_song_on_multiple_albums_returns_all():
     assert results[1].id == 2
     assert results[0].title == "Richard D. James Album"
     assert results[1].title == "Morvern Callar"
+    # Should have discogs titles mapped for both
+    assert len(discogs_titles) == 2
 
 
 @pytest.mark.asyncio

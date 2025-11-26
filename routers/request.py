@@ -109,7 +109,7 @@ async def search_library_with_fallback(
 async def search_compilations_for_track(
     db: LibraryDB,
     parsed: ParsedRequest,
-) -> list[LibraryItem]:
+) -> tuple[list[LibraryItem], dict[int, str]]:
     """Search for track on compilation albums using Discogs and library keyword search.
     
     Args:
@@ -117,15 +117,16 @@ async def search_compilations_for_track(
         parsed: Parsed request with song/artist info
         
     Returns:
-        List of unique matching library items from compilations (deduplicated by ID)
+        Tuple of (list of matching library items, dict mapping item_id to discogs_album_title)
     """
     if not parsed.song or not parsed.artist:
-        return []
+        return [], {}
     
     logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
     
     results = []
     seen_ids = set()  # Track IDs to avoid duplicates
+    discogs_titles: dict[int, str] = {}  # Map item ID to Discogs album title
     
     # First, try a direct library keyword search
     try:
@@ -187,13 +188,15 @@ async def search_compilations_for_track(
                         if match.id not in seen_ids:
                             results.append(match)
                             seen_ids.add(match.id)
+                            # Store the Discogs album title for artwork lookup
+                            discogs_titles[match.id] = release_album
                     
                     if len(results) >= 5:
                         break
         except Exception as e:
             logger.warning(f"Failed to search for track on other releases: {e}")
     
-    return results[:5]
+    return results[:5], discogs_titles
 
 
 async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryItem]:
@@ -236,12 +239,14 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
 async def fetch_artwork_for_items(
     items: list[LibraryItem],
     finder: Optional[ArtworkFinder],
+    discogs_titles: Optional[dict[int, str]] = None,
 ) -> list[tuple[LibraryItem, Optional[ArtworkResponse]]]:
     """Fetch artwork for multiple library items in parallel.
     
     Args:
         items: List of library items
         finder: Artwork finder instance
+        discogs_titles: Optional dict mapping item_id to Discogs album title
         
     Returns:
         List of (item, artwork) tuples
@@ -249,11 +254,22 @@ async def fetch_artwork_for_items(
     if not finder:
         return [(item, None) for item in items]
     
+    discogs_titles = discogs_titles or {}
+    
     async def fetch_one(item: LibraryItem) -> Optional[ArtworkResponse]:
         try:
+            # Use Discogs album title if we have it (from compilation search)
+            album = discogs_titles.get(item.id, item.title)
+            
+            # For compilations (Various Artists), search by album title only
+            # The library artist format (e.g., "Various Artists - Rock - C") won't match Discogs
+            artist = item.artist
+            if artist and artist.lower().startswith("various artists"):
+                artist = "Various"
+            
             result = await finder.find(ArtworkRequest(
-                album=item.title,
-                artist=item.artist,
+                album=album,
+                artist=artist,
             ))
             return result
         except Exception as e:
@@ -399,6 +415,7 @@ async def handle_request(
         items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]] = []
         song_not_found = False
         found_on_compilation = False
+        discogs_titles: dict[int, str] = {}
 
         # Step 2: If we have a song but no album, look up the album from Discogs
         album_for_search, song_not_found = await resolve_album_for_track(parsed)
@@ -414,7 +431,7 @@ async def handle_request(
 
             # Step 3b: Search compilations if exact song/album not found
             if song_not_found and parsed.song and parsed.artist:
-                compilation_results = await search_compilations_for_track(db, parsed)
+                compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
                 if compilation_results:
                     # Replace artist albums with compilation results since we found the actual song
                     library_results = compilation_results[:5]
@@ -423,7 +440,7 @@ async def handle_request(
 
         # Step 4: Fetch artwork for library items
         if library_results:
-            items_with_artwork = await fetch_artwork_for_items(library_results, finder)
+            items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
 
         # Step 5: Build context and post to Slack
         context = build_context_message(parsed, found_on_compilation, song_not_found)
