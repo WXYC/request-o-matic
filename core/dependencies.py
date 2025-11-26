@@ -74,7 +74,7 @@ async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryD
     
     if _library_db is None:
         try:
-            db_path = settings.library_db_path
+            db_path = settings.resolved_library_db_path
             logger.info(f"Connecting to library database: {db_path}")
             logger.info(f"DB exists: {db_path.exists()}, size: {db_path.stat().st_size if db_path.exists() else 'N/A'}")
             _library_db = LibraryDB(db_path=db_path)

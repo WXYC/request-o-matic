@@ -21,9 +21,18 @@ class Settings(BaseSettings):
     )
     
     # Database Configuration
+    # Note: We use a validator to ensure empty strings default to library.db
     library_db_path: Path = Field(
         default=Path("library.db"), description="Path to SQLite library database"
     )
+    
+    @property
+    def resolved_library_db_path(self) -> Path:
+        """Get the library database path, handling empty env var case."""
+        # Handle case where env var is set but empty
+        if not str(self.library_db_path) or str(self.library_db_path) == ".":
+            return Path("library.db")
+        return self.library_db_path
     
     # Application Configuration
     host: str = Field(default="0.0.0.0", description="Host to bind the server to")
