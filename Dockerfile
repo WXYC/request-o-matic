@@ -12,13 +12,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser
-
 # Copy installed packages from builder
-COPY --from=builder /root/.local /home/appuser/.local
+COPY --from=builder /root/.local /root/.local
 
-# Copy application code (read-only)
+# Copy application code
 COPY main.py ./
 COPY config/ ./config/
 COPY core/ ./core/
@@ -27,27 +24,17 @@ COPY library/ ./library/
 COPY routers/ ./routers/
 COPY services/ ./services/
 
-# Create data and logs directories FIRST
+# Create data and logs directories for writable files
 RUN mkdir -p /app/data /app/logs
 
 # Copy database to data directory
 COPY library.db /app/data/library.db
 
-# Set proper permissions for appuser
-# SQLite needs full write access to the directory for journal files
-RUN chown -R appuser:appuser /app/data /app/logs && \
-    chmod 777 /app/data && \
-    chmod 777 /app/logs && \
-    chmod 666 /app/data/library.db
-
-# Switch to non-root user
-USER appuser
-
 # Set environment variable for database path
 ENV LIBRARY_DB_PATH=/app/data/library.db
 
 # Add local bin to PATH
-ENV PATH=/home/appuser/.local/bin:$PATH
+ENV PATH=/root/.local/bin:$PATH
 
 # Railway sets PORT env var
 ENV PORT=8000
