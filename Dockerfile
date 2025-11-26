@@ -13,8 +13,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+RUN useradd -m -u 1000 appuser
 
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
@@ -28,6 +27,11 @@ COPY --chown=appuser:appuser library/ ./library/
 COPY --chown=appuser:appuser routers/ ./routers/
 COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser library.db ./
+
+# Ensure appuser owns the /app directory and database has correct permissions
+RUN chown -R appuser:appuser /app && \
+    chmod 755 /app && \
+    chmod 644 /app/library.db
 
 # Switch to non-root user
 USER appuser
