@@ -80,18 +80,26 @@ class DiscogsProvider:
         """
         Search Discogs for ALL releases containing a track.
         
+        Uses general query search (like the website) instead of track parameter
+        to catch compilations and alternate releases that track search misses.
+        
         Returns:
             List of (artist, album) tuples for releases containing the track.
         """
+        # Build query string (like Discogs website search)
+        query_parts = []
+        if track:
+            query_parts.append(track)
+        if artist:
+            query_parts.append(artist)
+        
         params: dict = {
             "type": "release",
-            "track": track,
+            "q": " ".join(query_parts),  # Use general query, not track parameter
             "per_page": limit,
         }
-        if artist:
-            params["artist"] = artist
 
-        logger.info(f"Searching Discogs for all releases with track: {track}, artist: {artist}")
+        logger.info(f"Searching Discogs for releases matching: '{params['q']}'")
         client = await self._get_client()
 
         try:
@@ -111,11 +119,11 @@ class DiscogsProvider:
                 if album:  # Only include if we successfully parsed an album name
                     releases.append((result_artist, album))
             
-            logger.info(f"Found {len(releases)} releases with track '{track}'")
+            logger.info(f"Found {len(releases)} releases matching '{track}'")
             return releases
 
         except Exception as e:
-            logger.error(f"Discogs track search failed: {e}")
+            logger.error(f"Discogs search failed: {e}")
             return []
 
     async def search(self, request: ArtworkRequest) -> list[SearchResult]:
