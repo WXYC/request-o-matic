@@ -18,23 +18,27 @@ RUN useradd -m -u 1000 appuser
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Copy application code
-COPY --chown=appuser:appuser main.py ./
-COPY --chown=appuser:appuser config/ ./config/
-COPY --chown=appuser:appuser core/ ./core/
-COPY --chown=appuser:appuser artwork/ ./artwork/
-COPY --chown=appuser:appuser library/ ./library/
-COPY --chown=appuser:appuser routers/ ./routers/
-COPY --chown=appuser:appuser services/ ./services/
-COPY --chown=appuser:appuser library.db ./
+# Copy application code (read-only)
+COPY main.py ./
+COPY config/ ./config/
+COPY core/ ./core/
+COPY artwork/ ./artwork/
+COPY library/ ./library/
+COPY routers/ ./routers/
+COPY services/ ./services/
 
-# Ensure appuser owns the /app directory and database has correct permissions
-RUN chown -R appuser:appuser /app && \
-    chmod 755 /app && \
-    chmod 644 /app/library.db
+# Create data directory for writable files (database, logs)
+RUN mkdir -p /app/data /app/logs && \
+    chown -R appuser:appuser /app/data /app/logs
+
+# Copy database to data directory with proper ownership
+COPY --chown=appuser:appuser library.db /app/data/library.db
 
 # Switch to non-root user
 USER appuser
+
+# Set environment variable for database path
+ENV LIBRARY_DB_PATH=/app/data/library.db
 
 # Add local bin to PATH
 ENV PATH=/home/appuser/.local/bin:$PATH
