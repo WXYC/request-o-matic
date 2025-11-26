@@ -1,6 +1,7 @@
 """FastAPI dependency injection providers."""
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -73,11 +74,23 @@ async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryD
     
     if _library_db is None:
         try:
-            _library_db = LibraryDB(db_path=settings.library_db_path)
+            db_path = settings.library_db_path
+            logger.info(f"Attempting to connect to database at: {db_path}")
+            logger.info(f"Database file exists: {db_path.exists()}")
+            logger.info(f"Database file is_file: {db_path.is_file()}")
+            if db_path.exists():
+                logger.info(f"Database file size: {db_path.stat().st_size} bytes")
+                logger.info(f"Database parent dir exists: {db_path.parent.exists()}")
+            _library_db = LibraryDB(db_path=db_path)
             await _library_db.connect()
-            logger.info(f"Library database connected: {settings.library_db_path}")
+            logger.info(f"Library database connected: {db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize library database: {e}")
+            logger.error(f"Database path was: {settings.library_db_path}")
+            logger.error(f"Current working directory: {Path.cwd()}")
+            import os
+            logger.error(f"Files in /app: {os.listdir('/app') if os.path.exists('/app') else 'N/A'}")
+            logger.error(f"Files in /app/data: {os.listdir('/app/data') if os.path.exists('/app/data') else 'N/A'}")
             raise ServiceInitializationError(f"Database initialization failed: {e}")
     
     return _library_db
