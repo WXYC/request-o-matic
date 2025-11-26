@@ -123,7 +123,9 @@ class TestDiscogsProvider:
         empty_discogs_response,
     ):
         """Test search with no results."""
+        # Mock both the initial search and the fallback fuzzy search
         httpx_mock.add_response(json=empty_discogs_response)
+        httpx_mock.add_response(json=empty_discogs_response)  # Fallback response
 
         request = ArtworkRequest(artist="Nonexistent Band")
         results = await discogs_provider.search(request)
