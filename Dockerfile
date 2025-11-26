@@ -27,12 +27,14 @@ COPY library/ ./library/
 COPY routers/ ./routers/
 COPY services/ ./services/
 
+# Create data and logs directories FIRST
+RUN mkdir -p /app/data /app/logs
+
 # Copy database to data directory
 COPY library.db /app/data/library.db
 
-# Create data and logs directories with proper permissions
-RUN mkdir -p /app/data /app/logs && \
-    chown -R appuser:appuser /app/data /app/logs && \
+# Set proper permissions for appuser
+RUN chown -R appuser:appuser /app/data /app/logs && \
     chmod -R 755 /app/data /app/logs && \
     chmod 644 /app/data/library.db
 
