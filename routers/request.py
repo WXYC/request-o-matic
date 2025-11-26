@@ -122,25 +122,81 @@ async def handle_request(request: RequestBody):
                 # search Discogs for ALL releases with that track and check our library
                 if not library_results and parsed.song and parsed.artist:
                     logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
+                    
+                    # First, try a direct library search with keywords from the song/artist
+                    # This helps find compilations that Discogs track search misses
                     try:
-                        releases = await lookup_releases_by_track(parsed.song, parsed.artist)
-                        logger.info(f"Found {len(releases)} releases with '{parsed.song}' on Discogs")
+                        import re
+                        # Extract significant words from artist and song
+                        artist_words = re.sub(r'[^\w\s]', ' ', parsed.artist.lower()).split() if parsed.artist else []
+                        song_words = re.sub(r'[^\w\s]', ' ', parsed.song.lower()).split() if parsed.song else []
                         
-                        # Check each release against our library
-                        for release_artist, release_album in releases:
-                            # Search by album title only (to catch V/A compilations)
-                            results = await db.search(query=release_album, limit=1)
-                            if results:
-                                logger.info(f"Found '{parsed.song}' in library on '{release_album}' by '{release_artist}'")
-                                library_results.extend(results)
+                        # Combine and filter
+                        all_words = artist_words + song_words
+                        significant = [w for w in all_words if len(w) > 3 and w not in 
+                            {'the', 'and', 'with', 'from', 'that', 'this', 'play', 'song', 'remix'}]
+                        
+                        if significant:
+                            keyword_query = ' '.join(significant[:3])  # Use top 3 keywords
+                            logger.info(f"Trying direct keyword search: '{keyword_query}'")
+                            keyword_results = await db.search(query=keyword_query, limit=3)
+                            
+                            if keyword_results:
+                                logger.info(f"Found {len(keyword_results)} potential matches via keyword search")
+                                library_results.extend(keyword_results[:1])  # Add just the top result
                                 found_on_compilation = True
                                 song_not_found = False
-                                # Limit to 5 total results
-                                if len(library_results) >= 5:
-                                    library_results = library_results[:5]
-                                    break
                     except Exception as e:
-                        logger.warning(f"Failed to search for track on other releases: {e}")
+                        logger.warning(f"Keyword search failed: {e}")
+                    
+                    # Then try Discogs track search
+                    if not library_results:
+                        try:
+                            releases = await lookup_releases_by_track(parsed.song, parsed.artist)
+                            logger.info(f"Found {len(releases)} releases with '{parsed.song}' on Discogs")
+                            
+                            # Check each release against our library
+                            for release_artist, release_album in releases:
+                            # Search by album title only (to catch V/A compilations)
+                            results = await db.search(query=release_album, limit=1)
+                            
+                            # If exact search fails, try fuzzy search with keywords
+                            if not results and release_album:
+                                # Extract significant keywords from the album title
+                                import re
+                                # Remove common words and punctuation, keep significant words
+                                words = re.sub(r'[^\w\s]', ' ', release_album.lower()).split()
+                                significant_words = [w for w in words if len(w) > 3 and w not in 
+                                    {'the', 'and', 'with', 'from', 'that', 'this', 'story', 'records'}]
+                                
+                                if significant_words:
+                                    # Try searching with just the significant keywords
+                                    fuzzy_query = ' '.join(significant_words[:4])  # Use first 4 keywords
+                                    logger.info(f"Exact match failed for '{release_album}', trying fuzzy: '{fuzzy_query}'")
+                                    results = await db.search(query=fuzzy_query, limit=3)
+                                    
+                                    # Verify the results are actually related by checking if any significant words match
+                                    if results:
+                                        # Filter results to ensure they contain at least 2 of the keywords
+                                        filtered_results = []
+                                        for result in results:
+                                            result_title_lower = (result.title or '').lower()
+                                            matches = sum(1 for word in significant_words if word in result_title_lower)
+                                            if matches >= 2:  # At least 2 keywords must match
+                                                filtered_results.append(result)
+                                        results = filtered_results
+                            
+                                if results:
+                                    logger.info(f"Found '{parsed.song}' in library on '{results[0].title}' (matched from Discogs: '{release_album}')")
+                                    library_results.extend(results)
+                                    found_on_compilation = True
+                                    song_not_found = False
+                                    # Limit to 5 total results
+                                    if len(library_results) >= 5:
+                                        library_results = library_results[:5]
+                                        break
+                        except Exception as e:
+                            logger.warning(f"Failed to search for track on other releases: {e}")
             except Exception as e:
                 logger.warning(f"Library search failed: {e}")
 

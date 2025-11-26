@@ -77,7 +77,7 @@ def build_slack_blocks(
             f"_{item.call_number}_",
         ]
         if artwork and artwork.release_url:
-            text_lines.append(f"<{artwork.release_url}|View on Discogs>")
+            text_lines.append(f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>")
 
         block: dict = {
             "type": "section",
