@@ -44,6 +44,7 @@ class LibraryDB:
         artist: Optional[str] = None,
         title: Optional[str] = None,
         limit: int = 10,
+        fallback_to_like: bool = True,
     ) -> list[LibraryItem]:
         """
         Search the library catalog.
@@ -53,6 +54,7 @@ class LibraryDB:
             artist: Filter by artist name (partial match)
             title: Filter by title (partial match)
             limit: Max results to return
+            fallback_to_like: If True and FTS query returns no results, try LIKE search on individual words
 
         Returns:
             List of matching LibraryItems
@@ -69,7 +71,24 @@ class LibraryDB:
                 WHERE library_fts MATCH ?
                 LIMIT ?
             """
-            cursor = await self._conn.execute(sql, (query, limit))
+            try:
+                cursor = await self._conn.execute(sql, (query, limit))
+                rows = await cursor.fetchall()
+                
+                # If no results and fallback enabled, try LIKE search
+                if not rows and fallback_to_like:
+                    logger.info(f"FTS search for '{query}' returned no results, trying LIKE fallback")
+                    rows = await self._fallback_like_search(query, limit)
+            except Exception as e:
+                # FTS syntax errors (e.g., special characters) - fall back to LIKE
+                if fallback_to_like:
+                    logger.info(f"FTS search for '{query}' failed ({e}), trying LIKE fallback")
+                    rows = await self._fallback_like_search(query, limit)
+                else:
+                    raise
+            
+            # Return results from FTS or fallback search
+            return [LibraryItem(**dict(row)) for row in rows]
 
         elif artist or title:
             # Filtered search
@@ -90,9 +109,53 @@ class LibraryDB:
                 LIMIT ?
             """
             cursor = await self._conn.execute(sql, params)
+            rows = await cursor.fetchall()
 
         else:
             return []
 
-        rows = await cursor.fetchall()
         return [LibraryItem(**dict(row)) for row in rows]
+
+    async def _fallback_like_search(self, query: str, limit: int) -> list[aiosqlite.Row]:
+        """
+        Fallback search using LIKE when FTS fails.
+        Splits query into words and searches for titles/artists containing all words.
+        Handles cases where punctuation or articles like "The" cause FTS to fail.
+        """
+        import re
+        
+        # Normalize: remove special chars, keep only alphanumeric and spaces
+        normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
+        words = normalized.split()
+        
+        # Remove common articles that might cause mismatches
+        stop_words = {'the', 'a', 'an'}
+        significant_words = [w for w in words if w not in stop_words and len(w) > 1]
+        
+        # If we removed all words, use original words
+        if not significant_words:
+            significant_words = [w for w in words if len(w) > 1]
+        
+        if not significant_words:
+            return []
+        
+        # Build LIKE conditions for each word
+        conditions = []
+        params = []
+        for word in significant_words:
+            # Search in both title and artist fields
+            conditions.append("(title LIKE ? OR artist LIKE ?)")
+            params.append(f"%{word}%")
+            params.append(f"%{word}%")
+        
+        params.append(limit)
+        
+        sql = f"""
+            SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
+            FROM library
+            WHERE {' AND '.join(conditions)}
+            LIMIT ?
+        """
+        
+        cursor = await self._conn.execute(sql, params)
+        return await cursor.fetchall()
