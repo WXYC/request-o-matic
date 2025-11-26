@@ -295,3 +295,112 @@ class TestSearchParams:
         request = ArtworkRequest()
         params = discogs_provider._build_search_params(request)
         assert params == {}
+
+
+# --- Track Search Tests ---
+
+
+class TestTrackSearch:
+    @pytest.mark.asyncio
+    async def test_search_releases_by_track(
+        self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
+    ):
+        """Test searching for all releases containing a specific track."""
+        # Mock response with multiple releases containing the same track
+        httpx_mock.add_response(
+            json={
+                "pagination": {"items": 3},
+                "results": [
+                    {
+                        "id": 1,
+                        "title": "Manu Dibango - Electric Africa",
+                        "thumb": "https://example.com/electric-africa.jpg",
+                        "type": "release",
+                    },
+                    {
+                        "id": 2,
+                        "title": "Various - Celluloid Records- change the beat 1979-87",
+                        "thumb": "https://example.com/celluloid.jpg",
+                        "type": "release",
+                    },
+                    {
+                        "id": 3,
+                        "title": "Various Artists - Best of Afro Funk",
+                        "thumb": "https://example.com/afro-funk.jpg",
+                        "type": "release",
+                    },
+                ],
+            }
+        )
+
+        releases = await discogs_provider.search_releases_by_track(
+            "Abele Dance (85 Remix)", "Manu Dibango"
+        )
+
+        assert len(releases) == 3
+        assert releases[0] == ("Manu Dibango", "Electric Africa")
+        assert releases[1] == ("Various", "Celluloid Records- change the beat 1979-87")
+        assert releases[2] == ("Various Artists", "Best of Afro Funk")
+
+        await discogs_provider.close()
+
+    @pytest.mark.asyncio
+    async def test_search_releases_by_track_no_artist(
+        self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
+    ):
+        """Test searching for track without artist filter."""
+        httpx_mock.add_response(
+            json={
+                "pagination": {"items": 2},
+                "results": [
+                    {
+                        "id": 100,
+                        "title": "Artist A - Album X",
+                        "thumb": "https://example.com/x.jpg",
+                        "type": "release",
+                    },
+                    {
+                        "id": 101,
+                        "title": "Artist B - Album Y",
+                        "thumb": "https://example.com/y.jpg",
+                        "type": "release",
+                    },
+                ],
+            }
+        )
+
+        releases = await discogs_provider.search_releases_by_track("Common Song Title")
+
+        assert len(releases) == 2
+        assert releases[0] == ("Artist A", "Album X")
+        assert releases[1] == ("Artist B", "Album Y")
+
+        await discogs_provider.close()
+
+    @pytest.mark.asyncio
+    async def test_search_releases_by_track_no_results(
+        self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
+    ):
+        """Test track search with no results."""
+        httpx_mock.add_response(json={"pagination": {"items": 0}, "results": []})
+
+        releases = await discogs_provider.search_releases_by_track(
+            "Nonexistent Song", "Unknown Artist"
+        )
+
+        assert len(releases) == 0
+        await discogs_provider.close()
+
+    @pytest.mark.asyncio
+    async def test_search_releases_by_track_rate_limit(
+        self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
+    ):
+        """Test that rate limits are handled gracefully."""
+        httpx_mock.add_response(status_code=429)
+
+        releases = await discogs_provider.search_releases_by_track(
+            "Some Song", "Some Artist"
+        )
+
+        assert len(releases) == 0
+        await discogs_provider.close()

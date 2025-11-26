@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
-from artwork.router import get_finder, lookup_album_by_track
+from artwork.router import get_finder, lookup_album_by_track, lookup_releases_by_track
 from library.models import LibraryItem
 from library.router import get_db
 from services.groq import get_groq_client
@@ -79,6 +79,7 @@ async def handle_request(request: RequestBody):
         library_results: list[LibraryItem] = []
         items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]] = []
         song_not_found = False  # Track if we couldn't find the requested song
+        found_on_compilation = False  # Track if we found the song on a V/A compilation
 
         # Step 2: If we have a song but no album, look up the album from Discogs
         album_for_search = parsed.album
@@ -116,6 +117,30 @@ async def handle_request(request: RequestBody):
                     if library_results:
                         # Mark that we're showing artist albums, not the requested album
                         song_not_found = True
+                
+                # Step 3b: If still no results and we have a song + artist,
+                # search Discogs for ALL releases with that track and check our library
+                if not library_results and parsed.song and parsed.artist:
+                    logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
+                    try:
+                        releases = await lookup_releases_by_track(parsed.song, parsed.artist)
+                        logger.info(f"Found {len(releases)} releases with '{parsed.song}' on Discogs")
+                        
+                        # Check each release against our library
+                        for release_artist, release_album in releases:
+                            # Search by album title only (to catch V/A compilations)
+                            results = await db.search(query=release_album, limit=1)
+                            if results:
+                                logger.info(f"Found '{parsed.song}' in library on '{release_album}' by '{release_artist}'")
+                                library_results.extend(results)
+                                found_on_compilation = True
+                                song_not_found = False
+                                # Limit to 5 total results
+                                if len(library_results) >= 5:
+                                    library_results = library_results[:5]
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Failed to search for track on other releases: {e}")
             except Exception as e:
                 logger.warning(f"Library search failed: {e}")
 
@@ -133,7 +158,9 @@ async def handle_request(request: RequestBody):
         if items_with_artwork:
             # Build context message if song/album wasn't found in library
             context = None
-            if song_not_found:
+            if found_on_compilation:
+                context = f"Found \"{parsed.song}\" by {parsed.artist} on:"
+            elif song_not_found:
                 if parsed.song and parsed.album:
                     context = f"\"{parsed.album}\" not found in the library, but here are other albums by {parsed.artist}:"
                 elif parsed.song:

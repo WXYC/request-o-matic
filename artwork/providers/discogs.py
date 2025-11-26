@@ -74,6 +74,50 @@ class DiscogsProvider:
             logger.error(f"Discogs track search failed: {e}")
             return None
 
+    async def search_releases_by_track(
+        self, track: str, artist: Optional[str] = None, limit: int = 20
+    ) -> list[tuple[str, str]]:
+        """
+        Search Discogs for ALL releases containing a track.
+        
+        Returns:
+            List of (artist, album) tuples for releases containing the track.
+        """
+        params: dict = {
+            "type": "release",
+            "track": track,
+            "per_page": limit,
+        }
+        if artist:
+            params["artist"] = artist
+
+        logger.info(f"Searching Discogs for all releases with track: {track}, artist: {artist}")
+        client = await self._get_client()
+
+        try:
+            response = await client.get("/database/search", params=params)
+
+            if response.status_code == 429:
+                logger.warning("Discogs rate limit hit")
+                return []
+
+            response.raise_for_status()
+            data = response.json()
+
+            releases = []
+            for result in data.get("results", []):
+                title = result.get("title", "")
+                result_artist, album = self._parse_title(title)
+                if album:  # Only include if we successfully parsed an album name
+                    releases.append((result_artist, album))
+            
+            logger.info(f"Found {len(releases)} releases with track '{track}'")
+            return releases
+
+        except Exception as e:
+            logger.error(f"Discogs track search failed: {e}")
+            return []
+
     async def search(self, request: ArtworkRequest) -> list[SearchResult]:
         """Search Discogs for album artwork."""
         params = self._build_search_params(request)

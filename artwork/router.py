@@ -66,6 +66,26 @@ async def lookup_album_by_track(track: str, artist: Optional[str] = None) -> Opt
     return None
 
 
+async def lookup_releases_by_track(
+    track: str, artist: Optional[str] = None, limit: int = 20
+) -> list[tuple[str, str]]:
+    """
+    Look up all releases containing a track using Discogs.
+    
+    Returns:
+        List of (artist, album) tuples for releases containing the track.
+        Useful for finding compilations and alternate releases.
+    """
+    if _finder is None:
+        return []
+
+    for provider in _finder.providers:
+        if isinstance(provider, DiscogsProvider):
+            return await provider.search_releases_by_track(track, artist, limit)
+
+    return []
+
+
 @router.post("", response_model=ArtworkResponse)
 async def find_artwork(request: ArtworkRequest):
     """Find album artwork for the given song/album/artist."""
