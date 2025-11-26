@@ -34,9 +34,11 @@ RUN mkdir -p /app/data /app/logs
 COPY library.db /app/data/library.db
 
 # Set proper permissions for appuser
+# SQLite needs full write access to the directory for journal files
 RUN chown -R appuser:appuser /app/data /app/logs && \
-    chmod -R 755 /app/data /app/logs && \
-    chmod 644 /app/data/library.db
+    chmod 777 /app/data && \
+    chmod 777 /app/logs && \
+    chmod 666 /app/data/library.db
 
 # Switch to non-root user
 USER appuser
