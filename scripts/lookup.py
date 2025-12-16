@@ -22,6 +22,10 @@ import sys
 from typing import Optional
 
 import httpx
+from dotenv import load_dotenv
+
+# Load .env file from project root
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
