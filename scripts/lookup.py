@@ -381,11 +381,17 @@ async def run_lookup(query: str, verbose: bool = False) -> dict:
                 print(f"  Query: {search_query}")
 
                 library_results = await search_library(client, search_query)
+                print(f"  Found {len(library_results)} results")
+                for item in library_results:
+                    print(f"    - {item.get('artist')} / {item.get('title')}")
 
                 # Step 4: Fallback to artist-only if needed
                 if not library_results and parsed.get("artist") and album_for_search:
-                    print(f"  No results, trying artist only: {parsed['artist']}")
+                    print(f"\n  No results, trying artist only: {parsed['artist']}")
                     library_results = await search_library(client, parsed["artist"])
+                    print(f"  Found {len(library_results)} results")
+                    for item in library_results:
+                        print(f"    - {item.get('artist')} / {item.get('title')}")
                     if library_results:
                         song_not_found = True
             else:
@@ -396,6 +402,9 @@ async def run_lookup(query: str, verbose: bool = False) -> dict:
                     print_section("Library Search")
                     print(f"  No artist/album parsed, searching raw query: {raw_msg}")
                     library_results = await search_library(client, raw_msg)
+                    print(f"  Found {len(library_results)} results")
+                    for item in library_results:
+                        print(f"    - {item.get('artist')} / {item.get('title')}")
 
             # Step 5: Search compilations if exact song/album not found
             if song_not_found and parsed.get("song") and parsed.get("artist"):
