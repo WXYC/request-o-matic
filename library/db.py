@@ -1,8 +1,10 @@
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 import aiosqlite
+from rapidfuzz import fuzz
 
 from library.models import LibraryItem
 
@@ -45,6 +47,7 @@ class LibraryDB:
         title: Optional[str] = None,
         limit: int = 10,
         fallback_to_like: bool = True,
+        fallback_to_fuzzy: bool = True,
     ) -> list[LibraryItem]:
         """
         Search the library catalog.
@@ -55,6 +58,7 @@ class LibraryDB:
             title: Filter by title (partial match)
             limit: Max results to return
             fallback_to_like: If True and FTS query returns no results, try LIKE search on individual words
+            fallback_to_fuzzy: If True and LIKE search returns no results, try fuzzy matching
 
         Returns:
             List of matching LibraryItems
@@ -79,11 +83,21 @@ class LibraryDB:
                 if not rows and fallback_to_like:
                     logger.info(f"FTS search for '{query}' returned no results, trying LIKE fallback")
                     rows = await self._fallback_like_search(query, limit)
+                
+                # If still no results, try fuzzy search
+                if not rows and fallback_to_fuzzy:
+                    logger.info(f"LIKE search for '{query}' returned no results, trying fuzzy fallback")
+                    return await self._fuzzy_search(query, limit)
             except Exception as e:
                 # FTS syntax errors (e.g., special characters) - fall back to LIKE
                 if fallback_to_like:
                     logger.info(f"FTS search for '{query}' failed ({e}), trying LIKE fallback")
                     rows = await self._fallback_like_search(query, limit)
+                    
+                    # If still no results, try fuzzy search
+                    if not rows and fallback_to_fuzzy:
+                        logger.info(f"LIKE search for '{query}' returned no results, trying fuzzy fallback")
+                        return await self._fuzzy_search(query, limit)
                 else:
                     raise
             
@@ -122,8 +136,6 @@ class LibraryDB:
         Splits query into words and searches for titles/artists containing all words.
         Handles cases where punctuation or articles like "The" cause FTS to fail.
         """
-        import re
-        
         # Normalize: remove special chars, keep only alphanumeric and spaces
         normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
         words = normalized.split()
@@ -159,3 +171,64 @@ class LibraryDB:
         
         cursor = await self._conn.execute(sql, params)
         return await cursor.fetchall()
+
+    async def _fuzzy_search(
+        self, query: str, limit: int, threshold: int = 70
+    ) -> list[LibraryItem]:
+        """
+        Fuzzy search fallback using rapidfuzz for typo tolerance.
+        
+        Searches for candidates that partially match the query words,
+        then ranks them by fuzzy similarity score.
+        
+        Args:
+            query: Search query
+            limit: Max results to return
+            threshold: Minimum fuzzy match score (0-100) to include results
+        """
+        # Normalize query
+        normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
+        words = normalized.split()
+        
+        if not words:
+            return []
+        
+        # Get the longest word to use for candidate search (more selective)
+        search_word = max(words, key=len)
+        
+        # Search for candidates using partial match on longest word
+        # Use first few characters to cast a wider net for typos
+        prefix = search_word[:3] if len(search_word) >= 3 else search_word
+        
+        sql = """
+            SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
+            FROM library
+            WHERE artist LIKE ? OR title LIKE ?
+            LIMIT 500
+        """
+        
+        cursor = await self._conn.execute(sql, (f"%{prefix}%", f"%{prefix}%"))
+        rows = await cursor.fetchall()
+        
+        if not rows:
+            return []
+        
+        # Score each result by fuzzy matching against the query
+        scored_results = []
+        for row in rows:
+            item = LibraryItem(**dict(row))
+            # Compare query against "artist - title" combined
+            combined = f"{item.artist or ''} {item.title or ''}".lower()
+            score = fuzz.token_set_ratio(query.lower(), combined)
+            
+            if score >= threshold:
+                scored_results.append((score, item))
+        
+        # Sort by score descending and return top results
+        scored_results.sort(key=lambda x: x[0], reverse=True)
+        results = [item for _, item in scored_results[:limit]]
+        
+        if results:
+            logger.info(f"Fuzzy search for '{query}' found {len(results)} results")
+        
+        return results
