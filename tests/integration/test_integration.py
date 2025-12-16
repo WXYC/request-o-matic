@@ -19,6 +19,7 @@ pytestmark = pytest.mark.integration
 
 # Skip if required env vars not set
 DISCOGS_TOKEN = os.getenv("DISCOGS_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # library.db is in project root, not tests/ directory
 LIBRARY_DB_PATH = Path(__file__).parent.parent.parent / "library.db"
 
@@ -30,6 +31,11 @@ skip_if_no_token = pytest.mark.skipif(
 skip_if_no_db = pytest.mark.skipif(
     not LIBRARY_DB_PATH.exists(),
     reason="library.db not found - skipping integration tests"
+)
+
+skip_if_no_groq = pytest.mark.skipif(
+    not GROQ_API_KEY,
+    reason="GROQ_API_KEY not set - skipping parser integration tests"
 )
 
 
@@ -384,7 +390,66 @@ class TestEndToEndIntegration:
         
         if has_expected_catalog:
             print("  ✅ Found release with expected catalog ID (DJ 70/1)!")
-        
+
         await provider.close()
         await db.close()
+
+
+class TestParserIntegration:
+    """Test the parser against the real Groq API."""
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_preserves_asterisks_in_artist_name(self):
+        """Test that special characters like asterisks are preserved in artist names.
+
+        The artist "Quix*o*tic" should NOT be normalized to "Quixotic".
+        """
+        from groq import Groq
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+
+        result = parse_request("something by quix*o*tic", client)
+
+        print(f"\n📝 Parsed result:")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True
+        assert result.artist is not None
+
+        # The key assertion: asterisks should be preserved
+        assert "*" in result.artist, \
+            f"Expected asterisks to be preserved in artist name, got: {result.artist}"
+        assert result.artist.lower().replace("*", "") == "quixotic", \
+            f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
+
+        print(f"  ✅ Asterisks preserved: {result.artist}")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_preserves_special_chars_in_various_artists(self):
+        """Test preservation of special characters in well-known artist names."""
+        from groq import Groq
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+
+        test_cases = [
+            ("play something by P!nk", "P!nk", "!"),
+            ("deadmau5 please", "deadmau5", "5"),
+        ]
+
+        for message, expected_contains, special_char in test_cases:
+            result = parse_request(message, client)
+
+            print(f"\n📝 '{message}' -> Artist: {result.artist}")
+
+            assert result.artist is not None, f"Expected artist for '{message}'"
+            # Check special char is preserved (case-insensitive check on base name)
+            assert special_char in result.artist or special_char in result.artist.lower(), \
+                f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
+
+            print(f"  ✅ Special char '{special_char}' preserved")
 
