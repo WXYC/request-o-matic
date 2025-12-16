@@ -1,10 +1,47 @@
 """Shared test fixtures for pytest."""
+import json
+import os
+import subprocess
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from config.settings import Settings
 from library.models import LibraryItem
+
+
+def pytest_configure(config):
+    """Load staging environment variables when running integration tests."""
+    # Check if we're running integration tests
+    markexpr = config.getoption("-m", default="")
+    if "integration" not in markexpr:
+        return
+    
+    # Check if RAILWAY_TOKEN_STAGING is set
+    token = os.environ.get("RAILWAY_TOKEN_STAGING")
+    if not token:
+        return  # Will use whatever env vars are already set
+    
+    try:
+        result = subprocess.run(
+            ["railway", "variables", "--json"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "RAILWAY_TOKEN": token},
+            timeout=30,
+        )
+        if result.returncode == 0:
+            variables = json.loads(result.stdout)
+            for key, value in variables.items():
+                os.environ[key] = value
+            print(f"\n✓ Loaded {len(variables)} staging environment variables from Railway")
+    except FileNotFoundError:
+        print("\n⚠ Railway CLI not found. Install with: brew install railway")
+    except subprocess.TimeoutExpired:
+        print("\n⚠ Timed out fetching Railway variables")
+    except json.JSONDecodeError:
+        print(f"\n⚠ Failed to parse Railway variables: {result.stdout}")
 
 
 @pytest.fixture

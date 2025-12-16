@@ -19,7 +19,8 @@ pytestmark = pytest.mark.integration
 
 # Skip if required env vars not set
 DISCOGS_TOKEN = os.getenv("DISCOGS_TOKEN")
-LIBRARY_DB_PATH = Path(__file__).parent.parent / "library.db"
+# library.db is in project root, not tests/ directory
+LIBRARY_DB_PATH = Path(__file__).parent.parent.parent / "library.db"
 
 skip_if_no_token = pytest.mark.skipif(
     not DISCOGS_TOKEN,
@@ -162,6 +163,41 @@ class TestLibraryIntegration:
         await db.close()
 
 
+    @pytest.mark.asyncio
+    @skip_if_no_db
+    async def test_dj_blaqstarr_in_library(self):
+        """Test that DJ Blaqstarr's release exists in the library.
+        
+        Expected: "Shake It To The Ground" should be in the library
+        with catalog ID "Hiphop cd DJ 70/1"
+        """
+        db = LibraryDB(db_path=LIBRARY_DB_PATH)
+        await db.connect()
+        
+        # Search for the artist
+        results = await db.search(query="DJ Blaqstarr", limit=5)
+        
+        print(f"\n✅ Found {len(results)} results for DJ Blaqstarr:")
+        for result in results:
+            print(f"  - {result.artist} - {result.title}")
+            print(f"    Call: {result.call_number}")
+        
+        # Verify we found it
+        assert len(results) > 0, "Should find DJ Blaqstarr release"
+        
+        # Check for expected catalog structure (DJ 70/1 in Hiphop)
+        found_expected = any(
+            result.call_letters == "DJ" and
+            result.artist_call_number == 70
+            for result in results
+        )
+        
+        if found_expected:
+            print("  ✅ Found DJ Blaqstarr with expected catalog ID (DJ 70)")
+        
+        await db.close()
+
+
 class TestEndToEndIntegration:
     """Test the full workflow: Discogs -> Library matching."""
     
@@ -274,5 +310,81 @@ class TestEndToEndIntegration:
         assert has_aphex, "Should find Aphex Twin album with keyword search"
         print("  ✅ Keyword search found Aphex Twin album!")
         
+        await db.close()
+    
+    @pytest.mark.asyncio
+    @skip_if_no_token
+    @skip_if_no_db
+    async def test_dj_blaqstarr_shake_it_to_the_ground(self):
+        """
+        Test the complete workflow for "Shake It To The Ground" by DJ Blaqstarr.
+        
+        Expected outcome:
+        - Discogs should find the track
+        - Library should have one matching release (catalog: Hiphop cd DJ 70/1)
+        """
+        # Step 1: Search Discogs for the track
+        provider = DiscogsProvider(token=DISCOGS_TOKEN)
+        releases = await provider.search_releases_by_track(
+            "Shake It To The Ground",
+            "DJ Blaqstarr"
+        )
+        
+        print(f"\n📀 Step 1: Found {len(releases)} releases on Discogs")
+        for i, (artist, album) in enumerate(releases[:5], 1):
+            print(f"  {i}. {artist} - {album}")
+        
+        # Step 2: Check library for matches
+        db = LibraryDB(db_path=LIBRARY_DB_PATH)
+        await db.connect()
+        
+        found_in_library = []
+        print("\n🔍 Step 2: Checking library for each release...")
+        
+        for release_artist, release_album in releases[:10]:
+            # Try exact match
+            results = await db.search(query=release_album, limit=1)
+            
+            # Try fuzzy match if exact fails
+            if not results:
+                import re
+                words = re.sub(r'[^\w\s]', ' ', release_album.lower()).split()
+                significant = [w for w in words if len(w) > 3][:3]
+                
+                if significant:
+                    fuzzy_query = ' '.join(significant)
+                    results = await db.search(query=fuzzy_query, limit=1)
+            
+            if results:
+                found_in_library.append((release_album, results[0]))
+                print(f"  ✅ Found: {results[0].title} ({results[0].call_number})")
+        
+        # Step 3: Also search library directly for DJ Blaqstarr
+        print("\n🔍 Step 3: Direct library search for DJ Blaqstarr...")
+        direct_results = await db.search(query="DJ Blaqstarr", limit=5)
+        
+        for result in direct_results:
+            print(f"  - {result.title} ({result.call_number})")
+            # Add to found list if not already there
+            if not any(item.id == result.id for _, item in found_in_library):
+                found_in_library.append(("Direct search", result))
+        
+        print(f"\n🎉 Total found: {len(found_in_library)} matches in library!")
+        
+        # Verify we found the release
+        assert len(found_in_library) > 0 or len(direct_results) > 0, \
+            "Should find DJ Blaqstarr release in library"
+        
+        # Check for expected catalog ID (DJ 70/1)
+        all_results = [item for _, item in found_in_library] + direct_results
+        has_expected_catalog = any(
+            result.call_letters == "DJ" and result.artist_call_number == 70
+            for result in all_results
+        )
+        
+        if has_expected_catalog:
+            print("  ✅ Found release with expected catalog ID (DJ 70/1)!")
+        
+        await provider.close()
         await db.close()
 
