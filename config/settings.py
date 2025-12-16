@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     slack_webhook_url: Optional[str] = Field(
         None, description="Slack webhook URL for posting results"
     )
+    slack_webhook_key_url: str = Field(
+        default="https://wxyc-requests-endpoint-production.up.railway.app",
+        description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)"
+    )
     
     # Database Configuration
     # Note: We use a validator to ensure empty strings default to library.db

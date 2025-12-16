@@ -1,10 +1,10 @@
 import logging
-import os
 from typing import Optional
 
 import httpx
 
 from artwork.models import ArtworkResponse
+from config.settings import get_settings
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
@@ -19,18 +19,18 @@ async def init_slack_service():
 
     _http_client = httpx.AsyncClient(timeout=30.0)
 
-    # Check for webhook URL override, otherwise fetch from Railway
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    if webhook_url:
-        _webhook_url = webhook_url
+    # Check for webhook URL override, otherwise fetch from configured URL
+    settings = get_settings()
+    if settings.slack_webhook_url:
+        _webhook_url = settings.slack_webhook_url
         logger.info("Using Slack webhook URL from environment")
     else:
         try:
-            response = await _http_client.get("https://wxyc-requests-endpoint-production.up.railway.app")
+            response = await _http_client.get(settings.slack_webhook_key_url)
             response.raise_for_status()
             webhook_key = response.text.strip()
             _webhook_url = f"https://hooks.slack.com/services/{webhook_key}"
-            logger.info("Slack webhook URL configured from Railway")
+            logger.info(f"Slack webhook URL configured from {settings.slack_webhook_key_url}")
         except Exception as e:
             logger.error(f"Failed to fetch Slack webhook key: {e}")
             raise RuntimeError(f"Failed to fetch Slack webhook key: {e}")
