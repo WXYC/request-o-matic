@@ -40,8 +40,9 @@ For each message, determine:
 
 Guidelines:
 - Normalize artist/song/album names to proper title case
+- Preserve intentional stylization like asterisks, numbers, or special characters in artist/song/album names (e.g., "Quix*o*tic" stays "Quix*o*tic", "P!nk" stays "P!nk", "deadmau5" stays "deadmau5")
 - Ignore parenthetical asides like "(rip Mani)" or "(2021 remaster)"
-- Correct obvious typos when you can confidently identify the intended artist/song
+- Correct obvious typos when you can confidently identify the intended artist/song, but don't remove intentional special characters
 - If someone says "anything by X" or "any song off Y album", that's still a request
 - A message can be both a dj_message AND contain a request (is_request: true)
 - Terse messages like "song title. artist name." or "song - artist" should extract both song and artist
