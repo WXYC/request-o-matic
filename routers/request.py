@@ -34,6 +34,7 @@ router = APIRouter(tags=["request"])
 class RequestBody(BaseModel):
     """Request body for song request parsing."""
     message: str
+    skip_slack: bool = False
 
 
 class UnifiedResponse(BaseModel):
@@ -491,13 +492,14 @@ async def handle_request(
         if library_results:
             items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
 
-        # Step 5: Build context and post to Slack
+        # Step 5: Build context and post to Slack (unless skip_slack is set)
         context = build_context_message(
             parsed, found_on_compilation, song_not_found, has_results=bool(library_results)
         )
-        await post_results_to_slack(
-            slack_service, request.message, parsed, items_with_artwork, context
-        )
+        if not request.skip_slack:
+            await post_results_to_slack(
+                slack_service, request.message, parsed, items_with_artwork, context
+            )
 
         # Extract main artwork from first result
         artwork = next(
