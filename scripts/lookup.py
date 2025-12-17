@@ -220,6 +220,26 @@ async def search_library(
     return results
 
 
+def filter_results_by_artist(results: list[dict], artist: str) -> list[dict]:
+    """Filter library results to only include those matching the artist.
+
+    Checks if the searched artist name appears in the result's artist field.
+    This helps filter out false positives from fuzzy search.
+    """
+    if not artist:
+        return results
+
+    artist_lower = artist.lower()
+    filtered = []
+    for item in results:
+        item_artist = (item.get("artist") or "").lower()
+        # Check if searched artist is in the result's artist field
+        if artist_lower in item_artist:
+            filtered.append(item)
+
+    return filtered
+
+
 async def get_artwork(
     client: httpx.AsyncClient, artist: Optional[str], album: Optional[str]
 ) -> Optional[dict]:
@@ -389,6 +409,13 @@ async def run_lookup(query: str, verbose: bool = False) -> dict:
                 for item in library_results:
                     print(f"    - {item.get('artist')} / {item.get('title')}")
 
+                # Filter to results that actually match the artist
+                if parsed.get("artist"):
+                    filtered = filter_results_by_artist(library_results, parsed["artist"])
+                    if len(filtered) < len(library_results):
+                        print(f"  Filtered to {len(filtered)} results matching artist '{parsed['artist']}'")
+                    library_results = filtered
+
                 # Step 4: Fallback to artist-only if needed
                 if not library_results and parsed.get("artist") and album_for_search:
                     print(f"\n  No results, trying artist only: {parsed['artist']}")
@@ -396,6 +423,11 @@ async def run_lookup(query: str, verbose: bool = False) -> dict:
                     print(f"  Found {len(library_results)} results")
                     for item in library_results:
                         print(f"    - {item.get('artist')} / {item.get('title')}")
+                    # Filter to results that actually match the artist
+                    filtered = filter_results_by_artist(library_results, parsed["artist"])
+                    if len(filtered) < len(library_results):
+                        print(f"  Filtered to {len(filtered)} results matching artist '{parsed['artist']}'")
+                    library_results = filtered
                     if library_results:
                         song_not_found = True
             else:
@@ -446,11 +478,16 @@ async def run_lookup(query: str, verbose: bool = False) -> dict:
             # Build context message
             if found_on_compilation:
                 context = f"Found \"{parsed.get('song')}\" by {parsed.get('artist')} on:"
-            elif song_not_found:
+            elif song_not_found and library_results:
+                # Only show "here are other albums" if we actually have results
                 if parsed.get("song") and parsed.get("album"):
                     context = f"\"{parsed['album']}\" not found, but here are other albums by {parsed.get('artist')}:"
                 elif parsed.get("song"):
                     context = f"\"{parsed['song']}\" not found on any album, but here are some albums by {parsed.get('artist')}:"
+            elif song_not_found and not library_results:
+                # No results at all
+                if parsed.get("song"):
+                    context = f"\"{parsed['song']}\" by {parsed.get('artist')} not found in library."
 
             # Print final results
             print_library_results(library_results, context, artwork_map)

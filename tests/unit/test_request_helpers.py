@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock
 
 from routers.request import (
     build_context_message,
+    filter_results_by_artist,
     resolve_album_for_track,
     search_library_with_fallback,
 )
+from library.models import LibraryItem
 from services.parser import MessageType, ParsedRequest
 
 
@@ -80,9 +82,46 @@ def test_build_context_message_none():
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=False)
     assert context is None
+
+
+def test_build_context_message_no_results():
+    """Test context message when song not found AND no results to show."""
+    parsed = ParsedRequest(
+        song="Test Song",
+        artist="Test Artist",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Test",
+    )
+
+    context = build_context_message(
+        parsed, found_on_compilation=False, song_not_found=True, has_results=False
+    )
+    assert "not found in library" in context
+    assert "Test Song" in context
+    assert "Test Artist" in context
+
+
+def test_build_context_message_song_not_found_with_results():
+    """Test context message when song not found but we have other albums to show."""
+    parsed = ParsedRequest(
+        song="Test Song",
+        artist="Test Artist",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Test",
+    )
+
+    context = build_context_message(
+        parsed, found_on_compilation=False, song_not_found=True, has_results=True
+    )
+    assert "here are some albums" in context
+    assert "Test Artist" in context
 
 
 @pytest.mark.asyncio
@@ -125,8 +164,6 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
 @pytest.mark.asyncio
 async def test_search_library_with_fallback_artist_only(mock_library_db):
     """Test library search falling back to artist only."""
-    from library.models import LibraryItem
-    
     # First call returns empty, second returns results
     mock_library_db.search.side_effect = [
         [],  # First search with artist+album
@@ -141,7 +178,7 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
             format="CD",
         )],  # Second search with artist only
     ]
-    
+
     parsed = ParsedRequest(
         song="Test Song",
         artist="Queen",
@@ -150,13 +187,154 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     results, fallback_used = await search_library_with_fallback(
         mock_library_db, parsed, "Unknown Album"
     )
-    
+
     assert len(results) == 1
     assert results[0].artist == "Queen"
     assert fallback_used is True
     assert mock_library_db.search.call_count == 2
+
+
+# Tests for filter_results_by_artist
+class TestFilterResultsByArtist:
+    """Tests for the filter_results_by_artist function."""
+
+    def test_filters_out_non_matching_artists(self):
+        """Test that results not matching the artist are filtered out."""
+        results = [
+            LibraryItem(id=1, artist="Biz Markie", title="Young Girl Bluez"),
+            LibraryItem(id=2, artist="Young Black Teenagers", title="Proud to be Black"),
+            LibraryItem(id=3, artist="Young Gov", title="Some Album"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Young Gov")
+
+        assert len(filtered) == 1
+        assert filtered[0].artist == "Young Gov"
+
+    def test_keeps_matching_artists(self):
+        """Test that results matching the artist are kept."""
+        results = [
+            LibraryItem(id=1, artist="Radiohead", title="OK Computer"),
+            LibraryItem(id=2, artist="Radiohead", title="The Bends"),
+            LibraryItem(id=3, artist="Radiohead", title="Kid A"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Radiohead")
+
+        assert len(filtered) == 3
+
+    def test_case_insensitive_matching(self):
+        """Test that artist matching is case insensitive."""
+        results = [
+            LibraryItem(id=1, artist="RADIOHEAD", title="OK Computer"),
+            LibraryItem(id=2, artist="radiohead", title="The Bends"),
+            LibraryItem(id=3, artist="Radiohead", title="Kid A"),
+        ]
+
+        filtered = filter_results_by_artist(results, "radiohead")
+
+        assert len(filtered) == 3
+
+    def test_partial_match_in_artist_field(self):
+        """Test that partial matches work (artist name contained in field)."""
+        results = [
+            LibraryItem(id=1, artist="Various Artists - Rock - D", title="Disco Not Disco"),
+            LibraryItem(id=2, artist="Queen", title="A Night at the Opera"),
+        ]
+
+        # "Various" should match "Various Artists - Rock - D"
+        filtered = filter_results_by_artist(results, "Various")
+
+        assert len(filtered) == 1
+        assert "Various" in filtered[0].artist
+
+    def test_empty_results_returns_empty(self):
+        """Test that empty input returns empty output."""
+        results = []
+
+        filtered = filter_results_by_artist(results, "Any Artist")
+
+        assert len(filtered) == 0
+
+    def test_no_artist_returns_all(self):
+        """Test that empty/None artist returns all results unfiltered."""
+        results = [
+            LibraryItem(id=1, artist="Radiohead", title="OK Computer"),
+            LibraryItem(id=2, artist="Queen", title="The Game"),
+        ]
+
+        filtered = filter_results_by_artist(results, "")
+        assert len(filtered) == 2
+
+        filtered = filter_results_by_artist(results, None)
+        assert len(filtered) == 2
+
+    def test_handles_none_artist_in_results(self):
+        """Test that results with None artist are handled gracefully."""
+        results = [
+            LibraryItem(id=1, artist=None, title="Unknown Album"),
+            LibraryItem(id=2, artist="Radiohead", title="OK Computer"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Radiohead")
+
+        assert len(filtered) == 1
+        assert filtered[0].artist == "Radiohead"
+
+    def test_young_gov_scenario(self):
+        """Test the specific Young Gov scenario that was failing."""
+        results = [
+            LibraryItem(id=1, artist="Biz Markie", title="Young Girl Bluez 12\""),
+            LibraryItem(id=2, artist="Young Black Teenagers", title="Proud to be Black 12\""),
+            LibraryItem(id=3, artist="Young Black Teenagers", title="Young Black Teenagers"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Young Gov")
+
+        # None of these should match "Young Gov"
+        assert len(filtered) == 0
+
+    def test_laid_back_scenario(self):
+        """Test the Laid Back scenario - should not match albums with 'laid back' in title."""
+        results = [
+            LibraryItem(id=1, artist="Various Artists - Hiphop", title="Night Shift - Laid Back Trip Hop"),
+            LibraryItem(id=2, artist="Gregg Allman", title="Laid Back"),
+            LibraryItem(id=3, artist="Laid Back", title="Keep Smiling"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Laid Back")
+
+        # Only the actual band "Laid Back" should match
+        assert len(filtered) == 1
+        assert filtered[0].artist == "Laid Back"
+
+
+@pytest.mark.asyncio
+async def test_search_library_filters_non_matching_artists(mock_library_db):
+    """Test that search_library_with_fallback filters out non-matching artists."""
+    # Return results that don't match the searched artist
+    mock_library_db.search.return_value = [
+        LibraryItem(id=1, artist="Young Black Teenagers", title="Proud to be Black"),
+        LibraryItem(id=2, artist="Biz Markie", title="Young Girl Bluez"),
+    ]
+
+    parsed = ParsedRequest(
+        song="Some Song",
+        artist="Young Gov",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Test",
+    )
+
+    results, fallback_used = await search_library_with_fallback(
+        mock_library_db, parsed, None
+    )
+
+    # Results should be empty after filtering
+    assert len(results) == 0
 

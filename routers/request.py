@@ -69,18 +69,54 @@ async def resolve_album_for_track(
     return parsed.album, False
 
 
+def filter_results_by_artist(
+    results: list[LibraryItem],
+    artist: Optional[str],
+) -> list[LibraryItem]:
+    """Filter library results to only include those matching the artist.
+
+    Checks if the searched artist name appears in the result's artist field.
+    This helps filter out false positives from fuzzy search (e.g., searching
+    for "Young Gov" returning "Young Black Teenagers" albums).
+
+    Args:
+        results: List of library items from search
+        artist: Artist name to filter by
+
+    Returns:
+        Filtered list containing only items where artist matches
+    """
+    if not artist:
+        return results
+
+    artist_lower = artist.lower()
+    filtered = []
+    for item in results:
+        item_artist = (item.artist or "").lower()
+        # Check if searched artist is in the result's artist field
+        if artist_lower in item_artist:
+            filtered.append(item)
+
+    if len(filtered) < len(results):
+        logger.info(
+            f"Filtered {len(results)} results to {len(filtered)} matching artist '{artist}'"
+        )
+
+    return filtered
+
+
 async def search_library_with_fallback(
     db: LibraryDB,
     parsed: ParsedRequest,
     album: Optional[str],
 ) -> tuple[list[LibraryItem], bool]:
     """Search library with artist+album, falling back to artist-only if needed.
-    
+
     Args:
         db: Library database
         parsed: Parsed request
         album: Resolved album name
-        
+
     Returns:
         Tuple of (library_results, song_not_found_flag)
     """
@@ -89,20 +125,26 @@ async def search_library_with_fallback(
         query_parts.append(parsed.artist)
     if album:
         query_parts.append(album)
-    
+
     if not query_parts:
         return [], False
-    
+
     query = " ".join(query_parts)
     results = await db.search(query=query, limit=5)
-    
+
+    # Filter to results that actually match the artist
+    if parsed.artist:
+        results = filter_results_by_artist(results, parsed.artist)
+
     # If no results and we had both artist and album, try just artist
     if not results and parsed.artist and album:
         logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
         results = await db.search(query=parsed.artist, limit=5)
+        # Filter again for artist-only search
+        results = filter_results_by_artist(results, parsed.artist)
         if results:
             return results, True
-    
+
     return results, False
 
 
@@ -284,26 +326,33 @@ def build_context_message(
     parsed: ParsedRequest,
     found_on_compilation: bool,
     song_not_found: bool,
+    has_results: bool = True,
 ) -> Optional[str]:
     """Build context message for Slack based on search results.
-    
+
     Args:
         parsed: Parsed request
         found_on_compilation: Whether song was found on compilation
         song_not_found: Whether the exact song/album wasn't found
-        
+        has_results: Whether there are library results to show
+
     Returns:
         Context message string or None
     """
     if found_on_compilation:
         return f"Found \"{parsed.song}\" by {parsed.artist} on:"
-    
-    if song_not_found:
+
+    if song_not_found and has_results:
+        # Show "here are other albums" only if we have results to show
         if parsed.song and parsed.album:
             return f"\"{parsed.album}\" not found in the library, but here are other albums by {parsed.artist}:"
         elif parsed.song:
             return f"\"{parsed.song}\" is not on any album in the library, but here are some albums by {parsed.artist}:"
-    
+    elif song_not_found and not has_results:
+        # No results at all after filtering
+        if parsed.song and parsed.artist:
+            return f"\"{parsed.song}\" by {parsed.artist} not found in library."
+
     return None
 
 
@@ -443,7 +492,9 @@ async def handle_request(
             items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
 
         # Step 5: Build context and post to Slack
-        context = build_context_message(parsed, found_on_compilation, song_not_found)
+        context = build_context_message(
+            parsed, found_on_compilation, song_not_found, has_results=bool(library_results)
+        )
         await post_results_to_slack(
             slack_service, request.message, parsed, items_with_artwork, context
         )

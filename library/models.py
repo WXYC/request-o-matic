@@ -16,13 +16,13 @@ class LibraryItem(BaseModel):
     """A single item from the library catalog."""
 
     id: int
-    title: Optional[str]
-    artist: Optional[str]
-    call_letters: Optional[str]
-    artist_call_number: Optional[int]
-    release_call_number: Optional[int]
-    genre: Optional[str]
-    format: Optional[str]
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    call_letters: Optional[str] = None
+    artist_call_number: Optional[int] = None
+    release_call_number: Optional[int] = None
+    genre: Optional[str] = None
+    format: Optional[str] = None
 
     @property
     def call_number(self) -> str:
