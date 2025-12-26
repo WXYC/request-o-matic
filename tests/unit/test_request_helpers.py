@@ -328,6 +328,20 @@ class TestFilterResultsByArtist:
         assert filtered[0].artist == "Amps for Christ"
         assert filtered[0].title == "Circuits"
 
+    def test_toy_does_not_match_chew_toy(self):
+        """Test that 'Toy' does not match 'Chew Toy' (word boundary matching)."""
+        results = [
+            LibraryItem(id=1, artist="Chew Toy", title="The Touch my Disney ep"),
+            LibraryItem(id=2, artist="Toy", title="Toy"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Toy")
+
+        # Only "Toy" should match, not "Chew Toy"
+        assert len(filtered) == 1
+        assert filtered[0].artist == "Toy"
+        assert filtered[0].title == "Toy"
+
 
 @pytest.mark.asyncio
 async def test_search_library_filters_non_matching_artists(mock_library_db):

@@ -76,9 +76,10 @@ def filter_results_by_artist(
 ) -> list[LibraryItem]:
     """Filter library results to only include those matching the artist.
 
-    Checks if the searched artist name appears in the result's artist field.
-    This helps filter out false positives from fuzzy search (e.g., searching
-    for "Young Gov" returning "Young Black Teenagers" albums).
+    Requires the searched artist name to appear at the START of the result's
+    artist field (case-insensitive). This prevents false positives like
+    "Toy" matching "Chew Toy" while still allowing "Various" to match
+    "Various Artists - Rock - D".
 
     Args:
         results: List of library items from search
@@ -94,8 +95,9 @@ def filter_results_by_artist(
     filtered = []
     for item in results:
         item_artist = (item.artist or "").lower()
-        # Check if searched artist is in the result's artist field
-        if artist_lower in item_artist:
+        # Check if result's artist starts with searched artist
+        # This handles both exact matches and "Various Artists - ..." patterns
+        if item_artist.startswith(artist_lower):
             filtered.append(item)
 
     if len(filtered) < len(results):
