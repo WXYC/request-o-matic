@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, Mock
 
 from routers.request import (
     build_context_message,
+    detect_ambiguous_format,
     filter_results_by_artist,
     resolve_album_for_track,
     search_library_with_fallback,
+    search_with_alternative_interpretation,
 )
 from library.models import LibraryItem
 from services.parser import MessageType, ParsedRequest
@@ -312,6 +314,20 @@ class TestFilterResultsByArtist:
         assert len(filtered) == 1
         assert filtered[0].artist == "Laid Back"
 
+    def test_amps_for_christ_scenario(self):
+        """Test that 'Amps for Christ' matches correctly and filters out 'Edward Bear'."""
+        results = [
+            LibraryItem(id=1, artist="Edward Bear", title="Edward Bear"),
+            LibraryItem(id=61692, artist="Amps for Christ", title="Circuits"),
+        ]
+
+        filtered = filter_results_by_artist(results, "Amps for Christ")
+
+        # Only "Amps for Christ" should match, not "Edward Bear"
+        assert len(filtered) == 1
+        assert filtered[0].artist == "Amps for Christ"
+        assert filtered[0].title == "Circuits"
+
 
 @pytest.mark.asyncio
 async def test_search_library_filters_non_matching_artists(mock_library_db):
@@ -337,4 +353,159 @@ async def test_search_library_filters_non_matching_artists(mock_library_db):
 
     # Results should be empty after filtering
     assert len(results) == 0
+
+
+# Tests for detect_ambiguous_format
+class TestDetectAmbiguousFormat:
+    """Tests for the detect_ambiguous_format function."""
+
+    def test_detects_dash_format(self):
+        """Test detection of 'X - Y' format."""
+        result = detect_ambiguous_format("Amps for Christ - Edward")
+        assert result == ("Amps for Christ", "Edward")
+
+    def test_detects_period_format(self):
+        """Test detection of 'X. Y' format."""
+        result = detect_ambiguous_format("Amps for Christ. Edward")
+        assert result == ("Amps for Christ", "Edward")
+
+    def test_returns_none_for_normal_message(self):
+        """Test that normal messages don't trigger ambiguity detection."""
+        assert detect_ambiguous_format("play something by radiohead") is None
+
+    def test_returns_none_for_empty_parts(self):
+        """Test that empty parts don't match."""
+        assert detect_ambiguous_format(" - Edward") is None
+        assert detect_ambiguous_format("Artist - ") is None
+
+    def test_dash_with_multiple_dashes(self):
+        """Test that only the first dash is used as separator."""
+        result = detect_ambiguous_format("Artist - Song - Remix")
+        assert result == ("Artist", "Song - Remix")
+
+    def test_handles_whitespace(self):
+        """Test that extra whitespace is trimmed."""
+        result = detect_ambiguous_format("  Artist  -  Title  ")
+        assert result == ("Artist", "Title")
+
+
+# Tests for search_with_alternative_interpretation
+class TestSearchWithAlternativeInterpretation:
+    """Tests for the search_with_alternative_interpretation function."""
+
+    @pytest.mark.asyncio
+    async def test_finds_correct_artist_first_interpretation(self, mock_library_db):
+        """Test finding results when only first interpretation (part1=artist) matches."""
+        # First search (part1 as artist) returns match
+        # Second search (part2 as artist) returns no matching artist
+        mock_library_db.search.side_effect = [
+            [LibraryItem(id=1, artist="Amps for Christ", title="Circuits")],
+            [LibraryItem(id=2, artist="Someone Else", title="Other Album")],
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Amps for Christ", "Edward"
+        )
+
+        # Only Amps for Christ matches (Someone Else doesn't contain "Edward")
+        assert len(results) == 1
+        assert results[0].artist == "Amps for Christ"
+        assert results[0].title == "Circuits"
+
+    @pytest.mark.asyncio
+    async def test_finds_correct_artist_second_interpretation(self, mock_library_db):
+        """Test finding results when second interpretation (part2=artist) is correct."""
+        # First search returns no matching artist
+        # Second search returns match
+        mock_library_db.search.side_effect = [
+            [],
+            [LibraryItem(id=1, artist="Queen", title="A Night at the Opera")],
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Bohemian Rhapsody", "Queen"
+        )
+
+        assert len(results) == 1
+        assert results[0].artist == "Queen"
+
+    @pytest.mark.asyncio
+    async def test_combines_results_from_both_interpretations(self, mock_library_db):
+        """Test combining results when both interpretations find matches."""
+        mock_library_db.search.side_effect = [
+            [LibraryItem(id=1, artist="Artist A", title="Album 1")],
+            [LibraryItem(id=2, artist="Artist B", title="Album 2")],
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Artist A", "Artist B"
+        )
+
+        # Both results should be combined
+        assert len(results) == 2
+        ids = {r.id for r in results}
+        assert ids == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_results(self, mock_library_db):
+        """Test that duplicate results are removed."""
+        same_item = LibraryItem(id=1, artist="Artist A", title="Album 1")
+        mock_library_db.search.side_effect = [
+            [same_item],
+            [same_item],  # Same item returned by both interpretations
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Artist A", "Something"
+        )
+
+        # Should only have one result despite appearing in both searches
+        assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_matches(self, mock_library_db):
+        """Test returning empty list when neither interpretation finds matches."""
+        mock_library_db.search.side_effect = [
+            [LibraryItem(id=1, artist="Wrong Artist", title="Album")],
+            [LibraryItem(id=2, artist="Also Wrong", title="Another Album")],
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Nonexistent Artist", "Unknown"
+        )
+
+        # After filtering by artist, should be empty
+        assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_amps_for_christ_scenario(self, mock_library_db):
+        """Test the specific 'Amps for Christ - Edward' scenario.
+
+        This tests the ambiguous format where both interpretations might yield results.
+        The function returns results from both interpretations so users can pick.
+        """
+        mock_library_db.search.side_effect = [
+            # First query: "Amps for Christ Edward" - filtered by "Amps for Christ"
+            [
+                LibraryItem(id=61692, artist="Amps for Christ", title="Circuits"),
+                LibraryItem(id=1, artist="Edward Bear", title="Edward Bear"),
+            ],
+            # Second query: "Edward Amps for Christ" - filtered by "Edward"
+            [
+                LibraryItem(id=1, artist="Edward Bear", title="Edward Bear"),
+            ],
+        ]
+
+        results = await search_with_alternative_interpretation(
+            mock_library_db, "Amps for Christ", "Edward"
+        )
+
+        # Both interpretations find something:
+        # - "Amps for Christ" matches Amps for Christ - Circuits
+        # - "Edward" matches Edward Bear (because "edward" is in "edward bear")
+        # Results are combined and deduplicated
+        assert len(results) == 2
+        artists = {r.artist for r in results}
+        assert "Amps for Christ" in artists
+        assert "Edward Bear" in artists
 

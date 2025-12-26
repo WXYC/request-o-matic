@@ -106,6 +106,84 @@ def filter_results_by_artist(
     return filtered
 
 
+def detect_ambiguous_format(raw_message: str) -> Optional[tuple[str, str]]:
+    """Detect if message has ambiguous 'X - Y' or 'X. Y' format.
+
+    These formats are ambiguous because they could be interpreted as either:
+    - Artist: X, Title: Y
+    - Title: X, Artist: Y
+
+    Args:
+        raw_message: The original request message
+
+    Returns:
+        Tuple of (part1, part2) if ambiguous format detected, None otherwise.
+    """
+    # Check for "X - Y" pattern (with spaces around dash)
+    if " - " in raw_message:
+        parts = raw_message.split(" - ", 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+            return (parts[0].strip(), parts[1].strip())
+
+    # Check for "X. Y" pattern (period followed by space)
+    if ". " in raw_message:
+        parts = raw_message.split(". ", 1)
+        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+            return (parts[0].strip(), parts[1].strip())
+
+    return None
+
+
+async def search_with_alternative_interpretation(
+    db: LibraryDB,
+    part1: str,
+    part2: str,
+) -> list[LibraryItem]:
+    """Try searching with both artist/title interpretations.
+
+    When given "X - Y" or "X. Y" format, tries:
+    1. part1 as artist, part2 as title
+    2. part2 as artist, part1 as title
+
+    Args:
+        db: Library database
+        part1: First part of the ambiguous format
+        part2: Second part of the ambiguous format
+
+    Returns:
+        Results from whichever interpretation finds matches (or combined if both do).
+    """
+    # Try interpretation 1: part1 = artist
+    query1 = f"{part1} {part2}"
+    results1 = await db.search(query=query1, limit=5)
+    results1 = filter_results_by_artist(results1, part1)
+
+    # Try interpretation 2: part2 = artist
+    query2 = f"{part2} {part1}"
+    results2 = await db.search(query=query2, limit=5)
+    results2 = filter_results_by_artist(results2, part2)
+
+    # Return whichever has results (prefer the one with more/better matches)
+    if results1 and not results2:
+        logger.info(f"Alternative search matched with '{part1}' as artist")
+        return results1
+    elif results2 and not results1:
+        logger.info(f"Alternative search matched with '{part2}' as artist")
+        return results2
+    elif results1 and results2:
+        # Both have results - combine and dedupe by id
+        logger.info(f"Alternative search matched both interpretations, combining results")
+        seen_ids = set()
+        combined = []
+        for item in results1 + results2:
+            if item.id not in seen_ids:
+                combined.append(item)
+                seen_ids.add(item.id)
+        return combined[:5]
+
+    return []
+
+
 async def search_library_with_fallback(
     db: LibraryDB,
     parsed: ParsedRequest,
@@ -479,8 +557,18 @@ async def handle_request(
             if fallback_used:
                 song_not_found = True
 
+        # Step 3a: If no results, try alternative interpretation for ambiguous formats
+        if not library_results:
+            ambiguous_parts = detect_ambiguous_format(request.message)
+            if ambiguous_parts:
+                library_results = await search_with_alternative_interpretation(
+                    db, ambiguous_parts[0], ambiguous_parts[1]
+                )
+                if library_results:
+                    song_not_found = False
+
             # Step 3b: Search compilations if exact song/album not found
-            if song_not_found and parsed.song and parsed.artist:
+            if not library_results and song_not_found and parsed.song and parsed.artist:
                 compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
                 if compilation_results:
                     # Replace artist albums with compilation results since we found the actual song
