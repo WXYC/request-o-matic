@@ -263,14 +263,25 @@ async def search_compilations_for_track(
         if significant:
             keyword_query = ' '.join(significant[:3])
             logger.info(f"Trying direct keyword search: '{keyword_query}'")
-            keyword_results = await db.search(query=keyword_query, limit=3)
-            
+            keyword_results = await db.search(query=keyword_query, limit=5)
+
             if keyword_results:
-                logger.info(f"Found {len(keyword_results)} potential matches via keyword search")
-                for item in keyword_results[:1]:
-                    if item.id not in seen_ids:
-                        results.append(item)
-                        seen_ids.add(item.id)
+                # Filter by artist unless it's a Various Artists compilation
+                filtered_results = []
+                for item in keyword_results:
+                    item_artist = (item.artist or "").lower()
+                    if item_artist.startswith(parsed.artist.lower()):
+                        filtered_results.append(item)
+                    elif "various" in item_artist:
+                        # Allow Various Artists compilations
+                        filtered_results.append(item)
+
+                if filtered_results:
+                    logger.info(f"Found {len(filtered_results)} matches via keyword search (after artist filter)")
+                    for item in filtered_results[:1]:
+                        if item.id not in seen_ids:
+                            results.append(item)
+                            seen_ids.add(item.id)
     except Exception as e:
         logger.warning(f"Keyword search failed: {e}")
     
