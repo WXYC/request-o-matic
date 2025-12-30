@@ -510,3 +510,60 @@ class TestFullRequestIntegration:
 
         print(f"\n✅ Correctly returned 'Meet Me in the City' album!")
 
+    @pytest.mark.asyncio
+    async def test_thoughtforms_by_lush_excludes_albums_without_song(self, base_url):
+        """
+        Test that 'Thoughtforms by Lush' only returns albums that have the song.
+
+        Bug: The search was returning 'Lovelife' which doesn't have 'Thoughtforms' on it,
+        because the fallback search returned all Lush albums without filtering.
+
+        Expected: Should return albums that actually have Thoughtforms (Scar, Mad Love, Gala)
+        and NOT return Lovelife.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Can i request thoughtforms by lush", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Lush"
+
+        # All results should be by Lush
+        for r in results:
+            assert r.get("artist") == "Lush", f"Expected Lush, got {r.get('artist')}"
+
+        # Should NOT include Lovelife (which doesn't have Thoughtforms)
+        titles = [r.get("title", "").lower() for r in results]
+        assert "lovelife" not in titles, (
+            "Lovelife should NOT be in results because it doesn't have Thoughtforms"
+        )
+
+        # Should include albums that actually have Thoughtforms
+        # (According to Discogs: Mad Love, Scar, Gala, etc.)
+        has_valid_album = any(
+            title in ["mad love", "scar", "gala"] for title in titles
+        )
+        assert has_valid_album, (
+            f"Expected at least one album that has Thoughtforms (Mad Love, Scar, or Gala), "
+            f"but got: {titles}"
+        )
+
+        print(f"\n✅ Correctly excluded albums without the requested song!")
+

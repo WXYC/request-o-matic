@@ -339,12 +339,30 @@ async def search_compilations_for_track(
                 if parsed.artist and release_album.lower().strip() == parsed.artist.lower().strip():
                     logger.debug(f"Skipping '{release_album}' - appears to be artist name, not album")
                     continue
-                
+
                 # Skip very short album titles (likely artifacts)
                 if len(release_album.strip()) < 3:
                     continue
-                
+
                 matches = await search_album_fuzzy(db, release_album)
+
+                # Filter matches to only include albums by the requested artist OR compilations
+                # This prevents "Mad Love" by Lush matching "Love is Gone Mad" by Big Eyes
+                # but still allows Various Artists compilations and soundtracks through
+                if matches and parsed.artist:
+                    filtered_matches = []
+                    artist_lower = parsed.artist.lower()
+                    for match in matches:
+                        match_artist = (match.artist or "").lower()
+                        # Keep if artist matches OR if it's a compilation/soundtrack
+                        is_compilation = any(
+                            keyword in match_artist
+                            for keyword in ["various", "soundtrack", "compilation"]
+                        )
+                        if match_artist.startswith(artist_lower) or is_compilation:
+                            filtered_matches.append(match)
+                    matches = filtered_matches
+
                 if matches:
                     logger.info(
                         f"Found '{parsed.song}' in library on '{matches[0].title}' "
@@ -357,7 +375,7 @@ async def search_compilations_for_track(
                             seen_ids.add(match.id)
                             # Store the Discogs album title for artwork lookup
                             discogs_titles[match.id] = release_album
-                    
+
                     if len(results) >= 5:
                         break
         except Exception as e:
@@ -368,16 +386,16 @@ async def search_compilations_for_track(
 
 async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryItem]:
     """Search for album with fuzzy keyword matching.
-    
+
     Args:
         db: Library database
         album_title: Album title to search for
-        
+
     Returns:
         List of matching library items
     """
-    # Try exact search first
-    results = await db.search(query=album_title, limit=1)
+    # Try exact search first (use higher limit to allow artist filtering later)
+    results = await db.search(query=album_title, limit=5)
     
     if not results:
         # Extract significant keywords
@@ -613,14 +631,16 @@ async def handle_request(
                 if library_results:
                     song_not_found = False
 
-            # Step 3b: Search compilations if exact song/album not found
-            if not library_results and song_not_found and parsed.song and parsed.artist:
-                compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
-                if compilation_results:
-                    # Replace artist albums with compilation results since we found the actual song
-                    library_results = compilation_results[:5]
-                    found_on_compilation = True
-                    song_not_found = False
+        # Step 3b: Search compilations if exact song/album not found
+        # This runs when: no results yet, OR we only have artist-fallback results (song_not_found=True)
+        # The compilation search cross-references with Discogs to find albums that actually have the song
+        if song_not_found and parsed.song and parsed.artist:
+            compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
+            if compilation_results:
+                # Replace artist albums with compilation results since we found the actual song
+                library_results = compilation_results[:5]
+                found_on_compilation = True
+                song_not_found = False
 
         # Step 4: Fetch artwork for library items
         if library_results:
