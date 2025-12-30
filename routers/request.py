@@ -191,7 +191,12 @@ async def search_library_with_fallback(
     parsed: ParsedRequest,
     album: Optional[str],
 ) -> tuple[list[LibraryItem], bool]:
-    """Search library with artist+album, falling back to artist-only if needed.
+    """Search library with artist+album, falling back to artist+song or artist-only.
+
+    Search order:
+    1. Artist + album (from Discogs lookup)
+    2. Artist + song (song title might match album title)
+    3. Artist only
 
     Args:
         db: Library database
@@ -206,6 +211,10 @@ async def search_library_with_fallback(
         query_parts.append(parsed.artist)
     if album:
         query_parts.append(album)
+    elif parsed.song:
+        # If no album but we have a song, use the song title
+        # (song title might match album title, e.g., "Meet Me in the City")
+        query_parts.append(parsed.song)
 
     if not query_parts:
         return [], False
@@ -217,7 +226,31 @@ async def search_library_with_fallback(
     if parsed.artist:
         results = filter_results_by_artist(results, parsed.artist)
 
-    # If no results and we had both artist and album, try just artist
+    # If we have results and a song title, prioritize albums matching the song
+    if results and parsed.song:
+        song_lower = parsed.song.lower()
+        results.sort(
+            key=lambda r: song_lower in (r.title or "").lower(),
+            reverse=True,
+        )
+
+    # If no results and we had both artist and album, try artist + song
+    # (song title might match album title, e.g., "Meet Me in the City")
+    if not results and parsed.artist and parsed.song and album:
+        song_query = f"{parsed.artist} {parsed.song}"
+        logger.info(f"No results for '{query}', trying artist + song: '{song_query}'")
+        results = await db.search(query=song_query, limit=5)
+        results = filter_results_by_artist(results, parsed.artist)
+        if results:
+            # Prioritize results where album title matches song title
+            song_lower = parsed.song.lower()
+            results.sort(
+                key=lambda r: song_lower in (r.title or "").lower(),
+                reverse=True,
+            )
+            return results, False  # Not "song not found" - we matched via song title
+
+    # If still no results and we had both artist and album, try just artist
     if not results and parsed.artist and album:
         logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
         results = await db.search(query=parsed.artist, limit=5)

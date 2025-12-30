@@ -166,9 +166,10 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
 @pytest.mark.asyncio
 async def test_search_library_with_fallback_artist_only(mock_library_db):
     """Test library search falling back to artist only."""
-    # First call returns empty, second returns results
+    # First call returns empty, second (artist+song) returns empty, third returns results
     mock_library_db.search.side_effect = [
         [],  # First search with artist+album
+        [],  # Second search with artist+song
         [LibraryItem(
             id=2,
             artist="Queen",
@@ -178,7 +179,7 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
             release_call_number=2,
             genre="Rock",
             format="CD",
-        )],  # Second search with artist only
+        )],  # Third search with artist only
     ]
 
     parsed = ParsedRequest(
@@ -197,7 +198,7 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
     assert len(results) == 1
     assert results[0].artist == "Queen"
     assert fallback_used is True
-    assert mock_library_db.search.call_count == 2
+    assert mock_library_db.search.call_count == 3
 
 
 # Tests for filter_results_by_artist

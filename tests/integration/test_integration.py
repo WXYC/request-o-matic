@@ -453,3 +453,60 @@ class TestParserIntegration:
 
             print(f"  ✅ Special char '{special_char}' preserved")
 
+
+class TestFullRequestIntegration:
+    """Test the full /request endpoint against a local server.
+
+    These tests require running a local server:
+        uvicorn main:app --reload
+    """
+
+    @pytest.fixture
+    def base_url(self):
+        """Base URL for local server."""
+        return "http://localhost:8000/api/v1"
+
+    @pytest.mark.asyncio
+    async def test_meet_me_in_the_city_returns_correct_album(self, base_url):
+        """
+        Test that 'Meet Me in the City Junior Kimbrough' returns the correct album.
+
+        Bug: The search was returning 'Do the Rump' instead of 'Meet Me in the City'
+        even though the library has an album called 'Meet Me in the City' by Junior Kimbrough.
+
+        Expected: Should return 'Meet Me in the City' album (Blues cd KI 6/4)
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Meet Me in the City Junior Kimbrough", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+        print(f"  Album: {parsed.get('album')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')} ({r.get('call_number')})")
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Junior Kimbrough"
+
+        # The first result should be "Meet Me in the City", NOT "Do the Rump"
+        first_result = results[0]
+        assert "meet me in the city" in first_result.get("title", "").lower(), (
+            f"Expected 'Meet Me in the City' album, but got '{first_result.get('title')}'. "
+            f"The search returned an album that doesn't contain the requested song."
+        )
+
+        print(f"\n✅ Correctly returned 'Meet Me in the City' album!")
+
