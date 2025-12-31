@@ -66,9 +66,10 @@ def print_library_results(results: list[dict], artwork: Optional[dict]) -> None:
         print(f"      URL:      {item.get('library_url') or '(none)'}")
         print()
 
-    if artwork and artwork.get("url"):
+    if artwork and artwork.get("artwork_url"):
         print_section("Artwork")
-        print(f"  URL:        {artwork.get('url')}")
+        print(f"  Image:      {artwork.get('artwork_url')}")
+        print(f"  Discogs:    {artwork.get('release_url') or '(none)'}")
         print(f"  Source:     {artwork.get('source')}")
         print(f"  Confidence: {artwork.get('confidence', 0):.2f}")
 
