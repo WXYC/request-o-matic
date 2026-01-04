@@ -48,14 +48,24 @@ async def resolve_album_for_track(
     parsed: ParsedRequest,
 ) -> tuple[Optional[str], bool]:
     """Resolve album name for a track if not provided.
-    
+
     Args:
         parsed: Parsed request with song/artist info
-        
+
     Returns:
         Tuple of (album_name, song_not_found_flag)
     """
-    if parsed.song and not parsed.album:
+    # Check if album is missing or if album == artist (parser error)
+    # When the parser can't identify the album, it sometimes uses the artist name
+    album_is_missing = not parsed.album
+    album_is_artist = (
+        parsed.album and parsed.artist
+        and parsed.album.lower().strip() == parsed.artist.lower().strip()
+    )
+
+    if parsed.song and (album_is_missing or album_is_artist):
+        if album_is_artist:
+            logger.info(f"Album '{parsed.album}' appears to be artist name, looking up album")
         try:
             album_from_track = await lookup_album_by_track(parsed.song, parsed.artist)
             if album_from_track:
@@ -285,16 +295,21 @@ async def search_compilations_for_track(
     discogs_titles: dict[int, str] = {}  # Map item ID to Discogs album title
     
     # First, try a direct library keyword search
+    keyword_matches = []
     try:
         artist_words = re.sub(r'[^\w\s]', ' ', parsed.artist.lower()).split() if parsed.artist else []
         song_words = re.sub(r'[^\w\s]', ' ', parsed.song.lower()).split() if parsed.song else []
-        
-        all_words = artist_words + song_words
-        significant = [w for w in all_words if len(w) > 3 and w not in 
-            {'the', 'and', 'with', 'from', 'that', 'this', 'play', 'song', 'remix'}]
-        
-        if significant:
-            keyword_query = ' '.join(significant[:3])
+
+        # Filter to significant words
+        stopwords = {'the', 'and', 'with', 'from', 'that', 'this', 'play', 'song', 'remix'}
+        sig_artist = [w for w in artist_words if len(w) > 3 and w not in stopwords]
+        sig_song = [w for w in song_words if len(w) > 3 and w not in stopwords]
+
+        # Include both artist words (max 2) and song words (max 2) to find the right album
+        query_words = sig_artist[:2] + sig_song[:2]
+
+        if query_words:
+            keyword_query = ' '.join(query_words)
             logger.info(f"Trying direct keyword search: '{keyword_query}'")
             keyword_results = await db.search(query=keyword_query, limit=5)
 
@@ -311,15 +326,15 @@ async def search_compilations_for_track(
 
                 if filtered_results:
                     logger.info(f"Found {len(filtered_results)} matches via keyword search (after artist filter)")
-                    for item in filtered_results[:1]:
-                        if item.id not in seen_ids:
-                            results.append(item)
-                            seen_ids.add(item.id)
+                    # Don't add to results yet - prefer Discogs results which know actual track listings
+                    keyword_matches = filtered_results
     except Exception as e:
         logger.warning(f"Keyword search failed: {e}")
-    
-    # If keyword search didn't find it, try Discogs track search
-    if not results:
+        keyword_matches = []
+
+    # Always try Discogs track search - it knows which albums actually have the song
+    # This is more reliable than keyword matching which can return wrong albums
+    if True:
         try:
             # Extract full song name with remix/version info
             raw_lower = parsed.raw_message.lower()
@@ -352,14 +367,26 @@ async def search_compilations_for_track(
                 if matches and parsed.artist:
                     filtered_matches = []
                     artist_lower = parsed.artist.lower()
+                    release_artist_lower = release_artist.lower() if release_artist else ""
+
+                    # Check if the Discogs release is by the requested artist or a compilation
+                    discogs_is_compilation = any(
+                        keyword in release_artist_lower
+                        for keyword in ["various", "soundtrack", "compilation"]
+                    )
+
                     for match in matches:
                         match_artist = (match.artist or "").lower()
-                        # Keep if artist matches OR if it's a compilation/soundtrack
-                        is_compilation = any(
+                        match_is_compilation = any(
                             keyword in match_artist
                             for keyword in ["various", "soundtrack", "compilation"]
                         )
-                        if match_artist.startswith(artist_lower) or is_compilation:
+
+                        # If Discogs says it's by the artist, only match artist albums
+                        # If Discogs says it's a compilation, allow compilation matches
+                        if match_artist.startswith(artist_lower):
+                            filtered_matches.append(match)
+                        elif discogs_is_compilation and match_is_compilation:
                             filtered_matches.append(match)
                     matches = filtered_matches
 
@@ -380,7 +407,24 @@ async def search_compilations_for_track(
                         break
         except Exception as e:
             logger.warning(f"Failed to search for track on other releases: {e}")
-    
+
+    # If Discogs didn't find anything, fall back to keyword matches
+    if not results and keyword_matches:
+        logger.info("Discogs search found nothing, using keyword matches as fallback")
+        for item in keyword_matches[:1]:
+            if item.id not in seen_ids:
+                results.append(item)
+                seen_ids.add(item.id)
+
+    # Prioritize albums whose title matches the song title
+    # (e.g., "Meet Me in the City" album for song "Meet Me in the City")
+    if results and parsed.song:
+        song_lower = parsed.song.lower()
+        results.sort(
+            key=lambda r: song_lower in (r.title or "").lower(),
+            reverse=True,
+        )
+
     return results[:5], discogs_titles
 
 
