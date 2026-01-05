@@ -567,3 +567,200 @@ class TestFullRequestIntegration:
 
         print(f"\n✅ Correctly excluded albums without the requested song!")
 
+    @pytest.mark.asyncio
+    async def test_young_gov_excludes_young_black_teenagers(self, base_url):
+        """
+        Test that searching for 'Young Gov' does not return 'Young Black Teenagers'.
+
+        Bug: Artist prefix matching was too loose, matching 'Young Black Teenagers'
+        when searching for 'Young Gov' because both start with 'Young'.
+
+        Expected: Should return only results where artist starts with 'Young Gov',
+        or no results if no exact match exists.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Young Gov", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        results = data.get("library_results", [])
+
+        print(f"\n📚 Library Results for 'Young Gov':")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should NOT include Young Black Teenagers
+        for r in results:
+            artist = r.get("artist", "").lower()
+            assert "young black teenagers" not in artist, (
+                f"'Young Black Teenagers' should not match 'Young Gov' search"
+            )
+
+        print(f"\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
+
+    @pytest.mark.asyncio
+    async def test_laid_back_matches_band_not_album_titles(self, base_url):
+        """
+        Test that searching for 'Laid Back' returns the band, not albums with 'laid back' in title.
+
+        Bug: Search was returning albums like "Night Shift - Laid Back Trip Hop" because
+        the title contained "Laid Back", even though the artist was different.
+
+        Expected: Should only return albums by the artist "Laid Back".
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Laid Back", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        results = data.get("library_results", [])
+
+        print(f"\n📚 Library Results for 'Laid Back':")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # All results should be by "Laid Back" artist, not just have it in title
+        for r in results:
+            artist = r.get("artist", "").lower()
+            # Should start with "laid back" (the artist)
+            assert artist.startswith("laid back"), (
+                f"Expected artist 'Laid Back', got '{r.get('artist')}'. "
+                f"Should not match albums with 'laid back' only in title."
+            )
+
+        print(f"\n✅ Correctly matched 'Laid Back' band, not just title matches!")
+
+    @pytest.mark.asyncio
+    async def test_toy_excludes_chew_toy(self, base_url):
+        """
+        Test that searching for 'Toy' does not return 'Chew Toy'.
+
+        Bug: Artist filtering was matching partial words, so 'Toy' matched 'Chew Toy'.
+
+        Expected: Should only return albums by artist 'Toy', not 'Chew Toy'.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Toy", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        results = data.get("library_results", [])
+
+        print(f"\n📚 Library Results for 'Toy':")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should NOT include "Chew Toy"
+        for r in results:
+            artist = r.get("artist", "").lower()
+            assert "chew toy" not in artist, (
+                f"'Chew Toy' should not match 'Toy' search - "
+                f"artist filtering should use word boundaries"
+            )
+
+        print(f"\n✅ Correctly excluded 'Chew Toy' from 'Toy' search!")
+
+    @pytest.mark.asyncio
+    async def test_amps_for_christ_excludes_edward_bear(self, base_url):
+        """
+        Test that searching for 'Amps for Christ' does not return 'Edward Bear'.
+
+        Bug: Ambiguous format detection ("Amps for Christ - Edward") was incorrectly
+        matching "Edward Bear" albums.
+
+        Expected: Should return 'Amps for Christ' albums, not 'Edward Bear'.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Amps for Christ", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        results = data.get("library_results", [])
+
+        print(f"\n📚 Library Results for 'Amps for Christ':")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should NOT include Edward Bear
+        for r in results:
+            artist = r.get("artist", "").lower()
+            assert "edward bear" not in artist, (
+                f"'Edward Bear' should not match 'Amps for Christ' search"
+            )
+
+        # If we have results, they should be by Amps for Christ
+        if results:
+            has_amps = any(
+                r.get("artist", "").lower().startswith("amps for christ")
+                for r in results
+            )
+            assert has_amps, (
+                f"Expected 'Amps for Christ' albums, got: "
+                f"{[r.get('artist') for r in results]}"
+            )
+
+        print(f"\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
+
+    @pytest.mark.asyncio
+    async def test_holland_1945_returns_aeroplane(self, base_url):
+        """
+        Test that 'Holland, 1945 Neutral Milk Hotel' returns the correct album.
+
+        Bug: Search was returning 'On Avery Island' instead of 'In the Aeroplane Over the Sea'
+        because the keyword search wasn't including song title words.
+
+        Expected: Should return 'In the Aeroplane Over the Sea' (which has Holland, 1945).
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Holland, 1945 Neutral Milk Hotel", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Neutral Milk Hotel"
+
+        # First result should be "In the Aeroplane Over the Sea"
+        first_result = results[0]
+        assert "aeroplane" in first_result.get("title", "").lower(), (
+            f"Expected 'In the Aeroplane Over the Sea', got '{first_result.get('title')}'. "
+            f"The search returned an album that doesn't have 'Holland, 1945'."
+        )
+
+        print(f"\n✅ Correctly returned 'In the Aeroplane Over the Sea'!")
+
