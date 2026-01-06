@@ -453,6 +453,38 @@ class TestParserIntegration:
 
             print(f"  ✅ Special char '{special_char}' preserved")
 
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_parses_comma_separated_song_artist_format(self):
+        """Test that 'song title, artist name' format is recognized as a request.
+
+        Bug: The parser wasn't recognizing comma-separated format like
+        "the man in your house, mi ami" as a song request.
+
+        Expected: Should extract song and artist from comma-separated format.
+        """
+        from groq import Groq
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+
+        result = parse_request("the man in your house, mi ami", client)
+
+        print(f"\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.song is not None, "Should extract song title"
+        assert result.artist is not None, "Should extract artist name"
+        assert "man" in result.song.lower() and "house" in result.song.lower(), \
+            f"Expected song 'The Man in Your House', got: {result.song}"
+        assert "mi ami" in result.artist.lower(), \
+            f"Expected artist 'Mi Ami', got: {result.artist}"
+
+        print(f"  ✅ Correctly parsed comma-separated format!")
+
 
 class TestFullRequestIntegration:
     """Test the full /request endpoint against a local server.
@@ -763,4 +795,55 @@ class TestFullRequestIntegration:
         )
 
         print(f"\n✅ Correctly returned 'In the Aeroplane Over the Sea'!")
+
+    @pytest.mark.asyncio
+    async def test_mi_ami_comma_format_returns_watersports(self, base_url):
+        """
+        Test that 'the man in your house, mi ami' returns the album Watersports.
+
+        Bug: The parser wasn't recognizing "song, artist" (comma-separated) format,
+        classifying it as "other" instead of a request.
+
+        Expected: Should parse as request and return 'Watersports' by Mi Ami.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "the man in your house, mi ami", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Is Request: {parsed.get('is_request')}")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should be recognized as a request
+        assert parsed.get("is_request") is True, (
+            "Should recognize 'song, artist' format as a request"
+        )
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Mi Ami"
+
+        # Should return Watersports
+        first_result = results[0]
+        assert "watersports" in first_result.get("title", "").lower(), (
+            f"Expected 'Watersports' album, got '{first_result.get('title')}'"
+        )
+        assert "mi ami" in first_result.get("artist", "").lower(), (
+            f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
+        )
+
+        print(f"\n✅ Correctly returned 'Watersports' by Mi Ami!")
 

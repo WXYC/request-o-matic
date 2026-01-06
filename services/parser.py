@@ -45,7 +45,7 @@ Guidelines:
 - Correct obvious typos when you can confidently identify the intended artist/song, but don't remove intentional special characters
 - If someone says "anything by X" or "any song off Y album", that's still a request
 - A message can be both a dj_message AND contain a request (is_request: true)
-- Terse messages like "song title. artist name." or "song - artist" should extract both song and artist
+- Terse messages like "song title. artist name.", "song - artist", or "song title, artist name" should extract both song and artist
 - When in doubt about whether something is a song title or album, prefer treating it as a song title
 
 Respond with valid JSON only, no markdown formatting."""
