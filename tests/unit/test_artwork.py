@@ -351,6 +351,7 @@ class TestTrackSearch:
         self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
     ):
         """Test searching for track without artist filter."""
+        # First request: track search returns 2 results (triggers fallback)
         httpx_mock.add_response(
             json={
                 "pagination": {"items": 2},
@@ -370,12 +371,34 @@ class TestTrackSearch:
                 ],
             }
         )
+        # Second request: keyword fallback (returns same results, deduplicated)
+        httpx_mock.add_response(
+            json={
+                "pagination": {"items": 2},
+                "results": [
+                    {
+                        "id": 100,
+                        "title": "Artist A - Album X",
+                        "thumb": "https://example.com/x.jpg",
+                        "type": "release",
+                    },
+                    {
+                        "id": 102,
+                        "title": "Artist C - Album Z",
+                        "thumb": "https://example.com/z.jpg",
+                        "type": "release",
+                    },
+                ],
+            }
+        )
 
         releases = await discogs_provider.search_releases_by_track("Common Song Title")
 
-        assert len(releases) == 2
+        # Should have 3: Album X, Album Y from track search, Album Z from keyword search
+        assert len(releases) == 3
         assert releases[0] == ("Artist A", "Album X")
         assert releases[1] == ("Artist B", "Album Y")
+        assert releases[2] == ("Artist C", "Album Z")
 
         await discogs_provider.close()
 
@@ -384,6 +407,9 @@ class TestTrackSearch:
         self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
     ):
         """Test track search with no results."""
+        # First request: track search returns nothing
+        httpx_mock.add_response(json={"pagination": {"items": 0}, "results": []})
+        # Second request: keyword fallback also returns nothing
         httpx_mock.add_response(json={"pagination": {"items": 0}, "results": []})
 
         releases = await discogs_provider.search_releases_by_track(
@@ -398,6 +424,9 @@ class TestTrackSearch:
         self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
     ):
         """Test that rate limits are handled gracefully."""
+        # First request: rate limited
+        httpx_mock.add_response(status_code=429)
+        # Second request: also rate limited
         httpx_mock.add_response(status_code=429)
 
         releases = await discogs_provider.search_releases_by_track(

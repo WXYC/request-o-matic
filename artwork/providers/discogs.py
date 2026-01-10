@@ -79,48 +79,78 @@ class DiscogsProvider:
     ) -> list[tuple[str, str]]:
         """
         Search Discogs for ALL releases containing a track.
-        
-        Uses general query search (like the website) instead of track parameter
-        to catch compilations and alternate releases that track search misses.
-        
+
+        Uses a hybrid approach:
+        1. First search with 'track' parameter for precise tracklist matches
+        2. If few results, supplement with 'q' query search to catch compilations
+
         Returns:
             List of (artist, album) tuples for releases containing the track.
         """
-        # Build query string (like Discogs website search)
-        query_parts = []
-        if track:
-            query_parts.append(track)
-        if artist:
-            query_parts.append(artist)
-        
-        params: dict = {
+        client = await self._get_client()
+        releases = []
+        seen_albums = set()
+
+        # First: precise search using track parameter
+        track_params: dict = {
             "type": "release",
-            "q": " ".join(query_parts),  # Use general query, not track parameter
+            "track": track,
             "per_page": limit,
         }
+        if artist:
+            track_params["artist"] = artist
 
-        logger.info(f"Searching Discogs for releases matching: '{params['q']}'")
-        client = await self._get_client()
+        logger.info(f"Searching Discogs for releases with track: '{track}', artist: {artist}")
 
         try:
-            response = await client.get("/database/search", params=params)
+            response = await client.get("/database/search", params=track_params)
 
-            if response.status_code == 429:
-                logger.warning("Discogs rate limit hit")
-                return []
+            if response.status_code != 429:
+                response.raise_for_status()
+                data = response.json()
 
-            response.raise_for_status()
-            data = response.json()
+                for result in data.get("results", []):
+                    title = result.get("title", "")
+                    result_artist, album = self._parse_title(title)
+                    if album:
+                        album_key = album.lower()
+                        if album_key not in seen_albums:
+                            releases.append((result_artist, album))
+                            seen_albums.add(album_key)
 
-            releases = []
-            for result in data.get("results", []):
-                title = result.get("title", "")
-                result_artist, album = self._parse_title(title)
-                if album:  # Only include if we successfully parsed an album name
-                    releases.append((result_artist, album))
-            
-            logger.info(f"Found {len(releases)} releases matching '{track}'")
-            return releases
+            logger.info(f"Track search found {len(releases)} releases")
+
+            # Second: if few results, supplement with keyword search for compilations
+            if len(releases) < 3:
+                query_parts = [track]
+                if artist:
+                    query_parts.append(artist)
+
+                query_params: dict = {
+                    "type": "release",
+                    "q": " ".join(query_parts),
+                    "per_page": limit,
+                }
+
+                logger.info(f"Supplementing with keyword search: '{query_params['q']}'")
+                response = await client.get("/database/search", params=query_params)
+
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    data = response.json()
+
+                    for result in data.get("results", []):
+                        title = result.get("title", "")
+                        result_artist, album = self._parse_title(title)
+                        if album:
+                            album_key = album.lower()
+                            if album_key not in seen_albums:
+                                releases.append((result_artist, album))
+                                seen_albums.add(album_key)
+
+                    logger.info(f"After keyword search: {len(releases)} total releases")
+
+            return releases[:limit]
 
         except Exception as e:
             logger.error(f"Discogs search failed: {e}")
