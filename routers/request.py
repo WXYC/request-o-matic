@@ -208,9 +208,11 @@ async def search_library_with_fallback(
     2. Artist + song (song title might match album title)
     3. Artist only
 
+    Note: Artist spelling correction should be done before calling this function.
+
     Args:
         db: Library database
-        parsed: Parsed request
+        parsed: Parsed request (with corrected artist name)
         album: Resolved album name
 
     Returns:
@@ -260,8 +262,8 @@ async def search_library_with_fallback(
             )
             return results, False  # Not "song not found" - we matched via song title
 
-    # If still no results and we had both artist and album, try just artist
-    if not results and parsed.artist and album:
+    # If still no results, try just artist
+    if not results and parsed.artist:
         logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
         results = await db.search(query=parsed.artist, limit=5)
         # Filter again for artist-only search
@@ -652,6 +654,12 @@ async def handle_request(
         song_not_found = False
         found_on_compilation = False
         discogs_titles: dict[int, str] = {}
+
+        # Step 1b: Correct artist spelling (e.g., "Living Color" -> "Living Colour")
+        if parsed.artist:
+            corrected_artist = await db.find_similar_artist(parsed.artist)
+            if corrected_artist:
+                parsed.artist = corrected_artist
 
         # Step 2: If we have a song but no album, look up the album from Discogs
         album_for_search, song_not_found = await resolve_album_for_track(parsed)

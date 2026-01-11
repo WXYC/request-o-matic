@@ -847,3 +847,47 @@ class TestFullRequestIntegration:
 
         print(f"\n✅ Correctly returned 'Watersports' by Mi Ami!")
 
+    @pytest.mark.asyncio
+    async def test_living_color_corrects_to_living_colour(self, base_url):
+        """
+        Test that 'Cult of Personality by Living Color' finds Living Colour.
+
+        Bug: American spelling "Living Color" wasn't matching British spelling
+        "Living Colour" in the library, returning no results.
+
+        Expected: Should correct spelling and return Living Colour albums.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Cult of Personality by Living Color", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should have results despite spelling difference
+        assert len(results) > 0, (
+            "Should find Living Colour albums even when spelled 'Living Color'"
+        )
+
+        # All results should be by Living Colour
+        for r in results:
+            assert "living colour" in r.get("artist", "").lower(), (
+                f"Expected 'Living Colour', got '{r.get('artist')}'"
+            )
+
+        print(f"\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
+

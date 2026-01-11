@@ -361,7 +361,111 @@ class TestRealWorldScenarios:
     async def test_various_artists_compilation(self, test_db: LibraryDB):
         """Test finding albums with 'Various' or similar artists."""
         results = await test_db.search(query="Soundtracks", limit=5)
-        
+
         # Should find soundtracks section
         assert len(results) >= 1
+
+
+# --- Artist Spelling Correction Tests ---
+
+
+@pytest_asyncio.fixture
+async def spelling_db(tmp_path):
+    """Create a test database with artists that have spelling variants."""
+    db_path = tmp_path / "spelling_test.db"
+
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("""
+            CREATE TABLE library (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                artist TEXT,
+                call_letters TEXT,
+                artist_call_number INTEGER,
+                release_call_number INTEGER,
+                genre TEXT,
+                format TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE VIRTUAL TABLE library_fts USING fts5(
+                title, artist, content='library', content_rowid='id'
+            )
+        """)
+
+        # Artists with common spelling variants
+        test_albums = [
+            (1, "Vivid", "Living Colour", "LI", 10, 1, "Rock", "cd"),
+            (2, "Time's Up", "Living Colour", "LI", 10, 2, "Rock", "vinyl"),
+            (3, "Theatre of Pain", "Mötley Crüe", "MO", 5, 1, "Rock", "vinyl"),
+            (4, "Favourite Worst Nightmare", "Arctic Monkeys", "AR", 3, 2, "Rock", "cd"),
+            (5, "Led Zeppelin IV", "Led Zeppelin", "LE", 1, 4, "Rock", "vinyl"),
+        ]
+
+        await conn.executemany(
+            "INSERT INTO library VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            test_albums
+        )
+
+        await conn.execute("""
+            INSERT INTO library_fts(rowid, title, artist)
+            SELECT id, title, artist FROM library
+        """)
+
+        await conn.commit()
+
+    db = LibraryDB(db_path=db_path)
+    await db.connect()
+    yield db
+    await db.close()
+
+
+class TestFindSimilarArtist:
+    @pytest.mark.asyncio
+    async def test_color_to_colour(self, spelling_db: LibraryDB):
+        """Test that 'Living Color' corrects to 'Living Colour'."""
+        result = await spelling_db.find_similar_artist("Living Color")
+
+        assert result == "Living Colour"
+
+    @pytest.mark.asyncio
+    async def test_exact_match_returns_none(self, spelling_db: LibraryDB):
+        """Test that exact match returns None (no correction needed)."""
+        result = await spelling_db.find_similar_artist("Living Colour")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_match(self, spelling_db: LibraryDB):
+        """Test that matching is case-insensitive."""
+        result = await spelling_db.find_similar_artist("living color")
+
+        assert result == "Living Colour"
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_none(self, spelling_db: LibraryDB):
+        """Test that non-matching artist returns None."""
+        result = await spelling_db.find_similar_artist("Nonexistent Band")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_threshold_respected(self, spelling_db: LibraryDB):
+        """Test that low-scoring matches are rejected."""
+        # "Led Zepplin" (typo) should match "Led Zeppelin"
+        result = await spelling_db.find_similar_artist("Led Zepplin")
+        assert result == "Led Zeppelin"
+
+        # "Led" alone should not match (too different)
+        result = await spelling_db.find_similar_artist("Led")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_prefix_search_uses_first_word(self, spelling_db: LibraryDB):
+        """Test that prefix search uses first significant word."""
+        # "Arctic Monkies" (typo) should find "Arctic Monkeys"
+        result = await spelling_db.find_similar_artist("Arctic Monkies")
+
+        assert result == "Arctic Monkeys"
 

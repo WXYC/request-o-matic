@@ -230,5 +230,66 @@ class LibraryDB:
         
         if results:
             logger.info(f"Fuzzy search for '{query}' found {len(results)} results")
-        
+
         return results
+
+    async def find_similar_artist(
+        self, artist: str, threshold: int = 85
+    ) -> Optional[str]:
+        """
+        Find a similar artist name in the library using fuzzy matching.
+
+        Useful for correcting typos or spelling variants (e.g., "Color" vs "Colour").
+
+        Args:
+            artist: Artist name to match
+            threshold: Minimum fuzzy match score (0-100) to accept
+
+        Returns:
+            Corrected artist name if a good match is found, None otherwise
+        """
+        if not self._conn:
+            raise RuntimeError("Database not connected")
+
+        # Get candidate artists using prefix of first significant word
+        artist_lower = artist.lower()
+        words = artist_lower.split()
+
+        # Use first word with 3+ chars for candidate search
+        search_word = next((w for w in words if len(w) >= 3), None)
+        if not search_word:
+            return None
+
+        prefix = search_word[:3]
+
+        sql = """
+            SELECT DISTINCT artist FROM library
+            WHERE artist LIKE ?
+            LIMIT 100
+        """
+
+        cursor = await self._conn.execute(sql, (f"{prefix}%",))
+        rows = await cursor.fetchall()
+
+        if not rows:
+            return None
+
+        # Find best fuzzy match
+        best_match = None
+        best_score = 0
+
+        for row in rows:
+            candidate = row[0]
+            if not candidate:
+                continue
+
+            score = fuzz.ratio(artist_lower, candidate.lower())
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = candidate
+
+        if best_match and best_match.lower() != artist_lower:
+            logger.info(f"Corrected artist '{artist}' to '{best_match}' (score: {best_score})")
+            return best_match
+
+        return None
