@@ -74,6 +74,50 @@ class DiscogsProvider:
             logger.error(f"Discogs track search failed: {e}")
             return None
 
+    def _is_compilation_artist(self, artist: str) -> bool:
+        """Check if artist name indicates a compilation/various artists release."""
+        artist_lower = artist.lower()
+        return any(
+            keyword in artist_lower
+            for keyword in ["various", "soundtrack", "compilation", "v/a", "v.a."]
+        )
+
+    async def _process_search_result(
+        self,
+        result: dict,
+        track: str,
+        artist: Optional[str],
+        seen_albums: set,
+    ) -> Optional[tuple[str, str]]:
+        """
+        Process a single search result, validating compilations.
+
+        Returns (artist, album) tuple if valid, None if should be skipped.
+        """
+        title = result.get("title", "")
+        result_artist, album = self._parse_title(title)
+
+        if not album:
+            return None
+
+        album_key = album.lower()
+        if album_key in seen_albums:
+            return None
+
+        # For Various Artists / compilations, validate the tracklist
+        if artist and self._is_compilation_artist(result_artist):
+            release_id = result.get("id")
+            if release_id:
+                is_valid = await self.validate_track_on_release(release_id, track, artist)
+                if not is_valid:
+                    logger.info(
+                        f"Skipping '{album}' - track/artist not validated on release"
+                    )
+                    return None
+
+        seen_albums.add(album_key)
+        return (result_artist, album)
+
     async def search_releases_by_track(
         self, track: str, artist: Optional[str] = None, limit: int = 20
     ) -> list[tuple[str, str]]:
@@ -84,12 +128,15 @@ class DiscogsProvider:
         1. First search with 'track' parameter for precise tracklist matches
         2. If few results, supplement with 'q' query search to catch compilations
 
+        For Various Artists / compilation releases, validates the tracklist
+        to ensure the track by the artist actually exists on the release.
+
         Returns:
             List of (artist, album) tuples for releases containing the track.
         """
         client = await self._get_client()
         releases = []
-        seen_albums = set()
+        seen_albums: set = set()
 
         # First: precise search using track parameter
         track_params: dict = {
@@ -110,13 +157,11 @@ class DiscogsProvider:
                 data = response.json()
 
                 for result in data.get("results", []):
-                    title = result.get("title", "")
-                    result_artist, album = self._parse_title(title)
-                    if album:
-                        album_key = album.lower()
-                        if album_key not in seen_albums:
-                            releases.append((result_artist, album))
-                            seen_albums.add(album_key)
+                    processed = await self._process_search_result(
+                        result, track, artist, seen_albums
+                    )
+                    if processed:
+                        releases.append(processed)
 
             logger.info(f"Track search found {len(releases)} releases")
 
@@ -140,13 +185,11 @@ class DiscogsProvider:
                     data = response.json()
 
                     for result in data.get("results", []):
-                        title = result.get("title", "")
-                        result_artist, album = self._parse_title(title)
-                        if album:
-                            album_key = album.lower()
-                            if album_key not in seen_albums:
-                                releases.append((result_artist, album))
-                                seen_albums.add(album_key)
+                        processed = await self._process_search_result(
+                            result, track, artist, seen_albums
+                        )
+                        if processed:
+                            releases.append(processed)
 
                     logger.info(f"After keyword search: {len(releases)} total releases")
 
@@ -155,6 +198,67 @@ class DiscogsProvider:
         except Exception as e:
             logger.error(f"Discogs search failed: {e}")
             return []
+
+    async def validate_track_on_release(
+        self, release_id: int, track: str, artist: str
+    ) -> bool:
+        """
+        Fetch release details and verify the track/artist actually exist.
+
+        Args:
+            release_id: Discogs release ID
+            track: Track name to find
+            artist: Artist name to find
+
+        Returns:
+            True if the track by the artist is found on the release
+        """
+        client = await self._get_client()
+        track_lower = track.lower()
+        artist_lower = artist.lower()
+
+        try:
+            response = await client.get(f"/releases/{release_id}")
+
+            if response.status_code == 429:
+                logger.warning("Discogs rate limit hit during tracklist fetch")
+                return False
+
+            response.raise_for_status()
+            data = response.json()
+
+            tracklist = data.get("tracklist", [])
+            for item in tracklist:
+                item_title = (item.get("title") or "").lower()
+                # Check if track title matches (exact or contained)
+                if track_lower not in item_title and item_title not in track_lower:
+                    continue
+
+                # Check if any artist on this track matches
+                track_artists = item.get("artists", [])
+                if not track_artists:
+                    # If no per-track artists, this might be a single-artist release
+                    # Check the release-level artists
+                    track_artists = data.get("artists", [])
+
+                for track_artist in track_artists:
+                    artist_name = (track_artist.get("name") or "").lower()
+                    # Remove Discogs numbering like "(2)" from artist names
+                    artist_name = artist_name.split("(")[0].strip()
+                    if artist_lower in artist_name or artist_name in artist_lower:
+                        logger.info(
+                            f"Validated: '{track}' by '{artist}' found on release {release_id}"
+                        )
+                        return True
+
+            logger.info(
+                f"Track '{track}' by '{artist}' NOT found on release {release_id}"
+            )
+            return False
+
+        except Exception as e:
+            logger.warning(f"Failed to validate release {release_id}: {e}")
+            return False
 
     async def search(self, request: ArtworkRequest) -> list[SearchResult]:
         """Search Discogs for album artwork."""

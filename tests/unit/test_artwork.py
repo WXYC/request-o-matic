@@ -308,7 +308,8 @@ class TestTrackSearch:
         self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
     ):
         """Test searching for all releases containing a specific track."""
-        # Mock response with multiple releases containing the same track
+        # Mock search response with multiple releases containing the same track
+        # Request 1: Track search
         httpx_mock.add_response(
             json={
                 "pagination": {"items": 3},
@@ -332,7 +333,39 @@ class TestTrackSearch:
                         "type": "release",
                     },
                 ],
-            }
+            },
+        )
+
+        # Request 2: Tracklist validation for release 2 (Various)
+        httpx_mock.add_response(
+            json={
+                "tracklist": [
+                    {
+                        "title": "Abele Dance (85 Remix)",
+                        "artists": [{"name": "Manu Dibango"}],
+                    },
+                    {
+                        "title": "Change The Beat",
+                        "artists": [{"name": "Fab 5 Freddy"}],
+                    },
+                ],
+            },
+        )
+
+        # Request 3: Tracklist validation for release 3 (Various Artists)
+        httpx_mock.add_response(
+            json={
+                "tracklist": [
+                    {
+                        "title": "Abele Dance (85 Remix)",
+                        "artists": [{"name": "Manu Dibango"}],
+                    },
+                    {
+                        "title": "Soul Makossa",
+                        "artists": [{"name": "Manu Dibango"}],
+                    },
+                ],
+            },
         )
 
         releases = await discogs_provider.search_releases_by_track(
@@ -343,6 +376,64 @@ class TestTrackSearch:
         assert releases[0] == ("Manu Dibango", "Electric Africa")
         assert releases[1] == ("Various", "Celluloid Records- change the beat 1979-87")
         assert releases[2] == ("Various Artists", "Best of Afro Funk")
+
+        await discogs_provider.close()
+
+    @pytest.mark.asyncio
+    async def test_search_releases_filters_invalid_compilations(
+        self, discogs_provider: DiscogsProvider, httpx_mock: HTTPXMock
+    ):
+        """Test that Various Artists releases without the actual track are filtered out."""
+        # Request 1: Track search
+        httpx_mock.add_response(
+            json={
+                "pagination": {"items": 2},
+                "results": [
+                    {
+                        "id": 1,
+                        "title": "Sugar Plant - After Come Down",
+                        "thumb": "https://example.com/sugar-plant.jpg",
+                        "type": "release",
+                    },
+                    {
+                        "id": 2,
+                        "title": "Various - 22 Explosive Hits, Vol 2",
+                        "thumb": "https://example.com/hits.jpg",
+                        "type": "release",
+                    },
+                ],
+            },
+        )
+
+        # Request 2: Tracklist for compilation - does NOT contain the actual track/artist
+        httpx_mock.add_response(
+            json={
+                "tracklist": [
+                    {
+                        "title": "A Simple Man",  # Similar but not "Simple"
+                        "artists": [{"name": "Sugar Bears (2)"}],  # Similar but not "Sugar Plant"
+                    },
+                    {
+                        "title": "Explosive Hit",
+                        "artists": [{"name": "Some Other Artist"}],
+                    },
+                ],
+            },
+        )
+
+        # Request 3: Keyword fallback search (since < 3 results after validation)
+        httpx_mock.add_response(
+            json={
+                "pagination": {"items": 0},
+                "results": [],
+            },
+        )
+
+        releases = await discogs_provider.search_releases_by_track("Simple", "Sugar Plant")
+
+        # Only the Sugar Plant album should be returned, compilation filtered out
+        assert len(releases) == 1
+        assert releases[0] == ("Sugar Plant", "After Come Down")
 
         await discogs_provider.close()
 
