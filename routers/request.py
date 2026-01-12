@@ -440,30 +440,54 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
     Returns:
         List of matching library items
     """
+    from rapidfuzz import fuzz
+
     # Try exact search first (use higher limit to allow artist filtering later)
     results = await db.search(query=album_title, limit=5)
-    
+
     if not results:
         # Extract significant keywords
         words = re.sub(r'[^\w\s]', ' ', album_title.lower()).split()
-        significant_words = [w for w in words if len(w) > 3 and w not in 
+        significant_words = [w for w in words if len(w) > 3 and w not in
             {'the', 'and', 'with', 'from', 'that', 'this', 'story', 'records'}]
-        
+
         if significant_words:
             fuzzy_query = ' '.join(significant_words[:4])
             logger.info(f"Exact match failed for '{album_title}', trying fuzzy: '{fuzzy_query}'")
-            results = await db.search(query=fuzzy_query, limit=3)
-            
-            # Filter results to ensure they contain at least 2 keywords
+            results = await db.search(query=fuzzy_query, limit=5)
+
+            # Filter results using both keyword matching AND overall similarity
             if results:
+                album_lower = album_title.lower()
                 filtered_results = []
                 for result in results:
                     result_title_lower = (result.title or '').lower()
-                    matches = sum(1 for word in significant_words if word in result_title_lower)
-                    if matches >= 2:
+
+                    # Count keyword matches
+                    keyword_matches = sum(
+                        1 for word in significant_words if word in result_title_lower
+                    )
+
+                    # Calculate overall fuzzy similarity
+                    similarity = fuzz.token_set_ratio(album_lower, result_title_lower)
+
+                    # Require BOTH: 2+ keyword matches AND 60% overall similarity
+                    # This prevents "22 Explosive Hits, Vol 2" matching "K-Tel: 22 Explosive Hits!"
+                    # which share keywords but are different albums (similarity ~50%)
+                    if keyword_matches >= 2 and similarity >= 60:
+                        logger.debug(
+                            f"Album match: '{result.title}' "
+                            f"(keywords={keyword_matches}, similarity={similarity})"
+                        )
                         filtered_results.append(result)
+                    else:
+                        logger.debug(
+                            f"Album rejected: '{result.title}' "
+                            f"(keywords={keyword_matches}, similarity={similarity})"
+                        )
+
                 results = filtered_results
-    
+
     return results
 
 

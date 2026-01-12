@@ -78,6 +78,47 @@ class TestDiscogsIntegration:
     
     @pytest.mark.asyncio
     @skip_if_no_token
+    async def test_sugar_plant_filters_false_positive_compilations(self):
+        """
+        Test that searching for 'Simple' by 'Sugar Plant' filters out false positives.
+
+        Bug: Discogs was returning "22 Explosive Hits, Vol 2" because it contains
+        "A Simple Man" by "Sugar Bears (2)" - partial matches on track and artist.
+
+        Expected: The tracklist validation should filter out compilations that don't
+        actually contain "Simple" by "Sugar Plant".
+        """
+        provider = DiscogsProvider(token=DISCOGS_TOKEN)
+
+        releases = await provider.search_releases_by_track("Simple", "Sugar Plant")
+
+        print(f"\n✅ Found {len(releases)} releases on Discogs:")
+        for i, (artist, album) in enumerate(releases[:10], 1):
+            print(f"  {i}. {artist} - {album}")
+
+        # Should NOT include "22 Explosive Hits" or similar false positives
+        for artist, album in releases:
+            album_lower = album.lower()
+            assert "explosive" not in album_lower, (
+                f"Should not include '{album}' - it contains 'A Simple Man' by "
+                f"'Sugar Bears', not 'Simple' by 'Sugar Plant'"
+            )
+
+        # If we have results, they should be actual Sugar Plant releases
+        # or verified compilations (Various Artists that passed tracklist validation)
+        for artist, album in releases:
+            artist_lower = artist.lower()
+            is_sugar_plant = "sugar plant" in artist_lower
+            is_compilation = "various" in artist_lower
+            assert is_sugar_plant or is_compilation, (
+                f"Expected Sugar Plant or verified compilation, got '{artist}'"
+            )
+
+        await provider.close()
+        print(f"\n✅ Tracklist validation correctly filtered false positives!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_token
     async def test_discogs_rate_limiting(self):
         """Test that we handle rate limits gracefully."""
         provider = DiscogsProvider(token=DISCOGS_TOKEN)
@@ -890,4 +931,59 @@ class TestFullRequestIntegration:
             )
 
         print(f"\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
+
+    @pytest.mark.asyncio
+    async def test_sugar_plant_excludes_unrelated_compilations(self, base_url):
+        """
+        Test that 'Simple by Sugar Plant' does not return unrelated compilations.
+
+        Bug: Discogs search for "Simple" was returning "22 Explosive Hits, Vol 2"
+        because it contains "A Simple Man" by "Sugar Bears (2)" - partial matches
+        on both track and artist. Then fuzzy album matching was incorrectly matching
+        this to "K-Tel: 22 Explosive Hits!" in the library.
+
+        Expected: Should either return actual Sugar Plant albums, or no results
+        if Sugar Plant isn't in the library. Should NOT return K-Tel compilations.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "Simple by Sugar Plant", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should NOT include unrelated K-Tel or "Explosive Hits" compilations
+        for r in results:
+            title = r.get("title", "").lower()
+            assert "k-tel" not in title and "explosive" not in title, (
+                f"Should not return unrelated compilation '{r.get('title')}' "
+                f"for 'Simple by Sugar Plant' request"
+            )
+
+        # If we have results, they should be by Sugar Plant or Various Artists
+        # compilations that actually contain "Simple" by Sugar Plant
+        for r in results:
+            artist = r.get("artist", "").lower()
+            # Either by Sugar Plant directly, or a verified compilation
+            is_sugar_plant = "sugar plant" in artist
+            is_valid_compilation = "various" in artist
+            assert is_sugar_plant or is_valid_compilation, (
+                f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
+            )
+
+        print(f"\n✅ Correctly excluded unrelated compilations!")
 
