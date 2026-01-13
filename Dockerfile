@@ -11,6 +11,7 @@ COPY main.py ./
 COPY config/ ./config/
 COPY core/ ./core/
 COPY artwork/ ./artwork/
+COPY discogs/ ./discogs/
 COPY library/ ./library/
 COPY routers/ ./routers/
 COPY services/ ./services/
