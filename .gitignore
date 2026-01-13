@@ -13,3 +13,4 @@ logs/
 .mypy_cache/
 .coverage
 htmlcov/
+library/*.db
