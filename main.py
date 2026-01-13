@@ -8,8 +8,9 @@ from fastapi import FastAPI
 
 from artwork.router import router as artwork_router
 from config.settings import get_settings
-from core.dependencies import close_http_client, close_library_db
+from core.dependencies import close_discogs_service, close_http_client, close_library_db
 from core.logging import setup_logging
+from discogs.router import router as discogs_router
 from library.router import router as library_router
 from routers.health import router as health_router
 from routers.parse import router as parse_router
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down application")
     await close_library_db()
+    await close_discogs_service()
     await close_http_client()
     logger.info("All services shut down")
 
@@ -65,6 +67,7 @@ app.include_router(parse_router, prefix="/api/v1", tags=["parse"])
 app.include_router(request_router, prefix="/api/v1", tags=["request"])
 app.include_router(artwork_router, prefix="/api/v1", tags=["artwork"])
 app.include_router(library_router, prefix="/api/v1", tags=["library"])
+app.include_router(discogs_router, prefix="/api/v1", tags=["discogs"])
 
 # Backwards compatibility - mount at root as well
 app.include_router(parse_router, prefix="", tags=["parse-legacy"])

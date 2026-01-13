@@ -11,6 +11,7 @@ from artwork.finder import ArtworkFinder
 from artwork.providers.discogs import DiscogsProvider
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
+from discogs.service import DiscogsService
 from library.db import LibraryDB
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Module-level instances for lifecycle management
 _http_client: Optional[httpx.AsyncClient] = None
 _library_db: Optional[LibraryDB] = None
+_discogs_service: Optional[DiscogsService] = None
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -90,6 +92,38 @@ async def close_library_db() -> None:
     if _library_db:
         await _library_db.close()
         _library_db = None
+
+
+async def get_discogs_service(
+    settings: Settings = Depends(get_settings),
+) -> Optional[DiscogsService]:
+    """Get Discogs service instance with caching.
+
+    Args:
+        settings: Application settings
+
+    Returns:
+        Optional[DiscogsService]: Discogs service if configured, None otherwise
+    """
+    global _discogs_service
+
+    if not settings.discogs_token:
+        logger.debug("DISCOGS_TOKEN not set - Discogs service disabled")
+        return None
+
+    if _discogs_service is None:
+        _discogs_service = DiscogsService(settings.discogs_token)
+        logger.info("Discogs service initialized")
+
+    return _discogs_service
+
+
+async def close_discogs_service() -> None:
+    """Close Discogs service and its HTTP client."""
+    global _discogs_service
+    if _discogs_service:
+        await _discogs_service.close()
+        _discogs_service = None
 
 
 async def get_artwork_finder(settings: Settings = Depends(get_settings)) -> Optional[ArtworkFinder]:

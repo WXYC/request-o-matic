@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     enable_artwork_lookup: bool = Field(
         default=True, description="Enable artwork lookup from external APIs"
     )
+
+    # Discogs Cache Configuration
+    discogs_track_cache_ttl: int = Field(
+        default=3600, description="TTL in seconds for Discogs track cache (default: 1 hour)"
+    )
+    discogs_release_cache_ttl: int = Field(
+        default=14400, description="TTL in seconds for Discogs release cache (default: 4 hours)"
+    )
+    discogs_search_cache_ttl: int = Field(
+        default=3600, description="TTL in seconds for Discogs search cache (default: 1 hour)"
+    )
+    discogs_cache_maxsize: int = Field(
+        default=1000, description="Maximum entries in Discogs caches"
+    )
     
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")

@@ -4,9 +4,18 @@ from pytest_httpx import HTTPXMock
 from artwork.models import ArtworkRequest
 from artwork.providers.discogs import DiscogsProvider
 from artwork.finder import ArtworkFinder
+from discogs.cache import clear_all_caches
 
 
 # --- Fixtures ---
+
+
+@pytest.fixture(autouse=True)
+def clear_caches_before_test():
+    """Clear all Discogs caches before each test to prevent test pollution."""
+    clear_all_caches()
+    yield
+    clear_all_caches()
 
 
 @pytest.fixture
