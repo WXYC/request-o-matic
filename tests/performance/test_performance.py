@@ -20,6 +20,13 @@ import httpx
 import pytest
 from dotenv import load_dotenv
 
+from .baseline import (
+    BaselineManager,
+    Environment,
+    check_performance,
+    detect_environment,
+)
+
 load_dotenv()
 
 pytestmark = pytest.mark.integration
@@ -91,12 +98,24 @@ def base_url():
     return "http://localhost:8000/api/v1"
 
 
+@pytest.fixture
+def environment(base_url):
+    """Detect the test environment from base_url."""
+    return detect_environment(base_url)
+
+
+@pytest.fixture(scope="session")
+def baseline_manager():
+    """Session-scoped baseline manager."""
+    return BaselineManager()
+
+
 class TestQueryPerformance:
     """Performance tests for different query types."""
 
     @pytest.mark.asyncio
     @skip_if_no_groq
-    async def test_simple_queries_with_artist(self, base_url):
+    async def test_simple_queries_with_artist(self, base_url, environment, baseline_manager):
         """
         Measure response time for simple queries where artist is already known.
 
@@ -128,13 +147,17 @@ class TestQueryPerformance:
 
         metrics.print_report("Simple Queries (Artist Known)")
 
-        # Assert reasonable performance
-        summary = metrics.summary()
-        assert summary["mean_ms"] < 3000, f"Mean response time too slow: {summary['mean_ms']:.1f}ms"
+        # Compare against baseline
+        check_performance(
+            metrics.summary(),
+            test_name="test_simple_queries_with_artist",
+            environment=environment,
+            baseline_manager=baseline_manager,
+        )
 
     @pytest.mark.asyncio
     @skip_if_no_groq
-    async def test_artist_discovery_queries(self, base_url):
+    async def test_artist_discovery_queries(self, base_url, environment, baseline_manager):
         """
         Measure response time for queries requiring artist discovery.
 
@@ -171,12 +194,17 @@ class TestQueryPerformance:
 
         metrics.print_report("Artist Discovery Queries")
 
-        summary = metrics.summary()
-        assert summary["mean_ms"] < 5000, f"Mean response time too slow: {summary['mean_ms']:.1f}ms"
+        # Compare against baseline
+        check_performance(
+            metrics.summary(),
+            test_name="test_artist_discovery_queries",
+            environment=environment,
+            baseline_manager=baseline_manager,
+        )
 
     @pytest.mark.asyncio
     @skip_if_no_groq
-    async def test_compilation_search_queries(self, base_url):
+    async def test_compilation_search_queries(self, base_url, environment, baseline_manager):
         """
         Measure response time for queries that trigger compilation search.
 
@@ -216,12 +244,17 @@ class TestQueryPerformance:
 
         metrics.print_report("Compilation Search Queries")
 
-        summary = metrics.summary()
-        assert summary["mean_ms"] < 8000, f"Mean response time too slow: {summary['mean_ms']:.1f}ms"
+        # Compare against baseline
+        check_performance(
+            metrics.summary(),
+            test_name="test_compilation_search_queries",
+            environment=environment,
+            baseline_manager=baseline_manager,
+        )
 
     @pytest.mark.asyncio
     @skip_if_no_groq
-    async def test_ambiguous_queries(self, base_url):
+    async def test_ambiguous_queries(self, base_url, environment, baseline_manager):
         """
         Measure response time for ambiguous queries.
 
@@ -256,10 +289,13 @@ class TestQueryPerformance:
 
         metrics.print_report("Ambiguous Queries (No Consensus)")
 
-        summary = metrics.summary()
-        # Note: Most of the time is Groq parsing, not search strategies
-        # These bail out early from compilation search, so should be similar to baseline
-        assert summary["mean_ms"] < 6000, f"Mean response time too slow: {summary['mean_ms']:.1f}ms"
+        # Compare against baseline
+        check_performance(
+            metrics.summary(),
+            test_name="test_ambiguous_queries",
+            environment=environment,
+            baseline_manager=baseline_manager,
+        )
 
     @pytest.mark.asyncio
     @skip_if_no_groq
