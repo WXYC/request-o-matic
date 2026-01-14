@@ -4,11 +4,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from artwork.router import router as artwork_router
 from config.settings import get_settings
-from core.dependencies import close_discogs_service, close_http_client, close_library_db
+from core.dependencies import (
+    close_discogs_service,
+    close_http_client,
+    close_library_db,
+    flush_posthog,
+    shutdown_posthog,
+)
 from core.logging import setup_logging
 from discogs.router import router as discogs_router
 from library.router import router as library_router
@@ -46,6 +52,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down application")
+    shutdown_posthog()
     await close_library_db()
     await close_discogs_service()
     await close_http_client()
@@ -58,6 +65,15 @@ app = FastAPI(
     version=settings.app_version,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def posthog_flush_middleware(request: Request, call_next):
+    """Flush PostHog events after each request to prevent data loss."""
+    response = await call_next(request)
+    flush_posthog()
+    return response
+
 
 # Include routers - health check at root, others versioned
 app.include_router(health_router, prefix="", tags=["health"])

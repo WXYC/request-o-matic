@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     enable_artwork_lookup: bool = Field(
         default=True, description="Enable artwork lookup from external APIs"
     )
+    enable_telemetry: bool = Field(
+        default=True, description="Enable PostHog telemetry"
+    )
+
+    # PostHog Configuration
+    posthog_api_key: Optional[str] = Field(
+        None, description="PostHog API key for telemetry"
+    )
+    posthog_host: str = Field(
+        default="https://us.i.posthog.com", description="PostHog host URL"
+    )
 
     # Discogs Cache Configuration
     discogs_track_cache_ttl: int = Field(

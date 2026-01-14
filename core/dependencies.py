@@ -6,6 +6,7 @@ from typing import Optional
 import httpx
 from fastapi import Depends
 from groq import Groq
+from posthog import Posthog
 
 from artwork.finder import ArtworkFinder
 from artwork.providers.discogs import DiscogsProvider
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 _http_client: Optional[httpx.AsyncClient] = None
 _library_db: Optional[LibraryDB] = None
 _discogs_service: Optional[DiscogsService] = None
+_posthog_client: Optional[Posthog] = None
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -124,6 +126,51 @@ async def close_discogs_service() -> None:
     if _discogs_service:
         await _discogs_service.close()
         _discogs_service = None
+
+
+def get_posthog_client(settings: Settings = Depends(get_settings)) -> Optional[Posthog]:
+    """Get PostHog client instance.
+
+    Args:
+        settings: Application settings
+
+    Returns:
+        Optional[Posthog]: PostHog client if configured and enabled, None otherwise
+    """
+    global _posthog_client
+
+    if not settings.enable_telemetry:
+        logger.debug("Telemetry disabled")
+        return None
+
+    if not settings.posthog_api_key:
+        logger.debug("POSTHOG_API_KEY not set - telemetry disabled")
+        return None
+
+    if _posthog_client is None:
+        _posthog_client = Posthog(
+            project_api_key=settings.posthog_api_key,
+            host=settings.posthog_host,
+        )
+        logger.info(f"PostHog client initialized (host: {settings.posthog_host})")
+
+    return _posthog_client
+
+
+def flush_posthog() -> None:
+    """Flush any buffered PostHog events."""
+    global _posthog_client
+    if _posthog_client:
+        _posthog_client.flush()
+
+
+def shutdown_posthog() -> None:
+    """Shutdown PostHog client gracefully."""
+    global _posthog_client
+    if _posthog_client:
+        _posthog_client.shutdown()
+        _posthog_client = None
+        logger.info("PostHog client shutdown")
 
 
 async def get_artwork_finder(settings: Settings = Depends(get_settings)) -> Optional[ArtworkFinder]:

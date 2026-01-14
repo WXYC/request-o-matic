@@ -6,13 +6,15 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from groq import Groq
+from posthog import Posthog
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
 from artwork.router import lookup_album_by_track, lookup_releases_by_track
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
-from core.dependencies import get_artwork_finder
+from core.dependencies import get_artwork_finder, get_posthog_client
 from artwork.finder import ArtworkFinder
+from core.telemetry import RequestTelemetry
 from library.models import LibraryItem
 from library.db import LibraryDB
 from services.parser import MessageType, ParsedRequest, parse_request
@@ -655,6 +657,7 @@ async def handle_request(
     db: LibraryDB = Depends(get_library_db),
     finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
     slack_service: Optional[SlackService] = Depends(get_slack_service),
+    posthog_client: Optional[Posthog] = Depends(get_posthog_client),
 ):
     """
     Unified endpoint: parse a song request, find artwork, search the library, and post to Slack.
@@ -668,10 +671,16 @@ async def handle_request(
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    # Initialize telemetry
+    telemetry = RequestTelemetry()
+    search_type = "none"
+
     try:
         # Step 1: Parse the message
-        parsed = parse_request(request.message, groq_client)
-        logger.info(f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}")
+        with telemetry.track_step("parse"):
+            telemetry.record_api_call("groq")
+            parsed = parse_request(request.message, groq_client)
+            logger.info(f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}")
 
         library_results: list[LibraryItem] = []
         items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]] = []
@@ -686,55 +695,83 @@ async def handle_request(
                 parsed.artist = corrected_artist
 
         # Step 2: If we have a song but no album, look up the album from Discogs
-        album_for_search, song_not_found = await resolve_album_for_track(parsed)
+        with telemetry.track_step("album_lookup"):
+            if parsed.song and not parsed.album:
+                telemetry.record_api_call("discogs")
+            album_for_search, song_not_found = await resolve_album_for_track(parsed)
 
         # Step 3: Search library with fallback to artist-only
-        has_search_info = parsed.artist or album_for_search
-        if has_search_info:
-            library_results, fallback_used = await search_library_with_fallback(
-                db, parsed, album_for_search
-            )
-            if fallback_used:
-                song_not_found = True
-
-        # Step 3a: If no results, try alternative interpretation for ambiguous formats
-        if not library_results:
-            ambiguous_parts = detect_ambiguous_format(request.message)
-            if ambiguous_parts:
-                library_results = await search_with_alternative_interpretation(
-                    db, ambiguous_parts[0], ambiguous_parts[1]
+        with telemetry.track_step("library_search"):
+            has_search_info = parsed.artist or album_for_search
+            if has_search_info:
+                library_results, fallback_used = await search_library_with_fallback(
+                    db, parsed, album_for_search
                 )
+                if fallback_used:
+                    song_not_found = True
                 if library_results:
-                    song_not_found = False
+                    search_type = "fallback" if fallback_used else "direct"
+
+            # Step 3a: If no results, try alternative interpretation for ambiguous formats
+            if not library_results:
+                ambiguous_parts = detect_ambiguous_format(request.message)
+                if ambiguous_parts:
+                    library_results = await search_with_alternative_interpretation(
+                        db, ambiguous_parts[0], ambiguous_parts[1]
+                    )
+                    if library_results:
+                        song_not_found = False
+                        search_type = "alternative"
 
         # Step 3b: Search compilations if exact song/album not found
         # This runs when: no results yet, OR we only have artist-fallback results (song_not_found=True)
         # The compilation search cross-references with Discogs to find albums that actually have the song
-        if song_not_found and parsed.song and parsed.artist:
-            compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
-            if compilation_results:
-                # Replace artist albums with compilation results since we found the actual song
-                library_results = compilation_results[:5]
-                found_on_compilation = True
-                song_not_found = False
+        with telemetry.track_step("compilation_search"):
+            if song_not_found and parsed.song and parsed.artist:
+                telemetry.record_api_call("discogs")
+                compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
+                if compilation_results:
+                    # Replace artist albums with compilation results since we found the actual song
+                    library_results = compilation_results[:5]
+                    found_on_compilation = True
+                    song_not_found = False
+                    search_type = "compilation"
 
         # Step 4: Fetch artwork for library items
-        if library_results:
-            items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
+        with telemetry.track_step("artwork_fetch"):
+            if library_results:
+                # Count Discogs API calls for artwork (one per item)
+                for _ in library_results:
+                    telemetry.record_api_call("discogs")
+                items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
 
         # Step 5: Build context and post to Slack (unless skip_slack is set)
         context = build_context_message(
             parsed, found_on_compilation, song_not_found, has_results=bool(library_results)
         )
-        if not request.skip_slack:
-            await post_results_to_slack(
-                slack_service, request.message, parsed, items_with_artwork, context
-            )
+        with telemetry.track_step("slack_post"):
+            if not request.skip_slack:
+                telemetry.record_api_call("slack")
+                await post_results_to_slack(
+                    slack_service, request.message, parsed, items_with_artwork, context
+                )
 
         # Extract main artwork from first result
         artwork = next(
             (art for _, art in items_with_artwork if art), None
         ) if items_with_artwork else None
+
+        # Send telemetry
+        if posthog_client:
+            telemetry.send_to_posthog(posthog_client, {
+                "results_count": len(library_results),
+                "search_type": search_type,
+                "had_artist": bool(parsed.artist),
+                "had_album": bool(parsed.album),
+                "had_song": bool(parsed.song),
+                "is_request": parsed.is_request,
+                "message_type": parsed.message_type.value if parsed.message_type else None,
+            })
 
         return UnifiedResponse(
             parsed=parsed,
