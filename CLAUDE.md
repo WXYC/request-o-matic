@@ -21,26 +21,78 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `library/db.py` - SQLite full-text search with FTS5 and fuzzy fallback
 - `artwork/providers/discogs.py` - Discogs API integration
 
+## Development Workflow
+
+### Branches
+- **`main`** - Development branch. Push here to deploy to **staging**.
+- **`prod`** - Production branch. Push here to deploy to **production**.
+
+### Typical Flow
+1. Develop and test locally (run server with `uvicorn main:app --reload`)
+2. Push to `main` to deploy to staging
+3. Run integration tests against staging to verify
+4. Merge `main` → `prod` to deploy to production
+
 ## Testing
 
+### Test Types
+
+| Type | Location | External Services | Purpose |
+|------|----------|-------------------|---------|
+| Unit | `tests/unit/` | Mocked | Fast, isolated component tests |
+| Integration | `tests/integration/` | Real APIs | End-to-end verification |
+| Performance | `tests/performance/` | Real APIs | Response time benchmarks |
+
 ### Unit Tests
-Tests in `tests/unit/` use mocks and don't hit real services:
+Use mocks for all external services (Groq, Discogs, database). Run frequently during development:
 ```bash
 venv/bin/python -m pytest tests/unit/ -v
 ```
 
-### Testing Against Production
-Use the lookup script to test without posting to Slack:
+### Integration Tests
+Hit real Discogs/Groq APIs using staging environment variables from Railway. The `conftest.py` automatically loads staging env vars when the Railway CLI is available:
 ```bash
-venv/bin/python scripts/lookup.py "song request message here"
+# Requires RAILWAY_TOKEN_STAGING env var or Railway CLI login
+venv/bin/python -m pytest tests/integration/ -v -m integration
+
+# Or use the helper script
+./test-integration.sh -v
 ```
 
-The script calls the deployed API at `https://request-o-matic-production.up.railway.app/api/v1/request` with `skip_slack=true`.
+Integration tests are skipped if required env vars (`DISCOGS_TOKEN`, `GROQ_API_KEY`) are missing.
+
+### Local Server Testing
+Spin up a local server to test changes before pushing:
+```bash
+# Start local server
+uvicorn main:app --reload
+
+# Test with lookup script
+venv/bin/python scripts/lookup.py --local "song request here"
+
+# Or use the interactive REPL
+venv/bin/python scripts/repl.py --local
+```
+
+### Manual Testing Tools
+- **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`)
+- **`scripts/repl.py`** - Interactive REPL with command history, server switching (`:local`/`:prod`)
+
+### Bug Fix Protocol
+**For every request bug where a lookup fails to find the correct release:**
+1. Create a **unit test** in `tests/unit/` that reproduces the bug with mocked data
+2. Create an **integration test** in `tests/integration/` that verifies the fix against real APIs
+3. The integration test should assert that false positives are excluded AND correct results are included
+
+Example (from Sugar Plant bug fix):
+- Unit test: `test_search_releases_filters_invalid_compilations` - mocks Discogs responses
+- Integration test: `test_sugar_plant_excludes_unrelated_compilations` - hits real API
 
 ## Deployment
 
 - Hosted on Railway
-- Auto-deploys from `prod` branch
+- `main` branch auto-deploys to **staging**
+- `prod` branch auto-deploys to **production**
 - Use `railway` CLI for status/logs (requires TTY for some commands)
 
 ## Common Issues and Fixes
@@ -57,13 +109,6 @@ Messages like "Artist - Title" or "Title - Artist" are ambiguous. The `detect_am
 
 ### Compilation Search False Positives
 The keyword search in `search_compilations_for_track()` filters results by artist to prevent matching albums that happen to share a song title (e.g., "The All Seeing Eye" album by Wayne Shorter when searching for a song by Toy).
-
-### Branches
-- `main` is for staging
-- `prod` is for production
-
-### Testing Against Staging
-- When fixing lookup bugs, use integration tests to validate the fix. You can run the server locally to do this.
 
 ## Environment Variables
 
