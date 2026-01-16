@@ -3,6 +3,11 @@ Performance tests to measure query response times.
 
 Run with: pytest tests/performance/ -v -m integration --tb=short -s
 
+Set TEST_ENV to control which server to test against:
+    TEST_ENV=local pytest ...      # localhost:8000 (default)
+    TEST_ENV=staging pytest ...    # staging server on Railway
+    TEST_ENV=production pytest ... # production server on Railway
+
 These tests measure the impact of various search strategies:
 1. Simple queries (artist already known)
 2. Artist discovery via consensus voting
@@ -93,14 +98,8 @@ class PerformanceMetrics:
 
 
 @pytest.fixture
-def base_url():
-    """Base URL for the local server."""
-    return "http://localhost:8000/api/v1"
-
-
-@pytest.fixture
 def environment(base_url):
-    """Detect the test environment from base_url."""
+    """Detect the test environment from base_url for baseline management."""
     return detect_environment(base_url)
 
 

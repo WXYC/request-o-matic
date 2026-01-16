@@ -528,16 +528,13 @@ class TestParserIntegration:
 
 
 class TestFullRequestIntegration:
-    """Test the full /request endpoint against a local server.
+    """Test the full /request endpoint.
 
-    These tests require running a local server:
-        uvicorn main:app --reload
+    Set TEST_ENV to control which server to test against:
+        TEST_ENV=local pytest ...      # localhost:8000 (default, requires local server)
+        TEST_ENV=staging pytest ...    # staging server on Railway
+        TEST_ENV=production pytest ... # production server on Railway
     """
-
-    @pytest.fixture
-    def base_url(self):
-        """Base URL for local server."""
-        return "http://localhost:8000/api/v1"
 
     @pytest.mark.asyncio
     async def test_meet_me_in_the_city_returns_correct_album(self, base_url):

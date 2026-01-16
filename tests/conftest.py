@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+from enum import Enum
 
 import pytest
 from pathlib import Path
@@ -9,6 +10,38 @@ from unittest.mock import AsyncMock, Mock
 
 from config.settings import Settings
 from library.models import LibraryItem
+
+
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+# Set TEST_ENV to control which server integration tests hit:
+#   - local: http://localhost:8000 (default)
+#   - staging: https://request-o-matic-staging.up.railway.app
+#   - production: https://request-o-matic-production.up.railway.app
+# =============================================================================
+
+class TestEnvironment(str, Enum):
+    LOCAL = "local"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+
+ENVIRONMENT_URLS = {
+    TestEnvironment.LOCAL: "http://localhost:8000/api/v1",
+    TestEnvironment.STAGING: "https://request-o-matic-staging.up.railway.app/api/v1",
+    TestEnvironment.PRODUCTION: "https://request-o-matic-production.up.railway.app/api/v1",
+}
+
+
+def get_test_environment() -> TestEnvironment:
+    """Get the test environment from TEST_ENV env var."""
+    env_value = os.environ.get("TEST_ENV", "local").lower()
+    try:
+        return TestEnvironment(env_value)
+    except ValueError:
+        print(f"⚠ Unknown TEST_ENV '{env_value}', defaulting to 'local'")
+        return TestEnvironment.LOCAL
 
 
 def pytest_configure(config):
@@ -42,6 +75,22 @@ def pytest_configure(config):
         print("\n⚠ Timed out fetching Railway variables")
     except json.JSONDecodeError:
         print(f"\n⚠ Failed to parse Railway variables: {result.stdout}")
+
+
+@pytest.fixture(scope="session")
+def test_environment() -> TestEnvironment:
+    """Get the current test environment."""
+    env = get_test_environment()
+    print(f"\n✓ Test environment: {env.value}")
+    return env
+
+
+@pytest.fixture(scope="session")
+def base_url(test_environment: TestEnvironment) -> str:
+    """Get the base URL for the current test environment."""
+    url = ENVIRONMENT_URLS[test_environment]
+    print(f"✓ Base URL: {url}")
+    return url
 
 
 @pytest.fixture

@@ -61,6 +61,26 @@ venv/bin/python -m pytest tests/integration/ -v -m integration
 
 Integration tests are skipped if required env vars (`DISCOGS_TOKEN`, `GROQ_API_KEY`) are missing.
 
+### Test Environment Configuration
+Use `TEST_ENV` to control which server integration and performance tests hit:
+
+```bash
+# Test against local server (default) - requires running uvicorn locally
+TEST_ENV=local venv/bin/python -m pytest tests/integration/ -v -m integration
+
+# Test against staging server on Railway
+TEST_ENV=staging venv/bin/python -m pytest tests/integration/ -v -m integration
+
+# Test against production server on Railway
+TEST_ENV=production venv/bin/python -m pytest tests/integration/ -v -m integration
+```
+
+| TEST_ENV | URL |
+|----------|-----|
+| `local` (default) | `http://localhost:8000/api/v1` |
+| `staging` | `https://request-o-matic-staging.up.railway.app/api/v1` |
+| `production` | `https://request-o-matic-production.up.railway.app/api/v1` |
+
 ### Local Server Testing
 Spin up a local server to test changes before pushing:
 ```bash
