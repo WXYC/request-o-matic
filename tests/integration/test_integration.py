@@ -984,3 +984,103 @@ class TestFullRequestIntegration:
 
         print(f"\n✅ Correctly excluded unrelated compilations!")
 
+    @pytest.mark.asyncio
+    async def test_results_have_unique_library_urls(self, base_url):
+        """
+        Test that all results have unique library URLs.
+
+        Each library result should point to a different library record.
+        No duplicates should be returned.
+        """
+        import httpx
+
+        # Use queries known to return multiple results from other tests
+        test_queries = [
+            "Junior Kimbrough",  # Known from test_meet_me_in_the_city_returns_correct_album
+            "Various Artists",
+            "Laid Back",  # Known from test_laid_back_matches_band_not_album_titles
+        ]
+
+        found_multi_result = False
+        for query in test_queries:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{base_url}/request",
+                    json={"message": query, "skip_slack": True},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            results = data.get("library_results", [])
+
+            # Check all IDs are unique
+            ids = [r.get("id") for r in results]
+            assert len(ids) == len(set(ids)), (
+                f"Duplicate IDs found in results for '{query}': {ids}"
+            )
+
+            # Check all library URLs are unique
+            library_urls = [r.get("library_url") for r in results]
+            assert len(library_urls) == len(set(library_urls)), (
+                f"Duplicate library URLs found in results for '{query}': {library_urls}"
+            )
+
+            if len(results) > 1:
+                found_multi_result = True
+
+            print(f"\n✅ '{query}': {len(results)} results, all unique library URLs")
+
+        # At least one query should return multiple results
+        assert found_multi_result, "Expected at least one query to return multiple results"
+
+    @pytest.mark.asyncio
+    async def test_results_have_no_duplicate_albums(self, base_url):
+        """
+        Test that search results don't return the same album twice.
+
+        When multiple results are returned, each should be a different album
+        (no duplicate titles from the same artist).
+        """
+        import httpx
+
+        # Use queries known to work from other tests
+        test_cases = [
+            ("Cult of Personality by Living Color", "spelling-corrected artist"),
+            ("thoughtforms by lush", "song search"),
+            ("Meet Me in the City Junior Kimbrough", "song/album search"),
+        ]
+
+        found_multi_result = False
+        for query, description in test_cases:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{base_url}/request",
+                    json={"message": query, "skip_slack": True},
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            results = data.get("library_results", [])
+
+            # Check all IDs are unique
+            ids = [r.get("id") for r in results]
+            assert len(ids) == len(set(ids)), (
+                f"Duplicate IDs found for '{query}' ({description}): {ids}"
+            )
+
+            # Check no duplicate (artist, title) pairs
+            artist_title_pairs = [(r.get("artist"), r.get("title")) for r in results]
+            assert len(artist_title_pairs) == len(set(artist_title_pairs)), (
+                f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
+            )
+
+            if len(results) > 1:
+                found_multi_result = True
+
+            print(f"\n✅ '{query}' ({description}): {len(results)} unique results")
+            for r in results:
+                print(f"    - {r.get('artist')} - {r.get('title')}")
+
+        # At least one query should return multiple results
+        assert found_multi_result, "Expected at least one query to return multiple results"
+
