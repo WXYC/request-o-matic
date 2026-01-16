@@ -17,26 +17,28 @@ router = APIRouter(prefix="/artwork", tags=["artwork"])
 async def lookup_album_by_track(
     track: str,
     artist: Optional[str] = None,
-    finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
 ) -> Optional[str]:
     """Look up an album name by track title using Discogs.
-    
+
+    Note: This function creates a temporary provider instance to avoid
+    dependency injection complexity when called from helper functions.
+
     Args:
         track: Track title
         artist: Optional artist name
-        finder: Artwork finder instance
-        
+
     Returns:
         Album name if found, None otherwise
     """
-    if finder is None:
+    # Import here to avoid circular imports
+    from config.settings import get_settings
+
+    settings = get_settings()
+    if not settings.discogs_token:
         return None
 
-    for provider in finder.providers:
-        if isinstance(provider, DiscogsProvider):
-            return await provider.search_track(track, artist)
-
-    return None
+    provider = DiscogsProvider(settings.discogs_token)
+    return await provider.search_track(track, artist)
 
 
 async def lookup_releases_by_track(
