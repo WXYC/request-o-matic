@@ -73,22 +73,6 @@ async def resolve_album_for_track(
         try:
             album_from_track = await lookup_album_by_track(parsed.song, parsed.artist)
             if album_from_track:
-                # Check if the "album" is actually a single (album name ≈ song name)
-                # e.g., searching for "Holland, 1945" returns single "Holland 1945"
-                # not the album "In the Aeroplane Over the Sea"
-                from rapidfuzz import fuzz
-                similarity = fuzz.ratio(
-                    parsed.song.lower().replace(",", ""),
-                    album_from_track.lower().replace(",", "")
-                )
-                if similarity > 85:
-                    logger.info(
-                        f"Album '{album_from_track}' appears to be a single "
-                        f"(similarity={similarity}% to song '{parsed.song}'), "
-                        "will use compilation search"
-                    )
-                    return None, True
-
                 logger.info(f"Found album '{album_from_track}' for song '{parsed.song}'")
                 return album_from_track, False
             else:
