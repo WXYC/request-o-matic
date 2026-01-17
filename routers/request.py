@@ -65,7 +65,9 @@ async def resolve_album_for_track(
         and parsed.album.lower().strip() == parsed.artist.lower().strip()
     )
 
-    if parsed.song and (album_is_missing or album_is_artist):
+    # Only do track lookup if we have an artist - without an artist, Discogs
+    # results are unreliable (e.g., "Laid Back" could match any track with that name)
+    if parsed.song and parsed.artist and (album_is_missing or album_is_artist):
         if album_is_artist:
             logger.info(f"Album '{parsed.album}' appears to be artist name, looking up album")
         try:
@@ -240,8 +242,17 @@ async def search_library_with_fallback(
     if parsed.artist:
         results = filter_results_by_artist(results, parsed.artist)
 
-    # If we have results and a song title, prioritize albums matching the song
-    if results and parsed.song:
+    # Prioritize results that match the album we looked up
+    # This ensures "In the Aeroplane Over the Sea" comes before "On Avery Island"
+    # when we specifically looked up which album has the song
+    if results and album:
+        album_lower = album.lower()
+        results.sort(
+            key=lambda r: album_lower in (r.title or "").lower(),
+            reverse=True,
+        )
+    # If no album but we have a song title, prioritize albums matching the song
+    elif results and parsed.song:
         song_lower = parsed.song.lower()
         results.sort(
             key=lambda r: song_lower in (r.title or "").lower(),
