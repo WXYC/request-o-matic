@@ -116,189 +116,84 @@ def build_insights() -> list[dict]:
             "name": "Average Duration by Step",
             "description": "Mean duration in milliseconds for each request processing step",
             "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_parse",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Parse",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_album_lookup",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Album Lookup",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_library_search",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Library Search",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_compilation_search",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Compilation Search",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_artwork_fetch",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Artwork Fetch",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_slack_post",
-                        "math": "avg",
-                        "math_property": "duration_ms",
-                        "name": "Slack Post",
-                    },
-                ],
-                "trendsFilter": {"display": "ActionsBar"},
-                "dateRange": {"date_from": "-7d"},
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {"kind": "EventsNode", "event": "request_parse", "math": "avg", "math_property": "duration_ms", "name": "Parse"},
+                        {"kind": "EventsNode", "event": "request_album_lookup", "math": "avg", "math_property": "duration_ms", "name": "Album Lookup"},
+                        {"kind": "EventsNode", "event": "request_library_search", "math": "avg", "math_property": "duration_ms", "name": "Library Search"},
+                        {"kind": "EventsNode", "event": "request_artwork_fetch", "math": "avg", "math_property": "duration_ms", "name": "Artwork Fetch"},
+                        {"kind": "EventsNode", "event": "request_slack_post", "math": "avg", "math_property": "duration_ms", "name": "Slack Post"},
+                    ],
+                    "trendsFilter": {"display": "ActionsBar"},
+                    "dateRange": {"date_from": "-7d"},
+                },
             },
         },
         {
             "name": "Total Request Duration Over Time",
             "description": "Average total request duration trend",
             "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "avg",
-                        "math_property": "total_duration_ms",
-                        "name": "Avg Duration (ms)",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "p90",
-                        "math_property": "total_duration_ms",
-                        "name": "P90 Duration (ms)",
-                    },
-                ],
-                "trendsFilter": {"display": "ActionsLineGraph"},
-                "dateRange": {"date_from": "-7d"},
-                "interval": "day",
-            },
-        },
-        {
-            "name": "API Call Distribution",
-            "description": "Breakdown of external API calls by service",
-            "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "sum",
-                        "math_property": "api_calls.groq",
-                        "name": "Groq",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "sum",
-                        "math_property": "api_calls.discogs",
-                        "name": "Discogs",
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "sum",
-                        "math_property": "api_calls.slack",
-                        "name": "Slack",
-                    },
-                ],
-                "trendsFilter": {"display": "ActionsPie"},
-                "dateRange": {"date_from": "-7d"},
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {"kind": "EventsNode", "event": "request_completed", "math": "avg", "math_property": "total_duration_ms", "name": "Avg Duration (ms)"},
+                        {"kind": "EventsNode", "event": "request_completed", "math": "p90", "math_property": "total_duration_ms", "name": "P90 Duration (ms)"},
+                    ],
+                    "trendsFilter": {"display": "ActionsLineGraph"},
+                    "dateRange": {"date_from": "-7d"},
+                    "interval": "day",
+                },
             },
         },
         {
             "name": "Search Type Breakdown",
             "description": "How requests are resolved (direct, fallback, compilation, etc.)",
             "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "total",
-                        "name": "Requests",
-                    },
-                ],
-                "breakdownFilter": {
-                    "breakdown": "search_type",
-                    "breakdown_type": "event",
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "Requests"},
+                    ],
+                    "breakdownFilter": {"breakdown": "search_type", "breakdown_type": "event"},
+                    "trendsFilter": {"display": "ActionsPie"},
+                    "dateRange": {"date_from": "-7d"},
                 },
-                "trendsFilter": {"display": "ActionsPie"},
-                "dateRange": {"date_from": "-7d"},
             },
         },
         {
             "name": "Request Volume",
             "description": "Number of requests processed over time",
             "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "total",
-                        "name": "Requests",
-                    },
-                ],
-                "trendsFilter": {"display": "ActionsLineGraph"},
-                "dateRange": {"date_from": "-7d"},
-                "interval": "day",
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "Requests"},
+                    ],
+                    "trendsFilter": {"display": "ActionsLineGraph"},
+                    "dateRange": {"date_from": "-7d"},
+                    "interval": "day",
+                },
             },
         },
         {
             "name": "Results Found Rate",
             "description": "Percentage of requests that found library results",
             "query": {
-                "kind": "TrendsQuery",
-                "series": [
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "total",
-                        "name": "With Results",
-                        "properties": [
-                            {
-                                "key": "results_count",
-                                "value": 0,
-                                "operator": "gt",
-                                "type": "event",
-                            }
-                        ],
-                    },
-                    {
-                        "kind": "EventsNode",
-                        "event": "request_completed",
-                        "math": "total",
-                        "name": "No Results",
-                        "properties": [
-                            {
-                                "key": "results_count",
-                                "value": 0,
-                                "operator": "exact",
-                                "type": "event",
-                            }
-                        ],
-                    },
-                ],
-                "trendsFilter": {"display": "ActionsPie"},
-                "dateRange": {"date_from": "-7d"},
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "With Results", "properties": [{"key": "results_count", "value": 0, "operator": "gt", "type": "event"}]},
+                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "No Results", "properties": [{"key": "results_count", "value": 0, "operator": "exact", "type": "event"}]},
+                    ],
+                    "trendsFilter": {"display": "ActionsPie"},
+                    "dateRange": {"date_from": "-7d"},
+                },
             },
         },
     ]
