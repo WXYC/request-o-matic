@@ -214,6 +214,178 @@ async def test_song_on_multiple_albums_returns_all():
 
 
 @pytest.mark.asyncio
+async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various():
+    """Test that compilation filtering allows soundtrack/compilation artists through.
+
+    The inline filtering in search_compilations_for_track has this logic:
+    - If Discogs says the release is by "Various"/"Soundtrack"/"Compilation",
+      allow library items with those keywords in the artist field
+    - If Discogs says the release is by the actual artist,
+      only allow library items by that artist
+
+    This test ensures both paths work correctly before refactoring.
+    """
+    from routers.request import search_compilations_for_track
+
+    mock_db = AsyncMock()
+
+    # Library has soundtrack album (not "Various Artists" but "Soundtracks - M")
+    soundtrack_album = LibraryItem(
+        id=100,
+        title="Morvern Callar",
+        artist="Soundtracks - M",
+        call_letters="Z-M",
+        artist_call_number=0,
+        release_call_number=73,
+        genre="Soundtracks",
+        format="cd",
+    )
+
+    # Library also has artist's own album
+    artist_album = LibraryItem(
+        id=101,
+        title="Richard D. James Album",
+        artist="Aphex Twin",
+        call_letters="AP",
+        artist_call_number=1,
+        release_call_number=3,
+        genre="Electronic",
+        format="cd",
+    )
+
+    # Library has unrelated compilation that should NOT match
+    unrelated_compilation = LibraryItem(
+        id=102,
+        title="Random Electronic Compilation",
+        artist="Various Artists - Electronic",
+        call_letters="Z-E",
+        artist_call_number=0,
+        release_call_number=50,
+        genre="Electronic",
+        format="cd",
+    )
+
+    parsed = ParsedRequest(
+        song="Goon Gumpas",
+        artist="Aphex Twin",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Goon Gumpas by Aphex Twin",
+    )
+
+    with patch('routers.request.lookup_releases_by_track', new_callable=AsyncMock) as mock_lookup:
+        # Discogs returns: one by artist, one by "Various" (soundtrack)
+        mock_lookup.return_value = [
+            ("Aphex Twin", "Richard D. James Album"),
+            ("Various", "Morvern Callar (Original Motion Picture Soundtrack)"),
+        ]
+
+        search_count = 0
+        async def mock_search(**kwargs):
+            nonlocal search_count
+            search_count += 1
+            if search_count == 1:
+                return []  # Keyword search returns nothing
+            elif search_count == 2:
+                # Fuzzy search for "Richard D. James Album" returns artist album
+                return [artist_album]
+            elif search_count == 3:
+                # Fuzzy search for "Morvern Callar" returns soundtrack AND unrelated compilation
+                # The filter should keep soundtrack (Discogs said "Various") but reject
+                # unrelated compilation since it doesn't match the Discogs release
+                return [soundtrack_album, unrelated_compilation]
+            return []
+
+        mock_db.search = mock_search
+
+        results, discogs_titles = await search_compilations_for_track(mock_db, parsed)
+
+    # Current behavior: when Discogs says "Various" released something,
+    # ANY compilation-type album from the fuzzy search is allowed through.
+    # This is permissive but may cause false positives.
+    # For refactoring, we preserve this behavior.
+    assert len(results) == 3, f"Expected 3 results, got {len(results)}: {[r.title for r in results]}"
+
+    result_ids = {r.id for r in results}
+    assert 101 in result_ids, "Should include artist's own album"
+    assert 100 in result_ids, "Should include soundtrack (Discogs said 'Various')"
+    assert 102 in result_ids, "Current behavior: unrelated compilation also included (permissive filter)"
+
+
+@pytest.mark.asyncio
+async def test_compilation_filtering_rejects_wrong_artist_albums():
+    """Test that when Discogs says artist X released it, we don't match artist Y.
+
+    This tests the artist filtering within compilation search:
+    - Discogs says "Lush" released "Mad Love"
+    - Library search returns "Love is Gone Mad" by "Big Eyes" (keyword match)
+    - Filter should reject Big Eyes album (wrong artist)
+    """
+    from routers.request import search_compilations_for_track
+
+    mock_db = AsyncMock()
+
+    # Wrong album that matches keywords but wrong artist
+    wrong_album = LibraryItem(
+        id=200,
+        title="Love is Gone Mad",
+        artist="Big Eyes",
+        call_letters="BI",
+        artist_call_number=5,
+        release_call_number=1,
+        genre="Rock",
+        format="cd",
+    )
+
+    # Correct album
+    correct_album = LibraryItem(
+        id=201,
+        title="Mad Love",
+        artist="Lush",
+        call_letters="LU",
+        artist_call_number=3,
+        release_call_number=2,
+        genre="Rock",
+        format="cd",
+    )
+
+    parsed = ParsedRequest(
+        song="Hypocrite",
+        artist="Lush",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Hypocrite by Lush",
+    )
+
+    with patch('routers.request.lookup_releases_by_track', new_callable=AsyncMock) as mock_lookup:
+        mock_lookup.return_value = [
+            ("Lush", "Mad Love"),
+        ]
+
+        search_count = 0
+        async def mock_search(**kwargs):
+            nonlocal search_count
+            search_count += 1
+            if search_count == 1:
+                return []  # Keyword search
+            elif search_count == 2:
+                # Fuzzy search returns both (keywords "mad" and "love" match both)
+                return [wrong_album, correct_album]
+            return []
+
+        mock_db.search = mock_search
+
+        results, discogs_titles = await search_compilations_for_track(mock_db, parsed)
+
+    # Should only return correct album, filter out wrong artist
+    assert len(results) == 1, f"Expected 1 result, got {len(results)}: {[r.title for r in results]}"
+    assert results[0].id == 201
+    assert results[0].artist == "Lush"
+
+
+@pytest.mark.asyncio
 async def test_compilation_found_replaces_artist_albums():
     """Test that finding a song on compilation replaces artist album results.
     

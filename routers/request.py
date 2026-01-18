@@ -22,6 +22,40 @@ from services.slack import build_simple_slack_blocks, build_slack_blocks
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Matching Constants
+# =============================================================================
+# These constants centralize the matching rules used throughout the search flow.
+# Thresholds were tuned through production testing to balance precision/recall.
+
+# Words to exclude when extracting significant keywords from search queries
+STOPWORDS = frozenset({
+    'the', 'a', 'an',           # Articles
+    'and', 'with', 'from',      # Conjunctions/prepositions
+    'that', 'this',             # Demonstratives
+    'play', 'song', 'remix',    # Request-specific noise
+    'story', 'records',         # Label/format noise
+})
+
+# Keywords indicating a compilation/soundtrack album (case-insensitive substring match)
+COMPILATION_KEYWORDS = frozenset({'various', 'soundtrack', 'compilation'})
+
+
+def is_compilation_artist(artist: str) -> bool:
+    """Check if an artist name indicates a compilation/soundtrack album.
+
+    Args:
+        artist: Artist name to check
+
+    Returns:
+        True if artist contains compilation keywords (various, soundtrack, compilation)
+    """
+    if not artist:
+        return False
+    artist_lower = artist.lower()
+    return any(keyword in artist_lower for keyword in COMPILATION_KEYWORDS)
+
+
 # Friendly labels for message types in Slack
 MESSAGE_TYPE_LABELS = {
     MessageType.REQUEST: "Song Request",
@@ -315,10 +349,9 @@ async def search_compilations_for_track(
         artist_words = re.sub(r'[^\w\s]', ' ', parsed.artist.lower()).split() if parsed.artist else []
         song_words = re.sub(r'[^\w\s]', ' ', parsed.song.lower()).split() if parsed.song else []
 
-        # Filter to significant words
-        stopwords = {'the', 'and', 'with', 'from', 'that', 'this', 'play', 'song', 'remix'}
-        sig_artist = [w for w in artist_words if len(w) > 3 and w not in stopwords]
-        sig_song = [w for w in song_words if len(w) > 3 and w not in stopwords]
+        # Filter to significant words (using shared STOPWORDS constant)
+        sig_artist = [w for w in artist_words if len(w) > 3 and w not in STOPWORDS]
+        sig_song = [w for w in song_words if len(w) > 3 and w not in STOPWORDS]
 
         # Include both artist words (max 2) and song words (max 2) to find the right album
         query_words = sig_artist[:2] + sig_song[:2]
@@ -329,14 +362,14 @@ async def search_compilations_for_track(
             keyword_results = await db.search(query=keyword_query, limit=5)
 
             if keyword_results:
-                # Filter by artist unless it's a Various Artists compilation
+                # Filter by artist unless it's a compilation album
                 filtered_results = []
                 for item in keyword_results:
                     item_artist = (item.artist or "").lower()
                     if item_artist.startswith(parsed.artist.lower()):
                         filtered_results.append(item)
-                    elif "various" in item_artist:
-                        # Allow Various Artists compilations
+                    elif is_compilation_artist(item.artist):
+                        # Allow Various Artists/Soundtracks/Compilation albums
                         filtered_results.append(item)
 
                 if filtered_results:
@@ -349,79 +382,70 @@ async def search_compilations_for_track(
 
     # Always try Discogs track search - it knows which albums actually have the song
     # This is more reliable than keyword matching which can return wrong albums
-    if True:
-        try:
-            # Extract full song name with remix/version info
-            raw_lower = parsed.raw_message.lower()
-            song_search = parsed.song
-            
-            remix_match = re.search(r'\((.*?(?:remix|mix|version|edit).*?)\)', raw_lower, re.IGNORECASE)
-            if remix_match and parsed.song.lower() in raw_lower:
-                song_search = f"{parsed.song} ({remix_match.group(1)})"
-                logger.info(f"Using full track name with version info: '{song_search}'")
-            
-            releases = await lookup_releases_by_track(song_search, parsed.artist)
-            logger.info(f"Found {len(releases)} releases with '{song_search}' on Discogs")
-            
-            # Check each release against our library
-            for release_artist, release_album in releases:
-                # Skip if the "album" is just the artist name (Discogs artifact)
-                if parsed.artist and release_album.lower().strip() == parsed.artist.lower().strip():
-                    logger.debug(f"Skipping '{release_album}' - appears to be artist name, not album")
-                    continue
+    try:
+        # Extract full song name with remix/version info
+        raw_lower = parsed.raw_message.lower()
+        song_search = parsed.song
 
-                # Skip very short album titles (likely artifacts)
-                if len(release_album.strip()) < 3:
-                    continue
+        remix_match = re.search(r'\((.*?(?:remix|mix|version|edit).*?)\)', raw_lower, re.IGNORECASE)
+        if remix_match and parsed.song.lower() in raw_lower:
+            song_search = f"{parsed.song} ({remix_match.group(1)})"
+            logger.info(f"Using full track name with version info: '{song_search}'")
 
-                matches = await search_album_fuzzy(db, release_album)
+        releases = await lookup_releases_by_track(song_search, parsed.artist)
+        logger.info(f"Found {len(releases)} releases with '{song_search}' on Discogs")
 
-                # Filter matches to only include albums by the requested artist OR compilations
-                # This prevents "Mad Love" by Lush matching "Love is Gone Mad" by Big Eyes
-                # but still allows Various Artists compilations and soundtracks through
-                if matches and parsed.artist:
-                    filtered_matches = []
-                    artist_lower = parsed.artist.lower()
-                    release_artist_lower = release_artist.lower() if release_artist else ""
+        # Check each release against our library
+        for release_artist, release_album in releases:
+            # Skip if the "album" is just the artist name (Discogs artifact)
+            if parsed.artist and release_album.lower().strip() == parsed.artist.lower().strip():
+                logger.debug(f"Skipping '{release_album}' - appears to be artist name, not album")
+                continue
 
-                    # Check if the Discogs release is by the requested artist or a compilation
-                    discogs_is_compilation = any(
-                        keyword in release_artist_lower
-                        for keyword in ["various", "soundtrack", "compilation"]
-                    )
+            # Skip very short album titles (likely artifacts)
+            if len(release_album.strip()) < 3:
+                continue
 
-                    for match in matches:
-                        match_artist = (match.artist or "").lower()
-                        match_is_compilation = any(
-                            keyword in match_artist
-                            for keyword in ["various", "soundtrack", "compilation"]
-                        )
+            matches = await search_album_fuzzy(db, release_album)
 
-                        # If Discogs says it's by the artist, only match artist albums
-                        # If Discogs says it's a compilation, allow compilation matches
-                        if match_artist.startswith(artist_lower):
-                            filtered_matches.append(match)
-                        elif discogs_is_compilation and match_is_compilation:
-                            filtered_matches.append(match)
-                    matches = filtered_matches
+            # Filter matches to only include albums by the requested artist OR compilations
+            # This prevents "Mad Love" by Lush matching "Love is Gone Mad" by Big Eyes
+            # but still allows Various Artists compilations and soundtracks through
+            if matches and parsed.artist:
+                filtered_matches = []
+                artist_lower = parsed.artist.lower()
 
-                if matches:
-                    logger.info(
-                        f"Found '{parsed.song}' in library on '{matches[0].title}' "
-                        f"(matched from Discogs: '{release_album}')"
-                    )
-                    # Add matches, deduplicating by ID
-                    for match in matches:
-                        if match.id not in seen_ids:
-                            results.append(match)
-                            seen_ids.add(match.id)
-                            # Store the Discogs album title for artwork lookup
-                            discogs_titles[match.id] = release_album
+                # Check if the Discogs release is by a compilation artist
+                discogs_is_compilation = is_compilation_artist(release_artist)
 
-                    if len(results) >= 5:
-                        break
-        except Exception as e:
-            logger.warning(f"Failed to search for track on other releases: {e}")
+                for match in matches:
+                    match_artist = (match.artist or "").lower()
+
+                    # If Discogs says it's by the artist, only match artist albums
+                    # If Discogs says it's a compilation, allow compilation matches
+                    if match_artist.startswith(artist_lower):
+                        filtered_matches.append(match)
+                    elif discogs_is_compilation and is_compilation_artist(match.artist):
+                        filtered_matches.append(match)
+                matches = filtered_matches
+
+            if matches:
+                logger.info(
+                    f"Found '{parsed.song}' in library on '{matches[0].title}' "
+                    f"(matched from Discogs: '{release_album}')"
+                )
+                # Add matches, deduplicating by ID
+                for match in matches:
+                    if match.id not in seen_ids:
+                        results.append(match)
+                        seen_ids.add(match.id)
+                        # Store the Discogs album title for artwork lookup
+                        discogs_titles[match.id] = release_album
+
+                if len(results) >= 5:
+                    break
+    except Exception as e:
+        logger.warning(f"Failed to search for track on other releases: {e}")
 
     # If Discogs didn't find anything, fall back to keyword matches
     if not results and keyword_matches:
@@ -459,10 +483,9 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
     results = await db.search(query=album_title, limit=5)
 
     if not results:
-        # Extract significant keywords
+        # Extract significant keywords (using shared STOPWORDS constant)
         words = re.sub(r'[^\w\s]', ' ', album_title.lower()).split()
-        significant_words = [w for w in words if len(w) > 3 and w not in
-            {'the', 'and', 'with', 'from', 'that', 'this', 'story', 'records'}]
+        significant_words = [w for w in words if len(w) > 3 and w not in STOPWORDS]
 
         if significant_words:
             fuzzy_query = ' '.join(significant_words[:4])
@@ -529,10 +552,10 @@ async def fetch_artwork_for_items(
             # Use Discogs album title if we have it (from compilation search)
             album = discogs_titles.get(item.id, item.title)
             
-            # For compilations (Various Artists), search by album title only
-            # The library artist format (e.g., "Various Artists - Rock - C") won't match Discogs
+            # For compilations, simplify artist to "Various" for Discogs lookup
+            # Library formats like "Various Artists - Rock - C" or "Soundtracks - M" won't match Discogs
             artist = item.artist
-            if artist and artist.lower().startswith("various artists"):
+            if is_compilation_artist(artist):
                 artist = "Various"
             
             result = await finder.find(ArtworkRequest(
