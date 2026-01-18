@@ -225,6 +225,27 @@ async def search_with_alternative_interpretation(
     return []
 
 
+async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[LibraryItem]:
+    """Try searching using the parsed song title as an artist name.
+
+    This handles cases where the AI parser misinterpreted an artist name
+    as a song title (e.g., "Laid Back" parsed as song instead of artist).
+
+    Args:
+        db: Library database
+        song_as_artist: The song title to try as an artist name
+
+    Returns:
+        Results matching the artist, or empty list if no matches.
+    """
+    logger.info(f"Trying song '{song_as_artist}' as artist name")
+    results = await db.search(query=song_as_artist, limit=MAX_SEARCH_RESULTS)
+    results = filter_results_by_artist(results, song_as_artist)
+    if results:
+        logger.info(f"Found {len(results)} results treating '{song_as_artist}' as artist")
+    return results
+
+
 async def search_library_with_fallback(
     db: LibraryDB,
     parsed: ParsedRequest,
@@ -730,11 +751,13 @@ async def handle_request(
         # 1. ARTIST_PLUS_ALBUM - search by artist + album/song
         # 2. SWAPPED_INTERPRETATION - try "X - Y" as both orderings
         # 3. TRACK_ON_COMPILATION - find song on compilations via Discogs
+        # 4. SONG_AS_ARTIST - try parsed song as artist (parser misidentification)
         with telemetry.track_step("library_search"):
             strategies = build_strategies(
                 search_library_func=search_library_with_fallback,
                 search_alternative_func=search_with_alternative_interpretation,
                 search_compilations_func=search_compilations_for_track,
+                search_song_as_artist_func=search_song_as_artist,
             )
 
             search_state = await execute_search_pipeline(

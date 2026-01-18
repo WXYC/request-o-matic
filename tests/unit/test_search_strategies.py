@@ -9,6 +9,7 @@ from core.search import (
     get_search_type_from_state,
     has_artist_and_album_or_song,
     no_results_and_ambiguous_format,
+    no_results_and_song_but_no_artist,
     song_not_found_with_artist_and_song,
 )
 from library.models import LibraryItem
@@ -160,11 +161,47 @@ class TestConditionFunctions:
         )
         assert song_not_found_with_artist_and_song(parsed, empty_state, "test") is False
 
+    def test_no_results_and_song_but_no_artist_true(self, empty_state):
+        parsed = ParsedRequest(
+            raw_message="Laid Back",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            song="Laid Back",
+        )
+        assert no_results_and_song_but_no_artist(parsed, empty_state, "Laid Back") is True
+
+    def test_no_results_and_song_but_no_artist_false_has_results(self, state_with_results):
+        parsed = ParsedRequest(
+            raw_message="Laid Back",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            song="Laid Back",
+        )
+        assert no_results_and_song_but_no_artist(parsed, state_with_results, "Laid Back") is False
+
+    def test_no_results_and_song_but_no_artist_false_has_artist(self, empty_state):
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            artist="The Beatles",
+            song="Come Together",
+        )
+        assert no_results_and_song_but_no_artist(parsed, empty_state, "test") is False
+
+    def test_no_results_and_song_but_no_artist_false_no_song(self, empty_state):
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+        )
+        assert no_results_and_song_but_no_artist(parsed, empty_state, "test") is False
+
 
 class TestBuildStrategies:
     """Test build_strategies function."""
 
-    def test_builds_three_strategies(self):
+    def test_builds_three_strategies_without_song_as_artist(self):
         async def mock_search(*args, **kwargs):
             return [], False
 
@@ -175,6 +212,18 @@ class TestBuildStrategies:
         )
         assert len(strategies) == 3
 
+    def test_builds_four_strategies_with_song_as_artist(self):
+        async def mock_search(*args, **kwargs):
+            return [], False
+
+        strategies = build_strategies(
+            search_library_func=mock_search,
+            search_alternative_func=mock_search,
+            search_compilations_func=mock_search,
+            search_song_as_artist_func=mock_search,
+        )
+        assert len(strategies) == 4
+
     def test_strategies_in_correct_order(self):
         async def mock_search(*args, **kwargs):
             return [], False
@@ -183,10 +232,12 @@ class TestBuildStrategies:
             search_library_func=mock_search,
             search_alternative_func=mock_search,
             search_compilations_func=mock_search,
+            search_song_as_artist_func=mock_search,
         )
         assert strategies[0].name == SearchStrategyType.ARTIST_PLUS_ALBUM
         assert strategies[1].name == SearchStrategyType.SWAPPED_INTERPRETATION
         assert strategies[2].name == SearchStrategyType.TRACK_ON_COMPILATION
+        assert strategies[3].name == SearchStrategyType.SONG_AS_ARTIST
 
 
 class TestGetSearchTypeFromState:
@@ -232,6 +283,15 @@ class TestGetSearchTypeFromState:
         )
         assert get_search_type_from_state(state) == "compilation"
 
+    def test_returns_song_as_artist_for_song_as_artist(self):
+        state = SearchState(
+            strategies_tried=[
+                SearchStrategyType.ARTIST_PLUS_ALBUM,
+                SearchStrategyType.SONG_AS_ARTIST,
+            ],
+        )
+        assert get_search_type_from_state(state) == "song_as_artist"
+
 
 class TestSearchStrategyType:
     """Test SearchStrategyType enum."""
@@ -244,6 +304,9 @@ class TestSearchStrategyType:
 
     def test_track_on_compilation_value(self):
         assert SearchStrategyType.TRACK_ON_COMPILATION.value == "track_on_compilation"
+
+    def test_song_as_artist_value(self):
+        assert SearchStrategyType.SONG_AS_ARTIST.value == "song_as_artist"
 
     def test_is_string_enum(self):
         # Value can be accessed as string

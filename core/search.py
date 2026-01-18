@@ -33,6 +33,9 @@ class SearchStrategyType(str, Enum):
     TRACK_ON_COMPILATION = "track_on_compilation"
     """Find song on compilation albums via Discogs cross-reference."""
 
+    SONG_AS_ARTIST = "song_as_artist"
+    """Fallback: try parsed song as artist when no results and no artist parsed."""
+
     KEYWORD_MATCH = "keyword_match"
     """Significant word extraction search."""
 
@@ -137,6 +140,17 @@ def song_not_found_with_artist_and_song(
     return state.song_not_found and bool(parsed.artist) and bool(parsed.song)
 
 
+def no_results_and_song_but_no_artist(
+    parsed: ParsedRequest, state: SearchState, raw_message: str
+) -> bool:
+    """Condition: No results AND parsed song but no artist.
+
+    This handles cases where the AI parser misinterpreted an artist name
+    as a song title (e.g., "Laid Back" parsed as song instead of artist).
+    """
+    return not state.results and bool(parsed.song) and not parsed.artist
+
+
 # =============================================================================
 # Strategy Registry
 # =============================================================================
@@ -146,6 +160,7 @@ def build_strategies(
     search_library_func: ExecuteFunc,
     search_alternative_func: ExecuteFunc,
     search_compilations_func: ExecuteFunc,
+    search_song_as_artist_func: ExecuteFunc = None,
 ) -> list[SearchStrategy]:
     """Build the list of search strategies with injected execute functions.
 
@@ -156,11 +171,12 @@ def build_strategies(
         search_library_func: Function implementing ARTIST_PLUS_ALBUM search
         search_alternative_func: Function implementing SWAPPED_INTERPRETATION search
         search_compilations_func: Function implementing TRACK_ON_COMPILATION search
+        search_song_as_artist_func: Function implementing SONG_AS_ARTIST search
 
     Returns:
         List of SearchStrategy objects in execution order
     """
-    return [
+    strategies = [
         SearchStrategy(
             name=SearchStrategyType.ARTIST_PLUS_ALBUM,
             condition=has_artist_and_album_or_song,
@@ -179,6 +195,18 @@ def build_strategies(
             updates_discogs_titles=True,
         ),
     ]
+
+    # Add SONG_AS_ARTIST if function provided
+    if search_song_as_artist_func:
+        strategies.append(
+            SearchStrategy(
+                name=SearchStrategyType.SONG_AS_ARTIST,
+                condition=no_results_and_song_but_no_artist,
+                execute=search_song_as_artist_func,
+            )
+        )
+
+    return strategies
 
 
 async def execute_search_pipeline(
@@ -244,6 +272,13 @@ async def execute_search_pipeline(
                 if strategy.updates_discogs_titles:
                     state.discogs_titles = discogs_titles
 
+        elif strategy.name == SearchStrategyType.SONG_AS_ARTIST:
+            # Try using the parsed song as an artist name
+            results = await strategy.execute(db, parsed.song)
+            if results:
+                state.results = results
+                state.song_not_found = False
+
         # Stop if we found results (unless we're doing compilation search which can replace results)
         if state.results and strategy.name != SearchStrategyType.TRACK_ON_COMPILATION:
             # For compilation search, we continue even if we have artist-only results
@@ -277,5 +312,7 @@ def get_search_type_from_state(state: SearchState) -> str:
         return "alternative"
     elif last_strategy == SearchStrategyType.TRACK_ON_COMPILATION:
         return "compilation"
+    elif last_strategy == SearchStrategyType.SONG_AS_ARTIST:
+        return "song_as_artist"
 
     return "none"
