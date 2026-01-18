@@ -4,6 +4,7 @@ from typing import Optional
 
 import httpx
 
+from core.matching import calculate_confidence, is_compilation_artist
 from discogs.cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
 from discogs.models import (
     DiscogsSearchRequest,
@@ -58,14 +59,6 @@ class DiscogsService:
             parts = title.split(" - ", 1)
             return parts[0].strip(), parts[1].strip()
         return "", title
-
-    def _is_compilation_artist(self, artist: str) -> bool:
-        """Check if artist name indicates a compilation/various artists release."""
-        artist_lower = artist.lower()
-        return any(
-            keyword in artist_lower
-            for keyword in ["various", "soundtrack", "compilation", "v/a", "v.a."]
-        )
 
     @async_cached(TRACK_CACHE)
     async def search_track(
@@ -233,7 +226,7 @@ class DiscogsService:
         seen_albums.add(album_key)
 
         release_id = result.get("id")
-        is_compilation = self._is_compilation_artist(result_artist)
+        is_compilation = is_compilation_artist(result_artist)
 
         return ReleaseInfo(
             album=album,
@@ -362,7 +355,9 @@ class DiscogsService:
                 title = item.get("title", "")
                 result_artist, album = self._parse_title(title)
 
-                confidence = self._calculate_confidence(request, result_artist, album)
+                confidence = calculate_confidence(
+                    request.artist, request.album, result_artist, album
+                )
 
                 release_id = item.get("id")
                 release_url = f"https://www.discogs.com/release/{release_id}"
@@ -416,44 +411,6 @@ class DiscogsService:
             return {}
 
         return params
-
-    def _calculate_confidence(
-        self, request: DiscogsSearchRequest, result_artist: str, result_album: str
-    ) -> float:
-        """Calculate confidence score for a search result."""
-        score = 0.0
-
-        def normalize(s: str) -> str:
-            return s.lower().strip() if s else ""
-
-        req_artist = normalize(request.artist or "")
-        req_album = normalize(request.album or "")
-        res_artist = normalize(result_artist)
-        res_album = normalize(result_album)
-
-        # Artist match
-        if req_artist and res_artist:
-            if req_artist == res_artist:
-                score += 0.4
-            elif req_artist in res_artist or res_artist in req_artist:
-                score += 0.3
-
-        # Album match
-        if req_album and res_album:
-            if req_album == res_album:
-                score += 0.4
-            elif req_album in res_album or res_album in req_album:
-                score += 0.3
-
-        # Bonus for both matches
-        if score >= 0.6:
-            score += 0.2
-
-        # Base score if we got any result
-        if score == 0:
-            score = 0.2
-
-        return min(score, 1.0)
 
     async def validate_track_on_release(
         self, release_id: int, track: str, artist: str

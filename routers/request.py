@@ -1,4 +1,32 @@
-"""Request handling router with refactored helper functions."""
+"""Request handling router with refactored helper functions.
+
+Search Strategy Decision Tree
+=============================
+
+The search flow follows these steps in order:
+
+1. PARSE: Extract artist/song/album from message using Groq AI
+
+2. ARTIST CORRECTION: Fuzzy match artist against library to fix typos
+   (e.g., "Living Color" -> "Living Colour")
+
+3. ALBUM LOOKUP: If song provided without album, query Discogs for album name
+   (e.g., "Two Headed Boy" -> "In the Aeroplane Over the Sea")
+
+4. PRIMARY SEARCH: Search library with fallback chain:
+   - artist + album (from Discogs lookup or parsed)
+   - artist + song (song title might match album title)
+   - artist only (fallback when song/album not found)
+
+5. ALTERNATIVE INTERPRETATION: For ambiguous "X - Y" formats, try both:
+   - X as artist, Y as title
+   - Y as artist, X as title
+
+6. COMPILATION SEARCH: If no results, cross-reference Discogs track listings
+   with library to find song on compilations/soundtracks
+
+Each step is tracked via telemetry for observability.
+"""
 import asyncio
 import logging
 import re
@@ -14,6 +42,18 @@ from artwork.router import lookup_album_by_track, lookup_releases_by_track
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
 from core.dependencies import get_artwork_finder, get_posthog_client
 from artwork.finder import ArtworkFinder
+from core.matching import (
+    COMPILATION_KEYWORDS,
+    MAX_SEARCH_RESULTS,
+    STOPWORDS,
+    detect_ambiguous_format,
+    is_compilation_artist,
+)
+from core.search import (
+    build_strategies,
+    execute_search_pipeline,
+    get_search_type_from_state,
+)
 from core.telemetry import RequestTelemetry
 from library.models import LibraryItem
 from library.db import LibraryDB
@@ -22,38 +62,17 @@ from services.slack import build_simple_slack_blocks, build_slack_blocks
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Matching Constants
-# =============================================================================
-# These constants centralize the matching rules used throughout the search flow.
-# Thresholds were tuned through production testing to balance precision/recall.
 
-# Words to exclude when extracting significant keywords from search queries
-STOPWORDS = frozenset({
-    'the', 'a', 'an',           # Articles
-    'and', 'with', 'from',      # Conjunctions/prepositions
-    'that', 'this',             # Demonstratives
-    'play', 'song', 'remix',    # Request-specific noise
-    'story', 'records',         # Label/format noise
-})
-
-# Keywords indicating a compilation/soundtrack album (case-insensitive substring match)
-COMPILATION_KEYWORDS = frozenset({'various', 'soundtrack', 'compilation'})
-
-
-def is_compilation_artist(artist: str) -> bool:
-    """Check if an artist name indicates a compilation/soundtrack album.
+def limit_results(results: list) -> list:
+    """Limit results to MAX_SEARCH_RESULTS.
 
     Args:
-        artist: Artist name to check
+        results: List of search results
 
     Returns:
-        True if artist contains compilation keywords (various, soundtrack, compilation)
+        First MAX_SEARCH_RESULTS items from the list
     """
-    if not artist:
-        return False
-    artist_lower = artist.lower()
-    return any(keyword in artist_lower for keyword in COMPILATION_KEYWORDS)
+    return results[:MAX_SEARCH_RESULTS]
 
 
 # Friendly labels for message types in Slack
@@ -156,34 +175,6 @@ def filter_results_by_artist(
     return filtered
 
 
-def detect_ambiguous_format(raw_message: str) -> Optional[tuple[str, str]]:
-    """Detect if message has ambiguous 'X - Y' or 'X. Y' format.
-
-    These formats are ambiguous because they could be interpreted as either:
-    - Artist: X, Title: Y
-    - Title: X, Artist: Y
-
-    Args:
-        raw_message: The original request message
-
-    Returns:
-        Tuple of (part1, part2) if ambiguous format detected, None otherwise.
-    """
-    # Check for "X - Y" pattern (with spaces around dash)
-    if " - " in raw_message:
-        parts = raw_message.split(" - ", 1)
-        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-            return (parts[0].strip(), parts[1].strip())
-
-    # Check for "X. Y" pattern (period followed by space)
-    if ". " in raw_message:
-        parts = raw_message.split(". ", 1)
-        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-            return (parts[0].strip(), parts[1].strip())
-
-    return None
-
-
 async def search_with_alternative_interpretation(
     db: LibraryDB,
     part1: str,
@@ -205,12 +196,12 @@ async def search_with_alternative_interpretation(
     """
     # Try interpretation 1: part1 = artist
     query1 = f"{part1} {part2}"
-    results1 = await db.search(query=query1, limit=5)
+    results1 = await db.search(query=query1, limit=MAX_SEARCH_RESULTS)
     results1 = filter_results_by_artist(results1, part1)
 
     # Try interpretation 2: part2 = artist
     query2 = f"{part2} {part1}"
-    results2 = await db.search(query=query2, limit=5)
+    results2 = await db.search(query=query2, limit=MAX_SEARCH_RESULTS)
     results2 = filter_results_by_artist(results2, part2)
 
     # Return whichever has results (prefer the one with more/better matches)
@@ -229,7 +220,7 @@ async def search_with_alternative_interpretation(
             if item.id not in seen_ids:
                 combined.append(item)
                 seen_ids.add(item.id)
-        return combined[:5]
+        return limit_results(combined)
 
     return []
 
@@ -270,7 +261,7 @@ async def search_library_with_fallback(
         return [], False
 
     query = " ".join(query_parts)
-    results = await db.search(query=query, limit=5)
+    results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
 
     # Filter to results that actually match the artist
     if parsed.artist:
@@ -298,7 +289,7 @@ async def search_library_with_fallback(
     if not results and parsed.artist and parsed.song and album:
         song_query = f"{parsed.artist} {parsed.song}"
         logger.info(f"No results for '{query}', trying artist + song: '{song_query}'")
-        results = await db.search(query=song_query, limit=5)
+        results = await db.search(query=song_query, limit=MAX_SEARCH_RESULTS)
         results = filter_results_by_artist(results, parsed.artist)
         if results:
             # Prioritize results where album title matches song title
@@ -312,7 +303,7 @@ async def search_library_with_fallback(
     # If still no results, try just artist
     if not results and parsed.artist:
         logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
-        results = await db.search(query=parsed.artist, limit=5)
+        results = await db.search(query=parsed.artist, limit=MAX_SEARCH_RESULTS)
         # Filter again for artist-only search
         results = filter_results_by_artist(results, parsed.artist)
         if results:
@@ -359,7 +350,7 @@ async def search_compilations_for_track(
         if query_words:
             keyword_query = ' '.join(query_words)
             logger.info(f"Trying direct keyword search: '{keyword_query}'")
-            keyword_results = await db.search(query=keyword_query, limit=5)
+            keyword_results = await db.search(query=keyword_query, limit=MAX_SEARCH_RESULTS)
 
             if keyword_results:
                 # Filter by artist unless it's a compilation album
@@ -442,7 +433,7 @@ async def search_compilations_for_track(
                         # Store the Discogs album title for artwork lookup
                         discogs_titles[match.id] = release_album
 
-                if len(results) >= 5:
+                if len(results) >= MAX_SEARCH_RESULTS:
                     break
     except Exception as e:
         logger.warning(f"Failed to search for track on other releases: {e}")
@@ -464,7 +455,7 @@ async def search_compilations_for_track(
             reverse=True,
         )
 
-    return results[:5], discogs_titles
+    return limit_results(results), discogs_titles
 
 
 async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryItem]:
@@ -480,7 +471,7 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
     from rapidfuzz import fuzz
 
     # Try exact search first (use higher limit to allow artist filtering later)
-    results = await db.search(query=album_title, limit=5)
+    results = await db.search(query=album_title, limit=MAX_SEARCH_RESULTS)
 
     if not results:
         # Extract significant keywords (using shared STOPWORDS constant)
@@ -490,7 +481,7 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
         if significant_words:
             fuzzy_query = ' '.join(significant_words[:4])
             logger.info(f"Exact match failed for '{album_title}', trying fuzzy: '{fuzzy_query}'")
-            results = await db.search(query=fuzzy_query, limit=5)
+            results = await db.search(query=fuzzy_query, limit=MAX_SEARCH_RESULTS)
 
             # Filter results using both keyword matching AND overall similarity
             if results:
@@ -734,42 +725,36 @@ async def handle_request(
                 telemetry.record_api_call("discogs")
             album_for_search, song_not_found = await resolve_album_for_track(parsed)
 
-        # Step 3: Search library with fallback to artist-only
+        # Step 3: Execute search strategy pipeline
+        # The pipeline tries strategies in order until results are found:
+        # 1. ARTIST_PLUS_ALBUM - search by artist + album/song
+        # 2. SWAPPED_INTERPRETATION - try "X - Y" as both orderings
+        # 3. TRACK_ON_COMPILATION - find song on compilations via Discogs
         with telemetry.track_step("library_search"):
-            has_search_info = parsed.artist or album_for_search
-            if has_search_info:
-                library_results, fallback_used = await search_library_with_fallback(
-                    db, parsed, album_for_search
-                )
-                if fallback_used:
-                    song_not_found = True
-                if library_results:
-                    search_type = "fallback" if fallback_used else "direct"
+            strategies = build_strategies(
+                search_library_func=search_library_with_fallback,
+                search_alternative_func=search_with_alternative_interpretation,
+                search_compilations_func=search_compilations_for_track,
+            )
 
-            # Step 3a: If no results, try alternative interpretation for ambiguous formats
-            if not library_results:
-                ambiguous_parts = detect_ambiguous_format(request.message)
-                if ambiguous_parts:
-                    library_results = await search_with_alternative_interpretation(
-                        db, ambiguous_parts[0], ambiguous_parts[1]
-                    )
-                    if library_results:
-                        song_not_found = False
-                        search_type = "alternative"
+            search_state = await execute_search_pipeline(
+                parsed=parsed,
+                db=db,
+                raw_message=request.message,
+                strategies=strategies,
+                album_for_search=album_for_search,
+            )
 
-        # Step 3b: Search compilations if exact song/album not found
-        # This runs when: no results yet, OR we only have artist-fallback results (song_not_found=True)
-        # The compilation search cross-references with Discogs to find albums that actually have the song
-        with telemetry.track_step("compilation_search"):
-            if song_not_found and parsed.song and parsed.artist:
+            # Extract results from state
+            library_results = limit_results(search_state.results)
+            song_not_found = search_state.song_not_found
+            found_on_compilation = search_state.found_on_compilation
+            discogs_titles = search_state.discogs_titles
+            search_type = get_search_type_from_state(search_state)
+
+            # Record Discogs API call if compilation search was used
+            if found_on_compilation:
                 telemetry.record_api_call("discogs")
-                compilation_results, discogs_titles = await search_compilations_for_track(db, parsed)
-                if compilation_results:
-                    # Replace artist albums with compilation results since we found the actual song
-                    library_results = compilation_results[:5]
-                    found_on_compilation = True
-                    song_not_found = False
-                    search_type = "compilation"
 
         # Step 4: Fetch artwork for library items
         with telemetry.track_step("artwork_fetch"):

@@ -6,6 +6,7 @@ from typing import Optional
 import aiosqlite
 from rapidfuzz import fuzz
 
+from core.matching import STOPWORDS
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
@@ -139,10 +140,9 @@ class LibraryDB:
         # Normalize: remove special chars, keep only alphanumeric and spaces
         normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
         words = normalized.split()
-        
-        # Remove common articles that might cause mismatches
-        stop_words = {'the', 'a', 'an'}
-        significant_words = [w for w in words if w not in stop_words and len(w) > 1]
+
+        # Remove stopwords that might cause mismatches
+        significant_words = [w for w in words if w not in STOPWORDS and len(w) > 1]
         
         # If we removed all words, use original words
         if not significant_words:

@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 from artwork.models import ArtworkRequest, SearchResult
+from core.matching import calculate_confidence, is_compilation_artist
 from discogs.models import DiscogsSearchRequest
 from discogs.service import DiscogsService
 
@@ -66,8 +67,7 @@ class DiscogsProvider:
         releases = []
         for release_info in response.releases:
             # For Various Artists / compilations, validate the tracklist
-            # Use service's compilation detection to avoid duplication
-            if artist and self._service._is_compilation_artist(release_info.artist):
+            if artist and is_compilation_artist(release_info.artist):
                 is_valid = await self._service.validate_track_on_release(
                     release_info.release_id, track, artist
                 )
@@ -117,8 +117,10 @@ class DiscogsProvider:
             if not item.artwork_url or "spacer.gif" in item.artwork_url:
                 continue
 
-            # Recalculate confidence with local method (for ArtworkRequest fields)
-            confidence = self._calculate_confidence(request, item.artist or "", item.album or "")
+            # Calculate confidence score for this result
+            confidence = calculate_confidence(
+                request.artist, request.album, item.artist or "", item.album or ""
+            )
 
             results.append(
                 SearchResult(
@@ -152,41 +154,3 @@ class DiscogsProvider:
             return {}
 
         return params
-
-    def _calculate_confidence(
-        self, request: ArtworkRequest, result_artist: str, result_album: str
-    ) -> float:
-        """Calculate confidence score based on how well result matches request."""
-        score = 0.0
-
-        def normalize(s: str) -> str:
-            return s.lower().strip() if s else ""
-
-        req_artist = normalize(request.artist or "")
-        req_album = normalize(request.album or "")
-        res_artist = normalize(result_artist)
-        res_album = normalize(result_album)
-
-        # Artist match
-        if req_artist and res_artist:
-            if req_artist == res_artist:
-                score += 0.4
-            elif req_artist in res_artist or res_artist in req_artist:
-                score += 0.3
-
-        # Album match
-        if req_album and res_album:
-            if req_album == res_album:
-                score += 0.4
-            elif req_album in res_album or res_album in req_album:
-                score += 0.3
-
-        # Bonus for having both matches
-        if score >= 0.6:
-            score += 0.2
-
-        # Base score if we got any result
-        if score == 0:
-            score = 0.2
-
-        return min(score, 1.0)
