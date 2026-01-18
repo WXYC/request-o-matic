@@ -24,6 +24,10 @@ import sys
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration
 POSTHOG_HOST = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
@@ -93,31 +97,15 @@ def create_insight(name: str, query: dict, description: str = "") -> dict:
 
 
 def add_insight_to_dashboard(dashboard_id: int, insight_id: int) -> None:
-    """Add an insight to a dashboard as a tile."""
+    """Add an insight to a dashboard by updating the insight's dashboards field."""
     print(f"    Adding insight {insight_id} to dashboard {dashboard_id}")
 
-    # Get current dashboard to find existing tiles
-    dashboard = api_request("GET", f"/api/projects/{POSTHOG_PROJECT_ID}/dashboards/{dashboard_id}/")
-    tiles = dashboard.get("tiles", [])
-
-    # Calculate position for new tile (simple grid layout)
-    row = len(tiles) // 2
-    col = len(tiles) % 2
-
-    new_tile = {
-        "insight": insight_id,
-        "layouts": {
-            "sm": {"x": col * 6, "y": row * 5, "w": 6, "h": 5},
-            "xs": {"x": 0, "y": row * 5, "w": 1, "h": 5},
-        },
-    }
-
-    tiles.append(new_tile)
-
+    # Update the insight to add it to the dashboard
+    # This is more reliable than patching dashboard tiles directly
     api_request(
         "PATCH",
-        f"/api/projects/{POSTHOG_PROJECT_ID}/dashboards/{dashboard_id}/",
-        {"tiles": tiles},
+        f"/api/projects/{POSTHOG_PROJECT_ID}/insights/{insight_id}/",
+        {"dashboards": [dashboard_id]},
     )
 
 
