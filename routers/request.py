@@ -38,7 +38,7 @@ from posthog import Posthog
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
-from artwork.router import lookup_album_by_track, lookup_releases_by_track
+from artwork.router import lookup_album_by_track, lookup_releases_by_artist, lookup_releases_by_track
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
 from core.dependencies import get_artwork_finder, get_posthog_client
 from artwork.finder import ArtworkFinder
@@ -231,6 +231,11 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
     This handles cases where the AI parser misinterpreted an artist name
     as a song title (e.g., "Laid Back" parsed as song instead of artist).
 
+    Strategy:
+    1. Search library for direct artist match
+    2. If no results, search Discogs for releases by that artist
+    3. Cross-reference Discogs album titles with library (for compilations)
+
     Args:
         db: Library database
         song_as_artist: The song title to try as an artist name
@@ -239,11 +244,51 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
         Results matching the artist, or empty list if no matches.
     """
     logger.info(f"Trying song '{song_as_artist}' as artist name")
+
+    # Step 1: Direct library search for artist
     results = await db.search(query=song_as_artist, limit=MAX_SEARCH_RESULTS)
     results = filter_results_by_artist(results, song_as_artist)
     if results:
         logger.info(f"Found {len(results)} results treating '{song_as_artist}' as artist")
-    return results
+        return results
+
+    # Step 2: Search Discogs for releases by this artist
+    logger.info(f"No direct matches, searching Discogs for releases by '{song_as_artist}'")
+    discogs_releases = await lookup_releases_by_artist(song_as_artist, limit=10)
+
+    if not discogs_releases:
+        logger.info(f"No Discogs releases found for '{song_as_artist}'")
+        return []
+
+    logger.info(f"Found {len(discogs_releases)} Discogs releases for '{song_as_artist}'")
+
+    # Step 3: Cross-reference album titles with library
+    seen_ids = set()
+    for discogs_artist, album_title in discogs_releases:
+        if not album_title:
+            continue
+
+        # Search library for this album title
+        album_results = await db.search(query=album_title, limit=MAX_SEARCH_RESULTS)
+
+        for item in album_results:
+            if item.id in seen_ids:
+                continue
+
+            # Accept if it's the actual artist or a compilation
+            item_artist = (item.artist or "").lower()
+            if item_artist.startswith(song_as_artist.lower()) or is_compilation_artist(item.artist):
+                results.append(item)
+                seen_ids.add(item.id)
+                logger.info(f"Found '{item.artist} - {item.title}' via Discogs cross-reference")
+
+        if len(results) >= MAX_SEARCH_RESULTS:
+            break
+
+    if results:
+        logger.info(f"Found {len(results)} results via Discogs cross-reference for '{song_as_artist}'")
+
+    return limit_results(results)
 
 
 async def search_library_with_fallback(
