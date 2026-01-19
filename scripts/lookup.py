@@ -50,7 +50,55 @@ def print_parsed_request(parsed: dict) -> None:
     print(f"  Raw Message:   {parsed.get('raw_message')}")
 
 
-def print_library_results(results: list[dict], artwork: Optional[dict]) -> None:
+async def lookup_discogs_urls(
+    client: httpx.AsyncClient,
+    base_url: str,
+    results: list[dict],
+) -> dict[int, str]:
+    """Look up Discogs URLs for each library result.
+
+    Returns a dict mapping item ID to Discogs release URL.
+    """
+    discogs_urls: dict[int, str] = {}
+
+    async def fetch_discogs_url(item: dict) -> tuple[int, Optional[str]]:
+        """Fetch Discogs URL for a single item."""
+        item_id = item.get("id")
+        artist = item.get("artist", "")
+        title = item.get("title", "")
+
+        if not artist or not title:
+            return item_id, None
+
+        try:
+            response = await client.post(
+                f"{base_url}/discogs/search",
+                json={"artist": artist, "album": title},
+                params={"limit": 1},
+            )
+            if response.status_code == 200:
+                data = response.json()
+                results_list = data.get("results", [])
+                if results_list:
+                    return item_id, results_list[0].get("release_url")
+        except Exception:
+            pass
+        return item_id, None
+
+    # Fetch all Discogs URLs concurrently
+    tasks = [fetch_discogs_url(item) for item in results]
+    for item_id, url in await asyncio.gather(*tasks):
+        if url:
+            discogs_urls[item_id] = url
+
+    return discogs_urls
+
+
+def print_library_results(
+    results: list[dict],
+    artwork: Optional[dict],
+    discogs_urls: Optional[dict[int, str]] = None,
+) -> None:
     """Print library search results."""
     print_section("Library Results")
 
@@ -58,11 +106,10 @@ def print_library_results(results: list[dict], artwork: Optional[dict]) -> None:
         print("  No results found in library.")
         return
 
-    # Get artwork info - release_url only matches the artwork album
-    artwork_url = artwork.get("release_url") if artwork else None
-    artwork_album = (artwork.get("album") or "").lower() if artwork else ""
+    discogs_urls = discogs_urls or {}
 
     for i, item in enumerate(results, 1):
+        item_id = item.get("id")
         title = item.get('title', '')
         artist = item.get('artist', '')
         print(f"  [{i}] {title}")
@@ -76,9 +123,8 @@ def print_library_results(results: list[dict], artwork: Optional[dict]) -> None:
             print(f"      Location: {call_letters} {artist_num}/{release_num}")
         else:
             print(f"      Location: (none)")
-        # Only show Discogs URL if we have a confirmed match from artwork
-        if artwork_url and title.lower() == artwork_album:
-            print(f"      Discogs:  {artwork_url}")
+        if item_id in discogs_urls:
+            print(f"      Discogs:  {discogs_urls[item_id]}")
         print(f"      WXYC:     {item.get('library_url') or '(none)'}")
         print()
 
@@ -108,12 +154,18 @@ async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> 
             response.raise_for_status()
             data = response.json()
 
-            # Display results
+            # Display parsed request
             print_parsed_request(data.get("parsed", {}))
-            print_library_results(
-                data.get("library_results", []),
-                data.get("artwork"),
-            )
+
+            # Look up Discogs URLs for each library result
+            library_results = data.get("library_results", [])
+            discogs_urls = {}
+            if library_results:
+                logger.info("Looking up Discogs URLs...")
+                discogs_urls = await lookup_discogs_urls(client, base_url, library_results)
+
+            # Display results with Discogs URLs
+            print_library_results(library_results, data.get("artwork"), discogs_urls)
 
             return data
 
