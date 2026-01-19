@@ -6,7 +6,7 @@ from routers.request import (
     build_context_message,
     detect_ambiguous_format,
     filter_results_by_artist,
-    resolve_album_for_track,
+    resolve_albums_for_track,
     search_library_with_fallback,
     search_with_alternative_interpretation,
 )
@@ -155,7 +155,7 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
     )
     
     results, fallback_used = await search_library_with_fallback(
-        mock_library_db, parsed, "A Night at the Opera"
+        mock_library_db, parsed, ["A Night at the Opera"]
     )
     
     assert len(results) == 1
@@ -192,7 +192,7 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
     )
 
     results, fallback_used = await search_library_with_fallback(
-        mock_library_db, parsed, "Unknown Album"
+        mock_library_db, parsed, ["Unknown Album"]
     )
 
     assert len(results) == 1
@@ -363,7 +363,7 @@ async def test_search_library_filters_non_matching_artists(mock_library_db):
     )
 
     results, fallback_used = await search_library_with_fallback(
-        mock_library_db, parsed, None
+        mock_library_db, parsed, []
     )
 
     # Results should be empty after filtering

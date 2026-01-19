@@ -51,15 +51,15 @@ class TestSearchState:
         assert state.found_on_compilation is False
         assert state.strategies_tried == []
         assert state.discogs_titles == {}
-        assert state.album_for_search is None
+        assert state.albums_for_search == []
 
     def test_with_values(self):
         state = SearchState(
             song_not_found=True,
-            album_for_search="Test Album",
+            albums_for_search=["Test Album"],
         )
         assert state.song_not_found is True
-        assert state.album_for_search == "Test Album"
+        assert state.albums_for_search == ["Test Album"]
 
 
 class TestConditionFunctions:
@@ -72,7 +72,7 @@ class TestConditionFunctions:
             message_type=MessageType.REQUEST,
             artist="The Beatles",
         )
-        empty_state.album_for_search = "Abbey Road"
+        empty_state.albums_for_search = ["Abbey Road"]
         assert has_artist_and_album_or_song(parsed, empty_state, "test") is True
 
     def test_has_artist_and_album_or_song_with_artist_and_song(self, empty_state):
@@ -102,7 +102,7 @@ class TestConditionFunctions:
             message_type=MessageType.REQUEST,
             song="Come Together",
         )
-        empty_state.album_for_search = "Abbey Road"
+        empty_state.albums_for_search = ["Abbey Road"]
         assert has_artist_and_album_or_song(parsed, empty_state, "test") is False
 
     def test_no_results_and_ambiguous_format_with_dash(self, empty_state):

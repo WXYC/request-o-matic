@@ -63,8 +63,8 @@ class SearchState:
     discogs_titles: dict[int, str] = field(default_factory=dict)
     """Map of library item ID to Discogs album title (for artwork lookup)."""
 
-    album_for_search: Optional[str] = None
-    """Album name resolved from Discogs track lookup."""
+    albums_for_search: list[str] = field(default_factory=list)
+    """Album names resolved from Discogs track lookup (may contain multiple)."""
 
 
 # Type aliases for strategy functions
@@ -121,7 +121,7 @@ def has_artist_and_album_or_song(
     parsed: ParsedRequest, state: SearchState, raw_message: str
 ) -> bool:
     """Condition: Has artist AND (album or song)."""
-    return bool(parsed.artist and (state.album_for_search or parsed.song))
+    return bool(parsed.artist and (state.albums_for_search or parsed.song))
 
 
 def no_results_and_ambiguous_format(
@@ -214,7 +214,7 @@ async def execute_search_pipeline(
     db: LibraryDB,
     raw_message: str,
     strategies: list[SearchStrategy],
-    album_for_search: Optional[str] = None,
+    albums_for_search: list[str] | None = None,
 ) -> SearchState:
     """Execute strategies in array order until results found.
 
@@ -223,7 +223,7 @@ async def execute_search_pipeline(
         db: Library database for searches
         raw_message: Original request message (for ambiguous format detection)
         strategies: List of search strategies to try
-        album_for_search: Optional album name from Discogs lookup
+        albums_for_search: Optional list of album names from Discogs lookup
 
     Returns:
         SearchState with results and metadata about the search
@@ -231,7 +231,7 @@ async def execute_search_pipeline(
     state = SearchState(
         results=[],
         strategies_tried=[],
-        album_for_search=album_for_search,
+        albums_for_search=albums_for_search or [],
     )
 
     for strategy in strategies:
@@ -243,7 +243,7 @@ async def execute_search_pipeline(
 
         # Execute the strategy
         if strategy.name == SearchStrategyType.ARTIST_PLUS_ALBUM:
-            results, fallback_used = await strategy.execute(db, parsed, state.album_for_search)
+            results, fallback_used = await strategy.execute(db, parsed, state.albums_for_search)
             if results:
                 state.results = results
             if strategy.updates_song_not_found and fallback_used:

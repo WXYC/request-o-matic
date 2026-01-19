@@ -38,7 +38,7 @@ from posthog import Posthog
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
-from artwork.router import lookup_album_by_track, lookup_releases_by_artist, lookup_releases_by_track
+from artwork.router import lookup_releases_by_artist, lookup_releases_by_track
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
 from core.dependencies import get_artwork_finder, get_posthog_client
 from artwork.finder import ArtworkFinder
@@ -99,16 +99,20 @@ class UnifiedResponse(BaseModel):
     library_results: list[LibraryItem] = []
 
 
-async def resolve_album_for_track(
+async def resolve_albums_for_track(
     parsed: ParsedRequest,
-) -> tuple[Optional[str], bool]:
-    """Resolve album name for a track if not provided.
+) -> tuple[list[str], bool]:
+    """Resolve album names for a track if not provided.
+
+    Searches Discogs for ALL releases containing the track, not just the first one.
+    This ensures we find songs on both EPs and full albums (e.g., "Percolator" is on
+    both "Noises [EP]" and "Emperor Tomato Ketchup" by Stereolab).
 
     Args:
         parsed: Parsed request with song/artist info
 
     Returns:
-        Tuple of (album_name, song_not_found_flag)
+        Tuple of (list of album names, song_not_found_flag)
     """
     # Check if album is missing or if album == artist (parser error)
     # When the parser can't identify the album, it sometimes uses the artist name
@@ -122,19 +126,28 @@ async def resolve_album_for_track(
     # results are unreliable (e.g., "Laid Back" could match any track with that name)
     if parsed.song and parsed.artist and (album_is_missing or album_is_artist):
         if album_is_artist:
-            logger.info(f"Album '{parsed.album}' appears to be artist name, looking up album")
+            logger.info(f"Album '{parsed.album}' appears to be artist name, looking up albums")
         try:
-            album_from_track = await lookup_album_by_track(parsed.song, parsed.artist)
-            if album_from_track:
-                logger.info(f"Found album '{album_from_track}' for song '{parsed.song}'")
-                return album_from_track, False
-            else:
-                logger.info(f"Could not find album for song '{parsed.song}'")
-                return None, True
+            # Get ALL releases containing this track, not just the first one
+            releases = await lookup_releases_by_track(parsed.song, parsed.artist, limit=10)
+            if releases:
+                # Extract unique album names, filtering to releases by this artist
+                albums = []
+                artist_lower = parsed.artist.lower()
+                for release_artist, album in releases:
+                    # Only include releases by the requested artist (not compilations)
+                    if release_artist.lower().startswith(artist_lower):
+                        if album not in albums:
+                            albums.append(album)
+                if albums:
+                    logger.info(f"Found {len(albums)} albums for song '{parsed.song}': {albums}")
+                    return albums, False
+            logger.info(f"Could not find albums for song '{parsed.song}'")
+            return [], True
         except Exception as e:
             logger.warning(f"Track lookup failed: {e}")
-            return None, True
-    return parsed.album, False
+            return [], True
+    return [parsed.album] if parsed.album else [], False
 
 
 def filter_results_by_artist(
@@ -294,12 +307,12 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
 async def search_library_with_fallback(
     db: LibraryDB,
     parsed: ParsedRequest,
-    album: Optional[str],
+    albums: list[str],
 ) -> tuple[list[LibraryItem], bool]:
-    """Search library with artist+album, falling back to artist+song or artist-only.
+    """Search library with artist+album(s), falling back to artist+song or artist-only.
 
     Search order:
-    1. Artist + album (from Discogs lookup)
+    1. Artist + each album (from Discogs lookup) - searches ALL albums, dedupes results
     2. Artist + song (song title might match album title)
     3. Artist only
 
@@ -308,55 +321,42 @@ async def search_library_with_fallback(
     Args:
         db: Library database
         parsed: Parsed request (with corrected artist name)
-        album: Resolved album name
+        albums: List of resolved album names (may be empty)
 
     Returns:
         Tuple of (library_results, song_not_found_flag)
     """
-    query_parts = []
-    if parsed.artist:
-        query_parts.append(parsed.artist)
-    if album:
-        query_parts.append(album)
-    elif parsed.song:
-        # If no album but we have a song, use the song title
-        # (song title might match album title, e.g., "Meet Me in the City")
-        query_parts.append(parsed.song)
+    all_results: list[LibraryItem] = []
+    seen_ids: set[int] = set()
 
-    if not query_parts:
-        return [], False
+    # Search for each album from Discogs
+    if parsed.artist and albums:
+        for album in albums:
+            query = f"{parsed.artist} {album}"
+            results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
+            results = filter_results_by_artist(results, parsed.artist)
 
-    query = " ".join(query_parts)
-    results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
+            # Add unique results
+            for item in results:
+                if item.id not in seen_ids:
+                    seen_ids.add(item.id)
+                    all_results.append(item)
 
-    # Filter to results that actually match the artist
-    if parsed.artist:
+        if all_results:
+            # Sort to prioritize results matching the first (primary) album
+            primary_album_lower = albums[0].lower()
+            all_results.sort(
+                key=lambda r: primary_album_lower in (r.title or "").lower(),
+                reverse=True,
+            )
+            return all_results, False
+
+    # If no albums from Discogs, try artist + song
+    if parsed.artist and parsed.song:
+        query = f"{parsed.artist} {parsed.song}"
+        results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
         results = filter_results_by_artist(results, parsed.artist)
 
-    # Prioritize results that match the album we looked up
-    # This ensures "In the Aeroplane Over the Sea" comes before "On Avery Island"
-    # when we specifically looked up which album has the song
-    if results and album:
-        album_lower = album.lower()
-        results.sort(
-            key=lambda r: album_lower in (r.title or "").lower(),
-            reverse=True,
-        )
-    # If no album but we have a song title, prioritize albums matching the song
-    elif results and parsed.song:
-        song_lower = parsed.song.lower()
-        results.sort(
-            key=lambda r: song_lower in (r.title or "").lower(),
-            reverse=True,
-        )
-
-    # If no results and we had both artist and album, try artist + song
-    # (song title might match album title, e.g., "Meet Me in the City")
-    if not results and parsed.artist and parsed.song and album:
-        song_query = f"{parsed.artist} {parsed.song}"
-        logger.info(f"No results for '{query}', trying artist + song: '{song_query}'")
-        results = await db.search(query=song_query, limit=MAX_SEARCH_RESULTS)
-        results = filter_results_by_artist(results, parsed.artist)
         if results:
             # Prioritize results where album title matches song title
             song_lower = parsed.song.lower()
@@ -364,18 +364,17 @@ async def search_library_with_fallback(
                 key=lambda r: song_lower in (r.title or "").lower(),
                 reverse=True,
             )
-            return results, False  # Not "song not found" - we matched via song title
+            return results, False
 
     # If still no results, try just artist
-    if not results and parsed.artist:
-        logger.info(f"No results for '{query}', trying artist only: '{parsed.artist}'")
+    if not all_results and parsed.artist:
+        logger.info(f"No results for albums {albums}, trying artist only: '{parsed.artist}'")
         results = await db.search(query=parsed.artist, limit=MAX_SEARCH_RESULTS)
-        # Filter again for artist-only search
         results = filter_results_by_artist(results, parsed.artist)
         if results:
             return results, True
 
-    return results, False
+    return all_results, False
 
 
 async def search_compilations_for_track(
@@ -785,11 +784,11 @@ async def handle_request(
             if corrected_artist:
                 parsed.artist = corrected_artist
 
-        # Step 2: If we have a song but no album, look up the album from Discogs
+        # Step 2: If we have a song but no album, look up albums from Discogs
         with telemetry.track_step("album_lookup"):
             if parsed.song and not parsed.album:
                 telemetry.record_api_call("discogs")
-            album_for_search, song_not_found = await resolve_album_for_track(parsed)
+            albums_for_search, song_not_found = await resolve_albums_for_track(parsed)
 
         # Step 3: Execute search strategy pipeline
         # The pipeline tries strategies in order until results are found:
@@ -810,7 +809,7 @@ async def handle_request(
                 db=db,
                 raw_message=request.message,
                 strategies=strategies,
-                album_for_search=album_for_search,
+                albums_for_search=albums_for_search,
             )
 
             # Extract results from state
