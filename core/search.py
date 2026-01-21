@@ -117,11 +117,11 @@ class SearchStrategy:
 # =============================================================================
 
 
-def has_artist_and_album_or_song(
+def has_artist_or_album_or_song(
     parsed: ParsedRequest, state: SearchState, raw_message: str
 ) -> bool:
-    """Condition: Has artist AND (album or song)."""
-    return bool(parsed.artist and (state.albums_for_search or parsed.song))
+    """Condition: Has artist OR album OR song to search for."""
+    return bool(parsed.artist or state.albums_for_search or parsed.song)
 
 
 def no_results_and_ambiguous_format(
@@ -179,7 +179,7 @@ def build_strategies(
     strategies = [
         SearchStrategy(
             name=SearchStrategyType.ARTIST_PLUS_ALBUM,
-            condition=has_artist_and_album_or_song,
+            condition=has_artist_or_album_or_song,
             execute=search_library_func,
             updates_song_not_found=True,
         ),

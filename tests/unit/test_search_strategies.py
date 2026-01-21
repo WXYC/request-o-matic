@@ -7,7 +7,7 @@ from core.search import (
     build_strategies,
     execute_search_pipeline,
     get_search_type_from_state,
-    has_artist_and_album_or_song,
+    has_artist_or_album_or_song,
     no_results_and_ambiguous_format,
     no_results_and_song_but_no_artist,
     song_not_found_with_artist_and_song,
@@ -65,7 +65,7 @@ class TestSearchState:
 class TestConditionFunctions:
     """Test strategy condition functions."""
 
-    def test_has_artist_and_album_or_song_with_artist_and_album(self, empty_state):
+    def test_has_artist_or_album_or_song_with_artist_and_album(self, empty_state):
         parsed = ParsedRequest(
             raw_message="test",
             is_request=True,
@@ -73,9 +73,9 @@ class TestConditionFunctions:
             artist="The Beatles",
         )
         empty_state.albums_for_search = ["Abbey Road"]
-        assert has_artist_and_album_or_song(parsed, empty_state, "test") is True
+        assert has_artist_or_album_or_song(parsed, empty_state, "test") is True
 
-    def test_has_artist_and_album_or_song_with_artist_and_song(self, empty_state):
+    def test_has_artist_or_album_or_song_with_artist_and_song(self, empty_state):
         parsed = ParsedRequest(
             raw_message="test",
             is_request=True,
@@ -83,19 +83,19 @@ class TestConditionFunctions:
             artist="The Beatles",
             song="Come Together",
         )
-        assert has_artist_and_album_or_song(parsed, empty_state, "test") is True
+        assert has_artist_or_album_or_song(parsed, empty_state, "test") is True
 
-    def test_has_artist_and_album_or_song_with_artist_only(self, empty_state):
+    def test_has_artist_or_album_or_song_with_artist_only(self, empty_state):
         parsed = ParsedRequest(
             raw_message="test",
             is_request=True,
             message_type=MessageType.REQUEST,
             artist="The Beatles",
         )
-        # No album_for_search and no song
-        assert has_artist_and_album_or_song(parsed, empty_state, "test") is False
+        # Artist only - should still trigger search (artist-only fallback)
+        assert has_artist_or_album_or_song(parsed, empty_state, "test") is True
 
-    def test_has_artist_and_album_or_song_no_artist(self, empty_state):
+    def test_has_artist_or_album_or_song_no_artist_but_has_song(self, empty_state):
         parsed = ParsedRequest(
             raw_message="test",
             is_request=True,
@@ -103,7 +103,17 @@ class TestConditionFunctions:
             song="Come Together",
         )
         empty_state.albums_for_search = ["Abbey Road"]
-        assert has_artist_and_album_or_song(parsed, empty_state, "test") is False
+        # Has song and albums, should trigger search
+        assert has_artist_or_album_or_song(parsed, empty_state, "test") is True
+
+    def test_has_artist_or_album_or_song_nothing(self, empty_state):
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+        )
+        # No artist, no song, no albums - should NOT trigger search
+        assert has_artist_or_album_or_song(parsed, empty_state, "test") is False
 
     def test_no_results_and_ambiguous_format_with_dash(self, empty_state):
         parsed = ParsedRequest(
