@@ -206,7 +206,36 @@ class TestLibraryIntegration:
             print(f"    Artist: {result.artist}")
         
         assert len(results) > 0, "Should find Various Artists releases"
-        
+
+        await db.close()
+
+    @pytest.mark.asyncio
+    @skip_if_no_db
+    async def test_artist_only_search_echo_and_the_bunnymen(self):
+        """Test artist-only search returns results.
+
+        Bug: After refactoring to support multiple albums, artist-only searches
+        (with no song or album) would return no results because the search
+        condition required albums_for_search OR song to be present.
+
+        Expected: Searching for just an artist name should return their albums.
+        """
+        db = LibraryDB(db_path=LIBRARY_DB_PATH)
+        await db.connect()
+
+        results = await db.search(query="Echo and the Bunnymen", limit=5)
+
+        print(f"\n✅ Found {len(results)} results for 'Echo and the Bunnymen':")
+        for result in results:
+            print(f"  - {result.artist} - {result.title}")
+            print(f"    Call: {result.call_number}")
+
+        assert len(results) > 0, "Should find Echo and the Bunnymen albums"
+
+        # Verify they're actually by Echo and the Bunnymen
+        for result in results:
+            assert "echo" in result.artist.lower(), f"Result should be by Echo and the Bunnymen, got {result.artist}"
+
         await db.close()
 
 
@@ -535,6 +564,50 @@ class TestFullRequestIntegration:
         TEST_ENV=staging pytest ...    # staging server on Railway
         TEST_ENV=production pytest ... # production server on Railway
     """
+
+    @pytest.mark.asyncio
+    async def test_artist_only_search_returns_results(self, base_url):
+        """
+        Test that artist-only searches (no song or album) return results.
+
+        Bug: After refactoring to support multiple albums from Discogs, artist-only
+        searches like "Can i request something from echo and the bunnymen" returned
+        no results because the search condition required albums_for_search OR song.
+
+        Expected: Should return Echo and the Bunnymen albums.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={
+                    "message": "Can i request something from echo and the bunnymen",
+                    "skip_slack": True,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        # Check parsing
+        parsed = data.get("parsed", {})
+        assert parsed.get("artist") == "Echo and the Bunnymen", (
+            f"Should parse artist as 'Echo and the Bunnymen', got {parsed.get('artist')}"
+        )
+
+        # Check results
+        results = data.get("library_results", [])
+        assert len(results) > 0, "Should find Echo and the Bunnymen albums"
+
+        # Verify all results are by Echo and the Bunnymen
+        for result in results:
+            assert "echo" in result.get("artist", "").lower(), (
+                f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
+            )
+
+        print(f"\n✅ Artist-only search returned {len(results)} results:")
+        for r in results:
+            print(f"    - {r.get('artist')} - {r.get('title')}")
 
     @pytest.mark.asyncio
     async def test_meet_me_in_the_city_returns_correct_album(self, base_url):
