@@ -38,7 +38,7 @@ from posthog import Posthog
 from pydantic import BaseModel
 
 from artwork.models import ArtworkRequest, ArtworkResponse
-from artwork.router import lookup_releases_by_artist, lookup_releases_by_track
+from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
 from core.dependencies import get_artwork_finder, get_posthog_client
 from artwork.finder import ArtworkFinder
