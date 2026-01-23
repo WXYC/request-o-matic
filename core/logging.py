@@ -21,7 +21,7 @@ def setup_logging(
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
     # Create handlers
-    handlers = [logging.StreamHandler(sys.stdout)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
     
     if log_file:
         # Ensure log directory exists

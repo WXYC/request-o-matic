@@ -160,7 +160,7 @@ def build_strategies(
     search_library_func: ExecuteFunc,
     search_alternative_func: ExecuteFunc,
     search_compilations_func: ExecuteFunc,
-    search_song_as_artist_func: ExecuteFunc = None,
+    search_song_as_artist_func: Optional[ExecuteFunc] = None,
 ) -> list[SearchStrategy]:
     """Build the list of search strategies with injected execute functions.
 
@@ -197,7 +197,7 @@ def build_strategies(
     ]
 
     # Add SONG_AS_ARTIST if function provided
-    if search_song_as_artist_func:
+    if search_song_as_artist_func is not None:
         strategies.append(
             SearchStrategy(
                 name=SearchStrategyType.SONG_AS_ARTIST,
@@ -258,7 +258,7 @@ async def execute_search_pipeline(
             part1 = part1.strip()
             part2 = part2.strip()
 
-            results = await strategy.execute(db, part1, part2)
+            results, _ = await strategy.execute(db, part1, part2)
             if results:
                 state.results = results
                 state.song_not_found = False
@@ -274,7 +274,7 @@ async def execute_search_pipeline(
 
         elif strategy.name == SearchStrategyType.SONG_AS_ARTIST:
             # Try using the parsed song as an artist name
-            results = await strategy.execute(db, parsed.song)
+            results, _ = await strategy.execute(db, parsed.song)
             if results:
                 state.results = results
                 state.song_not_found = False

@@ -19,7 +19,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import pytest
@@ -394,7 +394,7 @@ class TestApiCallCounts:
         print("  Expected API Call Breakdown by Query Type")
         print(f"{'=' * 70}")
 
-        scenarios = [
+        scenarios: list[dict[str, Any]] = [
             {
                 "name": "Simple query with artist",
                 "example": "Bohemian Rhapsody by Queen",

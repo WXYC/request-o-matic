@@ -40,7 +40,7 @@ class LibraryItem(BaseModel):
             parts[-1] = f"{parts[-1]}/{self.release_call_number}"
         return " ".join(parts)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def library_url(self) -> str:
         """URL to view this release in the WXYC library."""

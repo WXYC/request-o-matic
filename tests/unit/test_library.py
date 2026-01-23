@@ -175,7 +175,7 @@ class TestFallbackSearch:
         results = await test_db.search(query="Ambient works", limit=10)
         
         assert len(results) >= 1
-        assert any("Ambient" in r.title for r in results)
+        assert any(r.title and "Ambient" in r.title for r in results)
     
     @pytest.mark.asyncio
     async def test_fallback_case_insensitive(self, test_db: LibraryDB):
@@ -215,7 +215,7 @@ class TestFilteredSearch:
         results = await test_db.search(title="Stone Roses", limit=10)
         
         assert len(results) >= 1
-        assert any("Stone Roses" in r.title for r in results)
+        assert any(r.title and "Stone Roses" in r.title for r in results)
     
     @pytest.mark.asyncio
     async def test_search_by_artist_and_title_filter(self, test_db: LibraryDB):

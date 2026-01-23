@@ -253,6 +253,7 @@ class TestGetRelease:
 
         result = await service.get_release(TEST_RELEASE_ID)
 
+        assert result is not None
         assert result.release_id == TEST_RELEASE_ID
         assert result.year is None
         assert result.label is None
@@ -273,9 +274,11 @@ class TestGetRelease:
         )
 
         result1 = await service.get_release(TEST_RELEASE_ID)
+        assert result1 is not None
         assert result1.cached is False
 
         result2 = await service.get_release(TEST_RELEASE_ID)
+        assert result2 is not None
         assert result2.cached is True
 
         # Only one HTTP request should have been made

@@ -15,7 +15,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import pymysql
+import pymysql  # type: ignore[import-untyped]
 
 # Configuration - adjust as needed
 MYSQL_HOST = "localhost"

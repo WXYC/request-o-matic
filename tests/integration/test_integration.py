@@ -234,6 +234,7 @@ class TestLibraryIntegration:
 
         # Verify they're actually by Echo and the Bunnymen
         for result in results:
+            assert result.artist is not None, "Result should have artist"
             assert "echo" in result.artist.lower(), f"Result should be by Echo and the Bunnymen, got {result.artist}"
 
         await db.close()
@@ -330,7 +331,7 @@ class TestEndToEndIntegration:
         
         # Check if we found the compilation
         has_compilation = any(
-            "celluloid" in item.title.lower() or "change" in item.title.lower()
+            item.title is not None and ("celluloid" in item.title.lower() or "change" in item.title.lower())
             for _, item in found_in_library
         )
         
@@ -380,7 +381,7 @@ class TestEndToEndIntegration:
         
         # Check if we found Aphex Twin albums
         has_aphex = any(
-            "aphex" in result.artist.lower() for result in results
+            result.artist is not None and "aphex" in result.artist.lower() for result in results
         )
         
         assert has_aphex, "Should find Aphex Twin album with keyword search"

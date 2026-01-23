@@ -9,7 +9,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from typing import Optional
+from typing import Any, Optional, cast
 
 import httpx
 
@@ -63,7 +63,7 @@ async def lookup_discogs_urls(
 
     async def fetch_discogs_url(item: dict) -> tuple[int, Optional[str]]:
         """Fetch Discogs URL for a single item."""
-        item_id = item.get("id")
+        item_id: int = item.get("id", 0)
         artist = item.get("artist", "")
         title = item.get("title", "")
 
@@ -137,7 +137,7 @@ def print_library_results(
         print(f"  Confidence: {artwork.get('confidence', 0):.2f}")
 
 
-async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> dict:
+async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> dict[str, Any]:
     """Call the /request endpoint with skip_slack=true."""
     set_up_logging(verbose)
     base_url = LOCAL_URL if local else PROD_URL
@@ -167,7 +167,7 @@ async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> 
             # Display results with Discogs URLs
             print_library_results(library_results, data.get("artwork"), discogs_urls)
 
-            return data
+            return cast(dict[str, Any], data)
 
         except httpx.HTTPStatusError as e:
             logger.error(f"Request failed: {e.response.status_code}")

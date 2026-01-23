@@ -1,6 +1,6 @@
 """Discogs API service with caching."""
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -226,6 +226,9 @@ class DiscogsService:
         seen_albums.add(album_key)
 
         release_id = result.get("id")
+        if release_id is None:
+            return None
+
         is_compilation = is_compilation_artist(result_artist)
 
         return ReleaseInfo(
@@ -337,7 +340,7 @@ class DiscogsService:
                     query_parts.append(request.artist)
                 if request.album:
                     query_parts.append(request.album)
-                fallback_params = {
+                fallback_params: dict[str, Any] = {
                     "type": "release",
                     "per_page": limit,
                     "q": " ".join(query_parts),

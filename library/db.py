@@ -107,8 +107,8 @@ class LibraryDB:
 
         elif artist or title:
             # Filtered search
-            conditions = []
-            params = []
+            conditions: list[str] = []
+            params: list[str | int] = []
             if artist:
                 conditions.append("artist LIKE ?")
                 params.append(f"%{artist}%")
@@ -152,8 +152,8 @@ class LibraryDB:
             return []
         
         # Build LIKE conditions for each word
-        conditions = []
-        params = []
+        conditions: list[str] = []
+        params: list[str | int] = []
         for word in significant_words:
             # Search in both title and artist fields
             conditions.append("(title LIKE ? OR artist LIKE ?)")
@@ -168,9 +168,11 @@ class LibraryDB:
             WHERE {' AND '.join(conditions)}
             LIMIT ?
         """
-        
+
+        assert self._conn is not None, "Database not connected. Call connect() first."
         cursor = await self._conn.execute(sql, params)
-        return await cursor.fetchall()
+        rows = await cursor.fetchall()
+        return list(rows)
 
     async def _fuzzy_search(
         self, query: str, limit: int, threshold: int = 70
@@ -206,7 +208,8 @@ class LibraryDB:
             WHERE artist LIKE ? OR title LIKE ?
             LIMIT 500
         """
-        
+
+        assert self._conn is not None, "Database not connected. Call connect() first."
         cursor = await self._conn.execute(sql, (f"%{prefix}%", f"%{prefix}%"))
         rows = await cursor.fetchall()
         
@@ -275,11 +278,11 @@ class LibraryDB:
             return None
 
         # Find best fuzzy match
-        best_match = None
-        best_score = 0
+        best_match: Optional[str] = None
+        best_score: float = 0
 
         for row in rows:
-            candidate = row[0]
+            candidate: str = row[0]
             if not candidate:
                 continue
 

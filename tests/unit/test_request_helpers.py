@@ -54,6 +54,7 @@ def test_build_context_message_album_not_found():
     )
     
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
+    assert context is not None
     assert "not found in the library" in context
     assert "Test Artist" in context
 
@@ -70,6 +71,7 @@ def test_build_context_message_song_not_found():
     )
     
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
+    assert context is not None
     assert "is not on any album" in context
     assert "Test Artist" in context
 
@@ -103,6 +105,7 @@ def test_build_context_message_no_results():
     context = build_context_message(
         parsed, found_on_compilation=False, song_not_found=True, has_results=False
     )
+    assert context is not None
     assert "not found in library" in context
     assert "Test Song" in context
     assert "Test Artist" in context
@@ -122,6 +125,7 @@ def test_build_context_message_song_not_found_with_results():
     context = build_context_message(
         parsed, found_on_compilation=False, song_not_found=True, has_results=True
     )
+    assert context is not None
     assert "here are some albums" in context
     assert "Test Artist" in context
 
@@ -304,11 +308,12 @@ class TestFilterResultsByArtist:
         filtered = filter_results_by_artist(results, "Various")
 
         assert len(filtered) == 1
+        assert filtered[0].artist is not None
         assert "Various" in filtered[0].artist
 
     def test_empty_results_returns_empty(self):
         """Test that empty input returns empty output."""
-        results = []
+        results: list[LibraryItem] = []
 
         filtered = filter_results_by_artist(results, "Any Artist")
 
@@ -469,7 +474,7 @@ class TestSearchWithAlternativeInterpretation:
             [LibraryItem(id=2, artist="Someone Else", title="Other Album")],
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Amps for Christ", "Edward"
         )
 
@@ -488,7 +493,7 @@ class TestSearchWithAlternativeInterpretation:
             [LibraryItem(id=1, artist="Queen", title="A Night at the Opera")],
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Bohemian Rhapsody", "Queen"
         )
 
@@ -503,7 +508,7 @@ class TestSearchWithAlternativeInterpretation:
             [LibraryItem(id=2, artist="Artist B", title="Album 2")],
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Artist A", "Artist B"
         )
 
@@ -521,7 +526,7 @@ class TestSearchWithAlternativeInterpretation:
             [same_item],  # Same item returned by both interpretations
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Artist A", "Something"
         )
 
@@ -536,7 +541,7 @@ class TestSearchWithAlternativeInterpretation:
             [LibraryItem(id=2, artist="Also Wrong", title="Another Album")],
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Nonexistent Artist", "Unknown"
         )
 
@@ -562,7 +567,7 @@ class TestSearchWithAlternativeInterpretation:
             ],
         ]
 
-        results = await search_with_alternative_interpretation(
+        results, _ = await search_with_alternative_interpretation(
             mock_library_db, "Amps for Christ", "Edward"
         )
 

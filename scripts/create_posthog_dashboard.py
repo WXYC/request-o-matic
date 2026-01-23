@@ -21,7 +21,7 @@ The script creates a dashboard with insights for:
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from dotenv import load_dotenv
@@ -64,7 +64,7 @@ def api_request(
             print(f"API Error ({response.status_code}): {response.text}")
             response.raise_for_status()
 
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
 
 def create_dashboard() -> dict:

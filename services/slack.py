@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -99,9 +99,9 @@ def build_slack_blocks(
     return blocks
 
 
-def build_simple_slack_blocks(message: str, context: Optional[str] = None) -> list[dict]:
+def build_simple_slack_blocks(message: str, context: Optional[str] = None) -> list[dict[str, Any]]:
     """Build simple Slack message blocks for feedback or no-results messages."""
-    blocks = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "section",
             "text": {

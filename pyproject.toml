@@ -87,6 +87,12 @@ strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 markers = [

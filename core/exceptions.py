@@ -1,10 +1,11 @@
 """Custom exception classes for the request parser application."""
+from typing import Optional
 
 
 class RequestParserException(Exception):
     """Base exception for all request parser errors."""
 
-    def __init__(self, message: str, details: dict = None):
+    def __init__(self, message: str, details: Optional[dict] = None):
         self.message = message
         self.details = details or {}
         super().__init__(self.message)

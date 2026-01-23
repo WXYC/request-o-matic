@@ -5,7 +5,7 @@ import logging
 from functools import wraps
 from typing import Any, Callable, Optional, TypeVar
 
-from cachetools import TTLCache
+from cachetools import TTLCache  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -118,19 +118,19 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
             if key in cache:
                 logger.debug(f"Cache hit for {func.__name__}")
                 result = cache[key]
-                return _set_cached_flag(result, cached=True)
+                return _set_cached_flag(result, cached=True)  # type: ignore[no-any-return]
 
             # Cache miss - call function
             logger.debug(f"Cache miss for {func.__name__}")
-            result = await func(*args, **kwargs)
+            result = await func(*args, **kwargs)  # type: ignore[misc]
 
             # Don't cache None results
             if result is not None:
                 cache[key] = result
 
-            return result
+            return result  # type: ignore[no-any-return]
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
     return decorator
 
 

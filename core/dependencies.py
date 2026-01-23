@@ -9,6 +9,7 @@ from groq import Groq
 from posthog import Posthog
 
 from artwork.finder import ArtworkFinder
+from artwork.providers.base import ArtworkProvider
 from artwork.providers.discogs import DiscogsProvider
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
@@ -185,8 +186,8 @@ async def get_artwork_finder(settings: Settings = Depends(get_settings)) -> Opti
     if not settings.enable_artwork_lookup:
         logger.info("Artwork lookup disabled")
         return None
-    
-    providers = []
+
+    providers: list[ArtworkProvider] = []
     
     if settings.discogs_token:
         providers.append(DiscogsProvider(settings.discogs_token))

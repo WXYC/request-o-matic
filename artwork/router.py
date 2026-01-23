@@ -98,7 +98,7 @@ async def lookup_releases_by_artist(
     request = DiscogsSearchRequest(artist=artist)
     response = await service.search(request, limit=limit)
 
-    return [(r.artist, r.album) for r in response.results]
+    return [(r.artist or "", r.album or "") for r in response.results]
 
 
 @router.post(

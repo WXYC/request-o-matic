@@ -446,6 +446,7 @@ async def test_compilation_found_replaces_artist_albums():
         f"Expected 1 compilation, got {len(library_results)}: {[r.title for r in library_results]}"
     assert library_results[0].id == 62503
     assert library_results[0].title == "Celluloid Records- change the beat 1979-87"
+    assert library_results[0].artist is not None
     assert "Various Artists" in library_results[0].artist
     assert found_on_compilation is True
     assert song_not_found is False

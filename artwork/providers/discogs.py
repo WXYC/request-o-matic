@@ -128,8 +128,8 @@ class DiscogsProvider:
                 SearchResult(
                     artwork_url=item.artwork_url,
                     release_url=item.release_url,
-                    album=item.album,
-                    artist=item.artist,
+                    album=item.album or "",
+                    artist=item.artist or "",
                     source=self.name,
                     confidence=confidence,
                 )

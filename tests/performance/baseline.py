@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 
 class Environment(Enum):
@@ -37,13 +37,13 @@ class BaselineManager:
         self.baseline_path = baseline_path
         self.data = self._load()
 
-    def _load(self) -> dict:
+    def _load(self) -> dict[str, Any]:
         """Load baselines from JSON file."""
         if not self.baseline_path.exists():
             return {}
         try:
             with open(self.baseline_path) as f:
-                return json.load(f)
+                return cast(dict[str, Any], json.load(f))
         except (json.JSONDecodeError, OSError):
             return {}
 
@@ -52,10 +52,10 @@ class BaselineManager:
         with open(self.baseline_path, "w") as f:
             json.dump(self.data, f, indent=2)
 
-    def get_baseline(self, env: Environment, test_name: str) -> Optional[dict]:
+    def get_baseline(self, env: Environment, test_name: str) -> Optional[dict[str, Any]]:
         """Get baseline for a specific environment and test."""
         env_data = self.data.get(env.value, {})
-        return env_data.get(test_name)
+        return cast(Optional[dict[str, Any]], env_data.get(test_name))
 
     def save_baseline(
         self,

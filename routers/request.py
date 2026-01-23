@@ -192,7 +192,7 @@ async def search_with_alternative_interpretation(
     db: LibraryDB,
     part1: str,
     part2: str,
-) -> list[LibraryItem]:
+) -> tuple[list[LibraryItem], None]:
     """Try searching with both artist/title interpretations.
 
     When given "X - Y" or "X. Y" format, tries:
@@ -205,7 +205,7 @@ async def search_with_alternative_interpretation(
         part2: Second part of the ambiguous format
 
     Returns:
-        Results from whichever interpretation finds matches (or combined if both do).
+        Tuple of (results, None). Results from whichever interpretation finds matches.
     """
     # Try interpretation 1: part1 = artist
     query1 = f"{part1} {part2}"
@@ -220,10 +220,10 @@ async def search_with_alternative_interpretation(
     # Return whichever has results (prefer the one with more/better matches)
     if results1 and not results2:
         logger.info(f"Alternative search matched with '{part1}' as artist")
-        return results1
+        return results1, None
     elif results2 and not results1:
         logger.info(f"Alternative search matched with '{part2}' as artist")
-        return results2
+        return results2, None
     elif results1 and results2:
         # Both have results - combine and dedupe by id
         logger.info(f"Alternative search matched both interpretations, combining results")
@@ -233,12 +233,12 @@ async def search_with_alternative_interpretation(
             if item.id not in seen_ids:
                 combined.append(item)
                 seen_ids.add(item.id)
-        return limit_results(combined)
+        return limit_results(combined), None
 
-    return []
+    return [], None
 
 
-async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[LibraryItem]:
+async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> tuple[list[LibraryItem], None]:
     """Try searching using the parsed song title as an artist name.
 
     This handles cases where the AI parser misinterpreted an artist name
@@ -254,7 +254,7 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
         song_as_artist: The song title to try as an artist name
 
     Returns:
-        Results matching the artist, or empty list if no matches.
+        Tuple of (results, None). Results matching the artist, or empty list.
     """
     logger.info(f"Trying song '{song_as_artist}' as artist name")
 
@@ -263,7 +263,7 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
     results = filter_results_by_artist(results, song_as_artist)
     if results:
         logger.info(f"Found {len(results)} results treating '{song_as_artist}' as artist")
-        return results
+        return results, None
 
     # Step 2: Search Discogs for releases by this artist
     logger.info(f"No direct matches, searching Discogs for releases by '{song_as_artist}'")
@@ -271,7 +271,7 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
 
     if not discogs_releases:
         logger.info(f"No Discogs releases found for '{song_as_artist}'")
-        return []
+        return [], None
 
     logger.info(f"Found {len(discogs_releases)} Discogs releases for '{song_as_artist}'")
 
@@ -290,7 +290,7 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
 
             # Accept if it's the actual artist or a compilation
             item_artist = (item.artist or "").lower()
-            if item_artist.startswith(song_as_artist.lower()) or is_compilation_artist(item.artist):
+            if item_artist.startswith(song_as_artist.lower()) or is_compilation_artist(item_artist):
                 results.append(item)
                 seen_ids.add(item.id)
                 logger.info(f"Found '{item.artist} - {item.title}' via Discogs cross-reference")
@@ -301,7 +301,7 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> list[Libr
     if results:
         logger.info(f"Found {len(results)} results via Discogs cross-reference for '{song_as_artist}'")
 
-    return limit_results(results)
+    return limit_results(results), None
 
 
 async def search_library_with_fallback(
@@ -446,7 +446,7 @@ async def search_compilations_for_track(
                     item_artist = (item.artist or "").lower()
                     if item_artist.startswith(parsed.artist.lower()):
                         filtered_results.append(item)
-                    elif is_compilation_artist(item.artist):
+                    elif is_compilation_artist(item_artist):
                         # Allow Various Artists/Soundtracks/Compilation albums
                         filtered_results.append(item)
 
@@ -503,7 +503,7 @@ async def search_compilations_for_track(
                     # If Discogs says it's a compilation, allow compilation matches
                     if match_artist.startswith(artist_lower):
                         filtered_matches.append(match)
-                    elif discogs_is_compilation and is_compilation_artist(match.artist):
+                    elif discogs_is_compilation and is_compilation_artist(match_artist):
                         filtered_matches.append(match)
                 matches = filtered_matches
 
@@ -632,7 +632,7 @@ async def fetch_artwork_for_items(
             
             # For compilations, simplify artist to "Various" for Discogs lookup
             # Library formats like "Various Artists - Rock - C" or "Soundtracks - M" won't match Discogs
-            artist = item.artist
+            artist = item.artist or ""
             if is_compilation_artist(artist):
                 artist = "Various"
             

@@ -12,7 +12,7 @@ import logging
 import readline
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 import httpx
 
@@ -110,7 +110,7 @@ def print_result(data: dict) -> None:
     print()
 
 
-async def lookup(client: httpx.AsyncClient, base_url: str, query: str) -> Optional[dict]:
+async def lookup(client: httpx.AsyncClient, base_url: str, query: str) -> Optional[dict[str, Any]]:
     """Execute a lookup query."""
     try:
         response = await client.post(
@@ -118,7 +118,7 @@ async def lookup(client: httpx.AsyncClient, base_url: str, query: str) -> Option
             json={"message": query, "skip_slack": True},
         )
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
     except httpx.HTTPStatusError as e:
         print(f"  Error: {e.response.status_code} - {e.response.text}")
         return None

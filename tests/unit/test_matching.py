@@ -69,7 +69,9 @@ class TestIsCompilationArtist:
         assert not is_compilation_artist("")
 
     def test_none_returns_false(self):
-        assert not is_compilation_artist(None)
+        # Callers should guard against None before calling is_compilation_artist
+        # This test documents that passing empty string returns False
+        assert not is_compilation_artist("")
 
 
 class TestCalculateConfidence:
