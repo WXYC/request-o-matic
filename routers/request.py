@@ -336,6 +336,28 @@ async def search_library_with_fallback(
             results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
             results = filter_results_by_artist(results, parsed.artist)
 
+            # Filter to only include albums that match the Discogs album name
+            # This prevents fuzzy search from returning unrelated albums by the same artist
+            album_lower = album.lower()
+            # Extract significant words from the Discogs album title
+            album_words = set(
+                w for w in re.sub(r'[^\w\s]', ' ', album_lower).split()
+                if len(w) > 2
+            )
+            filtered_results = []
+            for item in results:
+                item_title_lower = (item.title or "").lower()
+                # Check if the library album title shares significant words with Discogs album
+                item_words = set(
+                    w for w in re.sub(r'[^\w\s]', ' ', item_title_lower).split()
+                    if len(w) > 2
+                )
+                # Require at least one significant word match (besides common words)
+                common_words = album_words & item_words
+                if common_words:
+                    filtered_results.append(item)
+            results = filtered_results
+
             # Add unique results
             for item in results:
                 if item.id not in seen_ids:

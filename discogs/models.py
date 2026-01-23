@@ -9,6 +9,7 @@ class TrackItem(BaseModel):
     position: str
     title: str
     duration: Optional[str] = None
+    artists: list[str] = []  # Per-track artists (for compilations)
 
 
 class TrackAlbumResponse(BaseModel):

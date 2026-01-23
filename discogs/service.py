@@ -266,12 +266,13 @@ class DiscogsService:
             labels = data.get("labels", [])
             label_name = labels[0].get("name") if labels else None
 
-            # Extract tracklist
+            # Extract tracklist with per-track artists (for compilations)
             tracklist = [
                 TrackItem(
                     position=t.get("position", ""),
                     title=t.get("title", ""),
                     duration=t.get("duration"),
+                    artists=[a.get("name", "") for a in t.get("artists", [])],
                 )
                 for t in data.get("tracklist", [])
             ]
@@ -438,14 +439,26 @@ class DiscogsService:
             if track_lower not in item_title and item_title not in track_lower:
                 continue
 
-            # For single-artist releases, check release artist
-            release_artist = release.artist.lower()
-            # Remove Discogs numbering like "(2)"
-            release_artist = release_artist.split("(")[0].strip()
+            # Check per-track artists first (for compilations)
+            if item.artists:
+                for track_artist in item.artists:
+                    track_artist_lower = track_artist.lower().split("(")[0].strip()
+                    if artist_lower in track_artist_lower or track_artist_lower in artist_lower:
+                        logger.info(
+                            f"Validated: '{track}' by '{artist}' found on release {release_id}"
+                        )
+                        return True
+            else:
+                # For single-artist releases, check release artist
+                release_artist = release.artist.lower()
+                # Remove Discogs numbering like "(2)"
+                release_artist = release_artist.split("(")[0].strip()
 
-            if artist_lower in release_artist or release_artist in artist_lower:
-                logger.info(f"Validated: '{track}' by '{artist}' found on release {release_id}")
-                return True
+                if artist_lower in release_artist or release_artist in artist_lower:
+                    logger.info(
+                        f"Validated: '{track}' by '{artist}' found on release {release_id}"
+                    )
+                    return True
 
         logger.info(f"Track '{track}' by '{artist}' NOT found on release {release_id}")
         return False

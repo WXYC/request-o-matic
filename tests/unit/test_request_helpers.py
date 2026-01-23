@@ -201,6 +201,57 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
     assert mock_library_db.search.call_count == 3
 
 
+@pytest.mark.asyncio
+async def test_search_library_with_fallback_filters_by_album_title(mock_library_db):
+    """Test that fuzzy search results are filtered to match album title.
+
+    Regression test for bug where searching for a track on "Wireless" by Biosphere
+    would also return "Stator" because the fuzzy search matched the artist but not album.
+    """
+    # Mock returns both albums by the artist, but only one matches the album title
+    mock_library_db.search.return_value = [
+        LibraryItem(
+            id=1,
+            artist="Biosphere",
+            title="Wireless",  # Matches the Discogs album
+            call_letters="B",
+            artist_call_number=1,
+            release_call_number=1,
+            genre="Electronic",
+            format="CD",
+        ),
+        LibraryItem(
+            id=2,
+            artist="Biosphere",
+            title="Stator",  # Does NOT match - should be filtered out
+            call_letters="B",
+            artist_call_number=1,
+            release_call_number=2,
+            genre="Electronic",
+            format="CD",
+        ),
+    ]
+
+    parsed = ParsedRequest(
+        song="The Things I Tell You",
+        artist="Biosphere",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="The Things I Tell You by Biosphere",
+    )
+
+    # Search with album name from Discogs
+    results, fallback_used = await search_library_with_fallback(
+        mock_library_db, parsed, ["Wireless - Live At The Arnolfini, Bristol"]
+    )
+
+    # Only Wireless should be returned, not Stator
+    assert len(results) == 1
+    assert results[0].title == "Wireless"
+    assert fallback_used is False
+
+
 # Tests for filter_results_by_artist
 class TestFilterResultsByArtist:
     """Tests for the filter_results_by_artist function."""

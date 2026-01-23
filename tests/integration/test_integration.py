@@ -711,6 +711,63 @@ class TestFullRequestIntegration:
         print(f"\n✅ Correctly excluded albums without the requested song!")
 
     @pytest.mark.asyncio
+    async def test_biosphere_excludes_albums_without_track(self, base_url):
+        """
+        Test that 'The Things I Tell You by Biosphere' excludes albums without the track.
+
+        Bug: Searching for a track would return albums by the artist that don't have
+        the track, because the fuzzy library search matched the artist but not the album.
+
+        Expected: Should return Substrata and Wireless (which have the track)
+        and NOT return Stator (which doesn't have it).
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "The Things I Tell You by Biosphere", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print(f"\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print(f"\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Biosphere"
+
+        # All results should be by Biosphere
+        for r in results:
+            assert r.get("artist") == "Biosphere", f"Expected Biosphere, got {r.get('artist')}"
+
+        # Should NOT include Stator (which doesn't have The Things I Tell You)
+        titles = [r.get("title", "").lower() for r in results]
+        assert "stator" not in titles, (
+            "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
+        )
+
+        # Should include albums that actually have the track
+        # (According to Discogs: Substrata, Wireless)
+        has_valid_album = any(
+            title in ["substrata", "wireless"] for title in titles
+        )
+        assert has_valid_album, (
+            f"Expected at least one album that has 'The Things I Tell You' "
+            f"(Substrata or Wireless), but got: {titles}"
+        )
+
+        print(f"\n✅ Correctly excluded albums without the requested track!")
+
+    @pytest.mark.asyncio
     async def test_young_gov_excludes_young_black_teenagers(self, base_url):
         """
         Test that searching for 'Young Gov' does not return 'Young Black Teenagers'.

@@ -345,9 +345,21 @@ class TestTrackSearch:
             },
         )
 
-        # Request 2: Tracklist validation for release 2 (Various)
+        # Request 2: Tracklist validation for release 1 (Manu Dibango - non-compilation)
         httpx_mock.add_response(
             json={
+                "artists": [{"name": "Manu Dibango"}],
+                "tracklist": [
+                    {"title": "Abele Dance (85 Remix)"},
+                    {"title": "Pata Piya"},
+                ],
+            },
+        )
+
+        # Request 3: Tracklist validation for release 2 (Various)
+        httpx_mock.add_response(
+            json={
+                "artists": [{"name": "Various"}],
                 "tracklist": [
                     {
                         "title": "Abele Dance (85 Remix)",
@@ -361,9 +373,10 @@ class TestTrackSearch:
             },
         )
 
-        # Request 3: Tracklist validation for release 3 (Various Artists)
+        # Request 4: Tracklist validation for release 3 (Various Artists)
         httpx_mock.add_response(
             json={
+                "artists": [{"name": "Various Artists"}],
                 "tracklist": [
                     {
                         "title": "Abele Dance (85 Remix)",
@@ -414,27 +427,39 @@ class TestTrackSearch:
             },
         )
 
-        # Request 2: Tracklist for compilation - does NOT contain the actual track/artist
+        # Request 2: Keyword fallback search (since < 3 initial results)
         httpx_mock.add_response(
             json={
+                "pagination": {"items": 0},
+                "results": [],
+            },
+        )
+
+        # Request 3: Tracklist validation for release 1 (Sugar Plant - non-compilation)
+        httpx_mock.add_response(
+            json={
+                "artists": [{"name": "Sugar Plant"}],
+                "tracklist": [
+                    {"title": "Simple"},
+                    {"title": "Another Track"},
+                ],
+            },
+        )
+
+        # Request 4: Tracklist for compilation - does NOT contain the actual track/artist
+        httpx_mock.add_response(
+            json={
+                "artists": [{"name": "Various"}],
                 "tracklist": [
                     {
                         "title": "A Simple Man",  # Similar but not "Simple"
-                        "artists": [{"name": "Sugar Bears (2)"}],  # Similar but not "Sugar Plant"
+                        "artists": [{"name": "Sugar Bears (2)"}],
                     },
                     {
                         "title": "Explosive Hit",
                         "artists": [{"name": "Some Other Artist"}],
                     },
                 ],
-            },
-        )
-
-        # Request 3: Keyword fallback search (since < 3 results after validation)
-        httpx_mock.add_response(
-            json={
-                "pagination": {"items": 0},
-                "results": [],
             },
         )
 

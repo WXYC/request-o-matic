@@ -63,11 +63,13 @@ class DiscogsProvider:
         """
         response = await self._service.search_releases_by_track(track, artist, limit)
 
-        # If searching with artist, validate compilation releases
+        # Validate that the track actually exists on each release
         releases = []
         for release_info in response.releases:
-            # For Various Artists / compilations, validate the tracklist
-            if artist and is_compilation_artist(release_info.artist):
+            if artist and release_info.release_id:
+                # For compilations, validation checks the Discogs tracklist for per-track artists
+                # For non-compilations, validation checks that the track exists on the release
+                # This prevents Discogs search returning albums that don't actually have the track
                 is_valid = await self._service.validate_track_on_release(
                     release_info.release_id, track, artist
                 )
