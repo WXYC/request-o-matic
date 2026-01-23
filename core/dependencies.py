@@ -8,9 +8,6 @@ from fastapi import Depends
 from groq import Groq
 from posthog import Posthog
 
-from artwork.finder import ArtworkFinder
-from artwork.providers.base import ArtworkProvider
-from artwork.providers.discogs import DiscogsProvider
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
 from discogs.service import DiscogsService
@@ -172,34 +169,6 @@ def shutdown_posthog() -> None:
         _posthog_client.shutdown()
         _posthog_client = None
         logger.info("PostHog client shutdown")
-
-
-async def get_artwork_finder(settings: Settings = Depends(get_settings)) -> Optional[ArtworkFinder]:
-    """Get artwork finder instance with configured providers.
-    
-    Args:
-        settings: Application settings
-        
-    Returns:
-        Optional[ArtworkFinder]: Artwork finder if enabled, None otherwise
-    """
-    if not settings.enable_artwork_lookup:
-        logger.info("Artwork lookup disabled")
-        return None
-
-    providers: list[ArtworkProvider] = []
-    
-    if settings.discogs_token:
-        providers.append(DiscogsProvider(settings.discogs_token))
-        logger.debug("Discogs provider initialized")
-    else:
-        logger.warning("DISCOGS_TOKEN not set - Discogs provider disabled")
-    
-    if not providers:
-        logger.warning("No artwork providers configured")
-        return None
-    
-    return ArtworkFinder(providers)
 
 
 async def get_slack_webhook_url(

@@ -6,7 +6,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 
-from artwork.router import router as artwork_router
 from config.settings import get_settings
 from core.dependencies import (
     close_discogs_service,
@@ -81,14 +80,12 @@ app.include_router(health_router, prefix="", tags=["health"])
 # V1 API (new)
 app.include_router(parse_router, prefix="/api/v1", tags=["parse"])
 app.include_router(request_router, prefix="/api/v1", tags=["request"])
-app.include_router(artwork_router, prefix="/api/v1", tags=["artwork"])
 app.include_router(library_router, prefix="/api/v1", tags=["library"])
 app.include_router(discogs_router, prefix="/api/v1", tags=["discogs"])
 
 # Backwards compatibility - mount at root as well
 app.include_router(parse_router, prefix="", tags=["parse-legacy"])
 app.include_router(request_router, prefix="", tags=["request-legacy"])
-app.include_router(artwork_router, prefix="", tags=["artwork-legacy"])
 app.include_router(library_router, prefix="", tags=["library-legacy"])
 
 if __name__ == "__main__":

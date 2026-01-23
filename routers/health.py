@@ -5,9 +5,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from config.settings import Settings, get_settings
-from core.dependencies import get_library_db, get_artwork_finder
+from core.dependencies import get_discogs_service, get_library_db
+from discogs.service import DiscogsService
 from library.db import LibraryDB
-from artwork.finder import ArtworkFinder
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,10 @@ router = APIRouter(tags=["health"])
 async def health_check(
     settings: Settings = Depends(get_settings),
     db: LibraryDB = Depends(get_library_db),
-    finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
+    discogs_service: Optional[DiscogsService] = Depends(get_discogs_service),
 ):
     """Comprehensive health check with service status details."""
-    
+
     # Check database connection
     db_status = "connected"
     try:
@@ -38,18 +38,18 @@ async def health_check(
     except Exception as e:
         logger.warning(f"Database health check failed: {e}")
         db_status = "error"
-    
+
     # Check Groq client (API key configured)
     groq_status = "configured" if settings.groq_api_key else "not_configured"
-    
+
     # Check Discogs availability
-    discogs_status = "available" if settings.discogs_token and finder else "unavailable"
+    discogs_status = "available" if settings.discogs_token and discogs_service else "unavailable"
     if not settings.enable_artwork_lookup:
         discogs_status = "disabled"
-    
+
     # Check Slack integration
     slack_status = "enabled" if settings.enable_slack_integration else "disabled"
-    
+
     return {
         "status": "healthy",
         "version": settings.app_version,

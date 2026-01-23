@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 from dotenv import load_dotenv
 
-from artwork.providers.discogs import DiscogsProvider
+from discogs.service import DiscogsService
 from library.db import LibraryDB
 
 load_dotenv()
@@ -41,41 +41,41 @@ skip_if_no_groq = pytest.mark.skipif(
 
 class TestDiscogsIntegration:
     """Test against the real Discogs API."""
-    
+
     @pytest.mark.asyncio
     @skip_if_no_token
     async def test_manu_dibango_compilation_search(self):
         """Test the actual Manu Dibango compilation search scenario."""
-        provider = DiscogsProvider(token=DISCOGS_TOKEN)
-        
+        service = DiscogsService(DISCOGS_TOKEN)
+
         # Test the real scenario
-        releases = await provider.search_releases_by_track(
+        response = await service.search_releases_by_track(
             "Abele Dance (85 Remix)",
             "Manu Dibango"
         )
-        
-        print(f"\n✅ Found {len(releases)} releases on Discogs:")
-        for i, (artist, album) in enumerate(releases[:5], 1):
-            print(f"  {i}. {artist} - {album}")
-        
+
+        print(f"\n✅ Found {len(response.releases)} releases on Discogs:")
+        for i, release in enumerate(response.releases[:5], 1):
+            print(f"  {i}. {release.artist} - {release.album}")
+
         # Verify we get results
-        assert len(releases) > 0, "Should find at least one release"
-        
+        assert len(response.releases) > 0, "Should find at least one release"
+
         # Verify compilation is in results
-        album_titles = [album for _, album in releases]
+        album_titles = [r.album for r in response.releases]
         has_compilation = any(
             "change" in album.lower() and "beat" in album.lower()
             for album in album_titles
         )
-        
+
         if has_compilation:
             print("  ✅ Found 'Change The Beat' compilation!")
         else:
             print("  ⚠️  Compilation not in top results")
             print(f"     All albums: {album_titles}")
-        
-        await provider.close()
-    
+
+        await service.close()
+
     @pytest.mark.asyncio
     @skip_if_no_token
     async def test_sugar_plant_filters_false_positive_compilations(self):
@@ -88,9 +88,9 @@ class TestDiscogsIntegration:
         Expected: The tracklist validation should filter out compilations that don't
         actually contain "Simple" by "Sugar Plant".
         """
-        provider = DiscogsProvider(token=DISCOGS_TOKEN)
+        from discogs.lookup import lookup_releases_by_track
 
-        releases = await provider.search_releases_by_track("Simple", "Sugar Plant")
+        releases = await lookup_releases_by_track("Simple", "Sugar Plant")
 
         print(f"\n✅ Found {len(releases)} releases on Discogs:")
         for i, (artist, album) in enumerate(releases[:10], 1):
@@ -114,28 +114,27 @@ class TestDiscogsIntegration:
                 f"Expected Sugar Plant or verified compilation, got '{artist}'"
             )
 
-        await provider.close()
         print(f"\n✅ Tracklist validation correctly filtered false positives!")
 
     @pytest.mark.asyncio
     @skip_if_no_token
     async def test_discogs_rate_limiting(self):
         """Test that we handle rate limits gracefully."""
-        provider = DiscogsProvider(token=DISCOGS_TOKEN)
-        
+        service = DiscogsService(DISCOGS_TOKEN)
+
         # Make multiple rapid requests
         results = []
         for i in range(3):
-            releases = await provider.search_releases_by_track(
+            response = await service.search_releases_by_track(
                 f"Test Track {i}",
                 "Test Artist"
             )
-            results.append(releases)
-        
+            results.append(response)
+
         # Should complete without errors (even if rate limited)
         assert len(results) == 3
-        
-        await provider.close()
+
+        await service.close()
 
 
 class TestLibraryIntegration:
@@ -277,7 +276,7 @@ class TestLibraryIntegration:
 
 class TestEndToEndIntegration:
     """Test the full workflow: Discogs -> Library matching."""
-    
+
     @pytest.mark.asyncio
     @skip_if_no_token
     @skip_if_no_db
@@ -290,55 +289,55 @@ class TestEndToEndIntegration:
         4. Find the compilation
         """
         # Step 1: Search Discogs
-        provider = DiscogsProvider(token=DISCOGS_TOKEN)
-        releases = await provider.search_releases_by_track(
+        service = DiscogsService(DISCOGS_TOKEN)
+        response = await service.search_releases_by_track(
             "Abele Dance (85 Remix)",
             "Manu Dibango"
         )
-        
-        print(f"\n📀 Step 1: Found {len(releases)} releases on Discogs")
-        
+
+        print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
+
         # Step 2: Check library for each
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         found_in_library = []
         print("\n🔍 Step 2: Checking library for each release...")
-        
-        for release_artist, release_album in releases[:10]:  # Check first 10
+
+        for release in response.releases[:10]:  # Check first 10
             # Try exact match first
-            results = await db.search(query=release_album, limit=1)
-            
+            results = await db.search(query=release.album, limit=1)
+
             # Try fuzzy match if exact fails
             if not results:
                 # Extract keywords
                 import re
-                words = re.sub(r'[^\w\s]', ' ', release_album.lower()).split()
+                words = re.sub(r'[^\w\s]', ' ', release.album.lower()).split()
                 significant = [w for w in words if len(w) > 3][:3]
-                
+
                 if significant:
                     fuzzy_query = ' '.join(significant)
                     results = await db.search(query=fuzzy_query, limit=1)
-            
+
             if results:
-                found_in_library.append((release_album, results[0]))
+                found_in_library.append((release.album, results[0]))
                 print(f"  ✅ Found: {results[0].title}")
-        
+
         # Step 3: Verify we found something
         print(f"\n🎉 Found {len(found_in_library)} matches in library!")
-        
+
         assert len(found_in_library) > 0, "Should find at least one release in library"
-        
+
         # Check if we found the compilation
         has_compilation = any(
             item.title is not None and ("celluloid" in item.title.lower() or "change" in item.title.lower())
             for _, item in found_in_library
         )
-        
+
         if has_compilation:
             print("  ✅ Successfully matched compilation!")
-        
-        await provider.close()
+
+        await service.close()
         await db.close()
     
     @pytest.mark.asyncio
@@ -395,74 +394,74 @@ class TestEndToEndIntegration:
     async def test_dj_blaqstarr_shake_it_to_the_ground(self):
         """
         Test the complete workflow for "Shake It To The Ground" by DJ Blaqstarr.
-        
+
         Expected outcome:
         - Discogs should find the track
         - Library should have one matching release (catalog: Hiphop cd DJ 70/1)
         """
         # Step 1: Search Discogs for the track
-        provider = DiscogsProvider(token=DISCOGS_TOKEN)
-        releases = await provider.search_releases_by_track(
+        service = DiscogsService(DISCOGS_TOKEN)
+        response = await service.search_releases_by_track(
             "Shake It To The Ground",
             "DJ Blaqstarr"
         )
-        
-        print(f"\n📀 Step 1: Found {len(releases)} releases on Discogs")
-        for i, (artist, album) in enumerate(releases[:5], 1):
-            print(f"  {i}. {artist} - {album}")
-        
+
+        print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
+        for i, release in enumerate(response.releases[:5], 1):
+            print(f"  {i}. {release.artist} - {release.album}")
+
         # Step 2: Check library for matches
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         found_in_library = []
         print("\n🔍 Step 2: Checking library for each release...")
-        
-        for release_artist, release_album in releases[:10]:
+
+        for release in response.releases[:10]:
             # Try exact match
-            results = await db.search(query=release_album, limit=1)
-            
+            results = await db.search(query=release.album, limit=1)
+
             # Try fuzzy match if exact fails
             if not results:
                 import re
-                words = re.sub(r'[^\w\s]', ' ', release_album.lower()).split()
+                words = re.sub(r'[^\w\s]', ' ', release.album.lower()).split()
                 significant = [w for w in words if len(w) > 3][:3]
-                
+
                 if significant:
                     fuzzy_query = ' '.join(significant)
                     results = await db.search(query=fuzzy_query, limit=1)
-            
+
             if results:
-                found_in_library.append((release_album, results[0]))
+                found_in_library.append((release.album, results[0]))
                 print(f"  ✅ Found: {results[0].title} ({results[0].call_number})")
-        
+
         # Step 3: Also search library directly for DJ Blaqstarr
         print("\n🔍 Step 3: Direct library search for DJ Blaqstarr...")
         direct_results = await db.search(query="DJ Blaqstarr", limit=5)
-        
+
         for result in direct_results:
             print(f"  - {result.title} ({result.call_number})")
             # Add to found list if not already there
             if not any(item.id == result.id for _, item in found_in_library):
                 found_in_library.append(("Direct search", result))
-        
+
         print(f"\n🎉 Total found: {len(found_in_library)} matches in library!")
-        
+
         # Verify we found the release
         assert len(found_in_library) > 0 or len(direct_results) > 0, \
             "Should find DJ Blaqstarr release in library"
-        
+
         # Check for expected catalog ID (DJ 70/1)
         all_results = [item for _, item in found_in_library] + direct_results
         has_expected_catalog = any(
             result.call_letters == "DJ" and result.artist_call_number == 70
             for result in all_results
         )
-        
+
         if has_expected_catalog:
             print("  ✅ Found release with expected catalog ID (DJ 70/1)!")
 
-        await provider.close()
+        await service.close()
         await db.close()
 
 

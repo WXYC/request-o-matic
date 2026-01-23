@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 import httpx
 
-from artwork.models import ArtworkResponse
+from discogs.models import DiscogsSearchResult
 from config.settings import get_settings
 from library.models import LibraryItem
 
@@ -48,7 +48,7 @@ async def shutdown_slack_service():
 
 def build_slack_blocks(
     message: str,
-    items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]],
+    items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]],
     context: Optional[str] = None,
 ) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""

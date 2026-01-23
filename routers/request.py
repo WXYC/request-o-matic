@@ -37,11 +37,11 @@ from groq import Groq
 from posthog import Posthog
 from pydantic import BaseModel
 
-from artwork.models import ArtworkRequest, ArtworkResponse
 from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
+from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
+from discogs.service import DiscogsService
 from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
-from core.dependencies import get_artwork_finder, get_posthog_client
-from artwork.finder import ArtworkFinder
+from core.dependencies import get_discogs_service, get_posthog_client
 from core.matching import (
     COMPILATION_KEYWORDS,
     MAX_SEARCH_RESULTS,
@@ -95,7 +95,7 @@ class RequestBody(BaseModel):
 class UnifiedResponse(BaseModel):
     """Combined response from parsing, artwork lookup, and library search."""
     parsed: ParsedRequest
-    artwork: Optional[ArtworkResponse] = None
+    artwork: Optional[DiscogsSearchResult] = None
     library_results: list[LibraryItem] = []
 
 
@@ -607,44 +607,46 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
 
 async def fetch_artwork_for_items(
     items: list[LibraryItem],
-    finder: Optional[ArtworkFinder],
+    discogs_service: Optional[DiscogsService],
     discogs_titles: Optional[dict[int, str]] = None,
-) -> list[tuple[LibraryItem, Optional[ArtworkResponse]]]:
+) -> list[tuple[LibraryItem, Optional[DiscogsSearchResult]]]:
     """Fetch artwork for multiple library items in parallel.
-    
+
     Args:
         items: List of library items
-        finder: Artwork finder instance
+        discogs_service: Discogs service instance
         discogs_titles: Optional dict mapping item_id to Discogs album title
-        
+
     Returns:
         List of (item, artwork) tuples
     """
-    if not finder:
+    if not discogs_service:
         return [(item, None) for item in items]
-    
+
     discogs_titles = discogs_titles or {}
-    
-    async def fetch_one(item: LibraryItem) -> Optional[ArtworkResponse]:
+
+    async def fetch_one(item: LibraryItem) -> Optional[DiscogsSearchResult]:
         try:
             # Use Discogs album title if we have it (from compilation search)
             album = discogs_titles.get(item.id, item.title)
-            
+
             # For compilations, simplify artist to "Various" for Discogs lookup
             # Library formats like "Various Artists - Rock - C" or "Soundtracks - M" won't match Discogs
             artist = item.artist or ""
             if is_compilation_artist(artist):
                 artist = "Various"
-            
-            result = await finder.find(ArtworkRequest(
-                album=album,
-                artist=artist,
-            ))
-            return result
+
+            response = await discogs_service.search(
+                DiscogsSearchRequest(album=album, artist=artist)
+            )
+            # Return best result (already sorted by confidence)
+            if response.results:
+                return response.results[0]
+            return None
         except Exception as e:
             logger.warning(f"Artwork lookup failed for {item.title}: {e}")
             return None
-    
+
     artwork_results = await asyncio.gather(*[fetch_one(item) for item in items])
     return list(zip(items, artwork_results))
 
@@ -687,7 +689,7 @@ async def post_results_to_slack(
     slack_service: Optional[SlackService],
     message: str,
     parsed: ParsedRequest,
-    items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]],
+    items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]],
     context: Optional[str] = None,
 ) -> None:
     """Post formatted results to Slack.
@@ -767,7 +769,7 @@ async def handle_request(
     request: RequestBody,
     groq_client: Groq = Depends(get_groq_client),
     db: LibraryDB = Depends(get_library_db),
-    finder: Optional[ArtworkFinder] = Depends(get_artwork_finder),
+    discogs_service: Optional[DiscogsService] = Depends(get_discogs_service),
     slack_service: Optional[SlackService] = Depends(get_slack_service),
     posthog_client: Optional[Posthog] = Depends(get_posthog_client),
 ):
@@ -795,7 +797,7 @@ async def handle_request(
             logger.info(f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}")
 
         library_results: list[LibraryItem] = []
-        items_with_artwork: list[tuple[LibraryItem, Optional[ArtworkResponse]]] = []
+        items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]] = []
         song_not_found = False
         found_on_compilation = False
         discogs_titles: dict[int, str] = {}
@@ -851,7 +853,7 @@ async def handle_request(
                 # Count Discogs API calls for artwork (one per item)
                 for _ in library_results:
                     telemetry.record_api_call("discogs")
-                items_with_artwork = await fetch_artwork_for_items(library_results, finder, discogs_titles)
+                items_with_artwork = await fetch_artwork_for_items(library_results, discogs_service, discogs_titles)
 
         # Step 5: Build context and post to Slack (unless skip_slack is set)
         context = build_context_message(

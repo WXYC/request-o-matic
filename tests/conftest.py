@@ -129,15 +129,6 @@ def mock_library_db():
 
 
 @pytest.fixture
-def mock_artwork_finder():
-    """Create a mock artwork finder."""
-    finder = AsyncMock()
-    finder.find = AsyncMock(return_value=None)
-    finder.providers = []
-    return finder
-
-
-@pytest.fixture
 def mock_slack_service():
     """Create a mock Slack service."""
     service = AsyncMock()
