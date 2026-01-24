@@ -24,20 +24,24 @@ from library.models import LibraryItem
 #   - production: https://request-o-matic-production.up.railway.app
 # =============================================================================
 
-class TestEnvironment(str, Enum):
+class ServerEnvironment(str, Enum):
+    """Server environment for test targeting (renamed from TestEnvironment to avoid pytest warning)."""
     LOCAL = "local"
     STAGING = "staging"
     PRODUCTION = "production"
 
 
+# Alias for backwards compatibility
+TestEnvironment = ServerEnvironment
+
 ENVIRONMENT_URLS = {
-    TestEnvironment.LOCAL: "http://localhost:8000/api/v1",
-    TestEnvironment.STAGING: "https://request-o-matic-staging.up.railway.app/api/v1",
-    TestEnvironment.PRODUCTION: "https://request-o-matic-production.up.railway.app/api/v1",
+    ServerEnvironment.LOCAL: "http://localhost:8000/api/v1",
+    ServerEnvironment.STAGING: "https://request-o-matic-staging.up.railway.app/api/v1",
+    ServerEnvironment.PRODUCTION: "https://request-o-matic-production.up.railway.app/api/v1",
 }
 
 
-def get_test_environment() -> TestEnvironment:
+def get_test_environment() -> ServerEnvironment:
     """Get the test environment from TEST_ENV env var."""
     env_value = os.environ.get("TEST_ENV", "local").lower()
     try:

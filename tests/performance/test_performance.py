@@ -19,6 +19,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -32,6 +33,11 @@ from .baseline import (
     detect_environment,
 )
 
+# Import test environment utilities
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from conftest import get_test_environment, TestEnvironment
+
 load_dotenv()
 
 pytestmark = pytest.mark.integration
@@ -41,6 +47,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 skip_if_no_groq = pytest.mark.skipif(
     not GROQ_API_KEY,
     reason="GROQ_API_KEY not set - skipping performance tests"
+)
+
+# Skip performance tests when running locally - they require too many API calls
+# and timeout. Performance tests should only run on staging/production.
+skip_if_local = pytest.mark.skipif(
+    get_test_environment() == TestEnvironment.LOCAL,
+    reason="Performance tests skipped for local environment - run with TEST_ENV=staging or TEST_ENV=production"
 )
 
 
@@ -109,6 +122,7 @@ def baseline_manager():
     return BaselineManager()
 
 
+@skip_if_local
 class TestQueryPerformance:
     """Performance tests for different query types."""
 
@@ -379,6 +393,7 @@ class TestQueryPerformance:
         print()
 
 
+@skip_if_local
 class TestApiCallCounts:
     """Test to understand how many API calls different queries make."""
 
@@ -451,6 +466,7 @@ class TestApiCallCounts:
         print()
 
 
+@skip_if_local
 class TestPerformanceSummary:
     """Generate a summary report of all performance characteristics."""
 

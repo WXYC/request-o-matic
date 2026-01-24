@@ -321,3 +321,200 @@ class TestSearchStrategyType:
     def test_is_string_enum(self):
         # Value can be accessed as string
         assert SearchStrategyType.ARTIST_PLUS_ALBUM.value == "artist_plus_album"
+
+
+class TestExecuteSearchPipeline:
+    """Test execute_search_pipeline function."""
+
+    @pytest.mark.asyncio
+    async def test_stops_after_finding_results(self, sample_library_item):
+        """Test that pipeline stops after first strategy finds results."""
+        from unittest.mock import AsyncMock, Mock
+
+        # First strategy returns results
+        first_search = AsyncMock(return_value=([sample_library_item], False))
+        # Second strategy should not be called
+        second_search = AsyncMock(return_value=([], None))
+
+        strategies = build_strategies(
+            search_library_func=first_search,
+            search_alternative_func=second_search,
+            search_compilations_func=AsyncMock(return_value=([], {})),
+        )
+
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            artist="The Beatles",
+        )
+
+        mock_db = Mock()
+        state = await execute_search_pipeline(parsed, mock_db, "test", strategies)
+
+        assert len(state.results) == 1
+        assert state.results[0] is sample_library_item
+        first_search.assert_called_once()
+        # Second search should not be called because first found results
+        second_search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_continues_to_compilation_search_when_song_not_found(self, sample_library_item):
+        """Test that pipeline continues to compilation search when song_not_found=True."""
+        from unittest.mock import AsyncMock, Mock
+
+        # Artist-only fallback (returns results but song not found)
+        first_search = AsyncMock(return_value=([sample_library_item], True))  # fallback_used=True
+        # Compilation search returns better results
+        compilation_item = LibraryItem(
+            id=2,
+            title="Compilation Album",
+            artist="Various Artists",
+            call_letters="VA",
+            artist_call_number=1,
+            release_call_number=1,
+        )
+        compilation_search = AsyncMock(return_value=([compilation_item], {2: "Compilation"}))
+
+        strategies = build_strategies(
+            search_library_func=first_search,
+            search_alternative_func=AsyncMock(return_value=([], None)),
+            search_compilations_func=compilation_search,
+        )
+
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            artist="The Beatles",
+            song="Come Together",
+        )
+
+        mock_db = Mock()
+        state = await execute_search_pipeline(parsed, mock_db, "test", strategies)
+
+        # Should have compilation results (replaced artist-only results)
+        assert len(state.results) == 1
+        assert state.results[0].id == 2
+        assert state.found_on_compilation is True
+        assert state.song_not_found is False
+
+    @pytest.mark.asyncio
+    async def test_swapped_interpretation_with_dash_format(self, sample_library_item):
+        """Test swapped interpretation parses 'Artist - Song' format."""
+        from unittest.mock import AsyncMock, Mock
+
+        # First search returns nothing
+        first_search = AsyncMock(return_value=([], False))
+        # Alternative search returns results when parts are swapped
+        alternative_search = AsyncMock(return_value=([sample_library_item], None))
+
+        strategies = build_strategies(
+            search_library_func=first_search,
+            search_alternative_func=alternative_search,
+            search_compilations_func=AsyncMock(return_value=([], {})),
+        )
+
+        parsed = ParsedRequest(
+            raw_message="Artist - Song",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+        )
+
+        mock_db = Mock()
+        state = await execute_search_pipeline(parsed, mock_db, "Artist - Song", strategies)
+
+        assert len(state.results) == 1
+        # Alternative search should be called with parsed parts
+        alternative_search.assert_called_once()
+        call_args = alternative_search.call_args[0]
+        assert call_args[1] == "Artist"
+        assert call_args[2] == "Song"
+
+    @pytest.mark.asyncio
+    async def test_song_as_artist_fallback(self, sample_library_item):
+        """Test song-as-artist fallback when song parsed but no artist."""
+        from unittest.mock import AsyncMock, Mock
+
+        # All primary strategies return nothing
+        first_search = AsyncMock(return_value=([], False))
+        alternative_search = AsyncMock(return_value=([], None))
+        compilation_search = AsyncMock(return_value=([], {}))
+        # Song-as-artist returns results
+        song_as_artist_search = AsyncMock(return_value=([sample_library_item], None))
+
+        strategies = build_strategies(
+            search_library_func=first_search,
+            search_alternative_func=alternative_search,
+            search_compilations_func=compilation_search,
+            search_song_as_artist_func=song_as_artist_search,
+        )
+
+        parsed = ParsedRequest(
+            raw_message="Laid Back",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            song="Laid Back",  # Song parsed, but no artist
+        )
+
+        mock_db = Mock()
+        state = await execute_search_pipeline(parsed, mock_db, "Laid Back", strategies)
+
+        assert len(state.results) == 1
+        song_as_artist_search.assert_called_once()
+        # Should be called with parsed.song as the artist
+        call_args = song_as_artist_search.call_args[0]
+        assert call_args[1] == "Laid Back"
+
+    @pytest.mark.asyncio
+    async def test_tracks_strategies_tried(self):
+        """Test that pipeline tracks which strategies were tried."""
+        from unittest.mock import AsyncMock, Mock
+
+        # All strategies return nothing
+        strategies = build_strategies(
+            search_library_func=AsyncMock(return_value=([], False)),
+            search_alternative_func=AsyncMock(return_value=([], None)),
+            search_compilations_func=AsyncMock(return_value=([], {})),
+        )
+
+        parsed = ParsedRequest(
+            raw_message="Artist - Song",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            artist="Artist",
+            song="Song",
+        )
+
+        mock_db = Mock()
+        state = await execute_search_pipeline(parsed, mock_db, "Artist - Song", strategies)
+
+        # Should track all strategies that were tried
+        assert SearchStrategyType.ARTIST_PLUS_ALBUM in state.strategies_tried
+        assert SearchStrategyType.SWAPPED_INTERPRETATION in state.strategies_tried
+
+    @pytest.mark.asyncio
+    async def test_initializes_with_albums_for_search(self):
+        """Test that pipeline initializes state with albums_for_search."""
+        from unittest.mock import AsyncMock, Mock
+
+        strategies = build_strategies(
+            search_library_func=AsyncMock(return_value=([], False)),
+            search_alternative_func=AsyncMock(return_value=([], None)),
+            search_compilations_func=AsyncMock(return_value=([], {})),
+        )
+
+        parsed = ParsedRequest(
+            raw_message="test",
+            is_request=True,
+            message_type=MessageType.REQUEST,
+            artist="Artist",
+        )
+
+        mock_db = Mock()
+        albums = ["Album 1", "Album 2"]
+        state = await execute_search_pipeline(
+            parsed, mock_db, "test", strategies, albums_for_search=albums
+        )
+
+        assert state.albums_for_search == albums
