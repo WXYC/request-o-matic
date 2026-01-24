@@ -10,7 +10,6 @@ from discogs.models import (
     DiscogsSearchResponse,
     DiscogsSearchResult,
     ReleaseMetadataResponse,
-    TrackAlbumResponse,
     TrackItem,
     TrackReleasesResponse,
     ReleaseInfo,
@@ -51,54 +50,6 @@ async def async_client(app: FastAPI):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         yield client
-
-
-class TestTrackAlbumEndpoint:
-    """Tests for GET /api/v1/discogs/track-album endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_returns_album_info(self, async_client: AsyncClient, mock_service: AsyncMock):
-        """Test successful track-to-album lookup."""
-        mock_service.search_track.return_value = TrackAlbumResponse(
-            album=TEST_ALBUM,
-            artist=TEST_ARTIST,
-            release_id=TEST_RELEASE_ID,
-            release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
-            cached=False,
-        )
-
-        response = await async_client.get(
-            "/api/v1/discogs/track-album",
-            params={"track": TEST_TRACK, "artist": TEST_ARTIST},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["album"] == TEST_ALBUM
-        assert data["artist"] == TEST_ARTIST
-        assert data["release_id"] == TEST_RELEASE_ID
-
-    @pytest.mark.asyncio
-    async def test_requires_track_param(self, async_client: AsyncClient):
-        """Test 422 when track parameter is missing."""
-        response = await async_client.get("/api/v1/discogs/track-album")
-
-        assert response.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_artist_optional(self, async_client: AsyncClient, mock_service: AsyncMock):
-        """Test artist parameter is optional."""
-        mock_service.search_track.return_value = TrackAlbumResponse(
-            album=TEST_ALBUM,
-            cached=False,
-        )
-
-        response = await async_client.get(
-            "/api/v1/discogs/track-album",
-            params={"track": TEST_TRACK},
-        )
-
-        assert response.status_code == 200
 
 
 class TestTrackReleasesEndpoint:
@@ -261,7 +212,7 @@ class TestServiceUnavailable:
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             response = await client.get(
-                "/api/v1/discogs/track-album",
+                "/api/v1/discogs/track-releases",
                 params={"track": TEST_TRACK},
             )
 

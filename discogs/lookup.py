@@ -22,27 +22,6 @@ def _get_service() -> Optional[DiscogsService]:
     return DiscogsService(settings.discogs_token)
 
 
-async def lookup_album_by_track(
-    track: str,
-    artist: Optional[str] = None,
-) -> Optional[str]:
-    """Look up an album name by track title using Discogs.
-
-    Args:
-        track: Track title
-        artist: Optional artist name
-
-    Returns:
-        Album name if found, None otherwise
-    """
-    service = _get_service()
-    if not service:
-        return None
-
-    result = await service.search_track(track, artist)
-    return result.album if result else None
-
-
 async def lookup_releases_by_track(
     track: str,
     artist: Optional[str] = None,

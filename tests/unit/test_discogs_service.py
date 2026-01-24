@@ -9,7 +9,6 @@ from discogs.cache import clear_all_caches
 from discogs.models import (
     DiscogsSearchRequest,
     ReleaseMetadataResponse,
-    TrackAlbumResponse,
     TrackReleasesResponse,
 )
 from discogs.service import DiscogsService
@@ -41,87 +40,6 @@ def clear_caches():
     clear_all_caches()
     yield
     clear_all_caches()
-
-
-class TestSearchTrack:
-    """Tests for search_track method."""
-
-    @pytest.mark.asyncio
-    async def test_returns_album_for_track(self, service: DiscogsService, httpx_mock: HTTPXMock):
-        """Test successful track-to-album lookup."""
-        httpx_mock.add_response(
-            url=SEARCH_URL_PATTERN,
-            json={
-                "results": [
-                    {
-                        "id": TEST_RELEASE_ID,
-                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
-                        "type": "release",
-                    }
-                ]
-            },
-        )
-
-        result = await service.search_track(TEST_TRACK, TEST_ARTIST)
-
-        assert isinstance(result, TrackAlbumResponse)
-        assert result.album == TEST_ALBUM
-        assert result.artist == TEST_ARTIST
-        assert result.release_id == TEST_RELEASE_ID
-        assert result.cached is False
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self, service: DiscogsService, httpx_mock: HTTPXMock):
-        """Test returns empty response when track not found."""
-        httpx_mock.add_response(
-            url=SEARCH_URL_PATTERN,
-            json={"results": []},
-        )
-
-        result = await service.search_track("Nonexistent Track", TEST_ARTIST)
-
-        assert result.album is None
-        assert result.release_id is None
-
-    @pytest.mark.asyncio
-    async def test_handles_rate_limit(self, service: DiscogsService, httpx_mock: HTTPXMock):
-        """Test graceful handling of rate limit."""
-        httpx_mock.add_response(
-            url=SEARCH_URL_PATTERN,
-            status_code=429,
-        )
-
-        result = await service.search_track(TEST_TRACK, TEST_ARTIST)
-
-        assert result.album is None
-
-    @pytest.mark.asyncio
-    async def test_caches_result(self, service: DiscogsService, httpx_mock: HTTPXMock):
-        """Test result is cached on second call."""
-        httpx_mock.add_response(
-            url=SEARCH_URL_PATTERN,
-            json={
-                "results": [
-                    {
-                        "id": TEST_RELEASE_ID,
-                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
-                        "type": "release",
-                    }
-                ]
-            },
-        )
-
-        # First call
-        result1 = await service.search_track(TEST_TRACK, TEST_ARTIST)
-        assert result1.cached is False
-
-        # Second call - should be cached (no new HTTP request)
-        result2 = await service.search_track(TEST_TRACK, TEST_ARTIST)
-        assert result2.cached is True
-        assert result2.album == TEST_ALBUM
-
-        # Verify only one HTTP request was made
-        assert len(httpx_mock.get_requests()) == 1
 
 
 class TestSearchReleasesByTrack:

@@ -9,7 +9,6 @@ from discogs.models import (
     DiscogsSearchRequest,
     DiscogsSearchResponse,
     ReleaseMetadataResponse,
-    TrackAlbumResponse,
     TrackReleasesResponse,
 )
 from discogs.service import DiscogsService
@@ -27,37 +26,6 @@ def _require_service(service: Optional[DiscogsService]) -> DiscogsService:
             detail="Discogs service is not configured. Set DISCOGS_TOKEN environment variable.",
         )
     return service
-
-
-@router.get(
-    "/track-album",
-    response_model=TrackAlbumResponse,
-    summary="Find album containing a track",
-    description="""
-    Search Discogs for a track and return the album that contains it.
-
-    Useful for finding which album a song appears on when you only know
-    the track name.
-
-    Example:
-    ```
-    GET /api/v1/discogs/track-album?track=VI+Scose+Poise&artist=Autechre
-    ```
-    """,
-    responses={
-        200: {"description": "Album information returned"},
-        422: {"description": "Missing required track parameter"},
-        503: {"description": "Discogs service not configured"},
-    },
-)
-async def get_track_album(
-    track: str = Query(..., description="Track/song title to search for"),
-    artist: Optional[str] = Query(None, description="Optional artist name for filtering"),
-    service: Optional[DiscogsService] = Depends(get_discogs_service),
-) -> TrackAlbumResponse:
-    """Find the album containing a specific track."""
-    svc = _require_service(service)
-    return await svc.search_track(track, artist)
 
 
 @router.get(

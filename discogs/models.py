@@ -12,15 +12,6 @@ class TrackItem(BaseModel):
     artists: list[str] = []  # Per-track artists (for compilations)
 
 
-class TrackAlbumResponse(BaseModel):
-    """Response for track-to-album lookup."""
-    album: Optional[str] = None
-    artist: Optional[str] = None
-    release_id: Optional[int] = None
-    release_url: Optional[str] = None
-    cached: bool = False
-
-
 class ReleaseInfo(BaseModel):
     """Information about a single release containing a track."""
     album: str

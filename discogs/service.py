@@ -12,7 +12,6 @@ from discogs.models import (
     DiscogsSearchResult,
     ReleaseInfo,
     ReleaseMetadataResponse,
-    TrackAlbumResponse,
     TrackItem,
     TrackReleasesResponse,
 )
@@ -59,63 +58,6 @@ class DiscogsService:
             parts = title.split(" - ", 1)
             return parts[0].strip(), parts[1].strip()
         return "", title
-
-    @async_cached(TRACK_CACHE)
-    async def search_track(
-        self, track: str, artist: Optional[str] = None
-    ) -> TrackAlbumResponse:
-        """Search for a track and return the album that contains it.
-
-        Args:
-            track: Track title to search for
-            artist: Optional artist name for filtering
-
-        Returns:
-            TrackAlbumResponse with album info if found
-        """
-        params: dict = {
-            "type": "release",
-            "track": track,
-            "per_page": 5,
-        }
-        if artist:
-            params["artist"] = artist
-
-        logger.info(f"Searching Discogs for track: {track}, artist: {artist}")
-        client = await self._get_client()
-
-        try:
-            response = await client.get("/database/search", params=params)
-
-            if response.status_code == 429:
-                logger.warning("Discogs rate limit hit")
-                return TrackAlbumResponse(cached=False)
-
-            response.raise_for_status()
-            data = response.json()
-
-            results = data.get("results", [])
-            if results:
-                result = results[0]
-                title = result.get("title", "")
-                result_artist, album = self._parse_title(title)
-                release_id = result.get("id")
-                release_url = f"https://www.discogs.com/release/{release_id}"
-
-                logger.info(f"Found album '{album}' for track '{track}'")
-                return TrackAlbumResponse(
-                    album=album,
-                    artist=result_artist,
-                    release_id=release_id,
-                    release_url=release_url,
-                    cached=False,
-                )
-
-            return TrackAlbumResponse(cached=False)
-
-        except Exception as e:
-            logger.error(f"Discogs track search failed: {e}")
-            return TrackAlbumResponse(cached=False)
 
     @async_cached(TRACK_CACHE)
     async def search_releases_by_track(

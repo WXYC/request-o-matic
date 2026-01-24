@@ -16,14 +16,14 @@ class TestMakeCacheKey:
 
     def test_simple_args(self):
         """Test cache key with simple string arguments."""
-        key1 = make_cache_key("search_track", TEST_TRACK, TEST_ARTIST)
-        key2 = make_cache_key("search_track", TEST_TRACK, TEST_ARTIST)
+        key1 = make_cache_key("search_releases", TEST_TRACK, TEST_ARTIST)
+        key2 = make_cache_key("search_releases", TEST_TRACK, TEST_ARTIST)
         assert key1 == key2
 
     def test_different_args_different_keys(self):
         """Test different arguments produce different keys."""
-        key1 = make_cache_key("search_track", TEST_TRACK)
-        key2 = make_cache_key("search_track", "Different Track")
+        key1 = make_cache_key("search_releases", TEST_TRACK)
+        key2 = make_cache_key("search_releases", "Different Track")
         assert key1 != key2
 
     def test_kwargs_order_independent(self):
@@ -34,13 +34,13 @@ class TestMakeCacheKey:
 
     def test_none_values_handled(self):
         """Test None values are handled correctly."""
-        key1 = make_cache_key("search_track", TEST_TRACK, None)
-        key2 = make_cache_key("search_track", TEST_TRACK, None)
+        key1 = make_cache_key("search_releases", TEST_TRACK, None)
+        key2 = make_cache_key("search_releases", TEST_TRACK, None)
         assert key1 == key2
 
     def test_different_function_names_different_keys(self):
         """Test same args but different function names produce different keys."""
-        key1 = make_cache_key("search_track", TEST_TRACK)
+        key1 = make_cache_key("search_releases", TEST_TRACK)
         key2 = make_cache_key("get_release", TEST_TRACK)
         assert key1 != key2
 
