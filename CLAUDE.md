@@ -21,6 +21,25 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `library/db.py` - SQLite full-text search with FTS5 and fuzzy fallback
 - `artwork/providers/discogs.py` - Discogs API integration
 
+### Library ETL
+The `library.db` SQLite database is synced daily from the WXYC MySQL database:
+
+- **`scripts/sync-library.sh`** - Orchestrates ETL, commits changes, and pushes to staging
+- **`scripts/export_to_sqlite.py`** - Connects via SSH to remote MySQL, exports to SQLite with FTS5
+
+The sync runs daily at 7 AM via launchd (`~/Library/LaunchAgents/com.wxyc.request-parser-etl.plist`).
+
+**Manual sync:**
+```bash
+# Run ETL (no Slack notifications)
+./scripts/sync-library.sh
+
+# Run with Slack error notifications
+./scripts/sync-library.sh --notify
+```
+
+**Logs:** `~/Library/Logs/request-parser-etl.log`
+
 ## Development Workflow
 
 ### Branches
@@ -138,6 +157,15 @@ Required:
 Optional:
 - `DISCOGS_TOKEN` - For artwork and track lookup
 - `SLACK_WEBHOOK_URL` - For posting results
+
+Library ETL (for `scripts/sync-library.sh`):
+- `LIBRARY_SSH_HOST` - SSH host to connect to
+- `LIBRARY_SSH_USER` - SSH username
+- `LIBRARY_DB_HOST` - MySQL host (as seen from SSH host)
+- `LIBRARY_DB_USER` - MySQL username
+- `LIBRARY_DB_PASSWORD` - MySQL password
+- `LIBRARY_DB_NAME` - MySQL database name
+- `SLACK_MONITORING_WEBHOOK` - Webhook for error notifications (used with `--notify`)
 
 ## Code Style
 
