@@ -2,8 +2,11 @@
 import json
 import os
 import subprocess
+import sys
+import time
 from enum import Enum
 
+import httpx
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -91,6 +94,85 @@ def base_url(test_environment: TestEnvironment) -> str:
     url = ENVIRONMENT_URLS[test_environment]
     print(f"✓ Base URL: {url}")
     return url
+
+
+# =============================================================================
+# Auto-start Local Server for Integration Tests
+# =============================================================================
+
+
+def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
+    """Wait for server to be ready by polling health endpoint."""
+    start = time.time()
+    health_url = url.replace("/api/v1", "/health")
+
+    while time.time() - start < timeout:
+        try:
+            response = httpx.get(health_url, timeout=2.0)
+            if response.status_code == 200:
+                return True
+        except httpx.RequestError:
+            pass
+        time.sleep(0.5)
+
+    return False
+
+
+@pytest.fixture(scope="session")
+def local_server(test_environment, base_url):
+    """Start a local uvicorn server for integration tests when TEST_ENV=local.
+
+    This fixture automatically starts the server before integration tests run
+    and shuts it down when they complete. For staging/production, it's a no-op.
+    """
+    # Only start server for local environment
+    if test_environment != TestEnvironment.LOCAL:
+        yield None
+        return
+
+    # Check if server is already running
+    if _wait_for_server(base_url, timeout=2.0):
+        print("\n✓ Local server already running")
+        yield None
+        return
+
+    # Start the server
+    print("\n🚀 Starting local server for integration tests...")
+
+    # Use the venv python to run uvicorn
+    python_path = sys.executable
+    project_root = Path(__file__).parent.parent
+
+    process = subprocess.Popen(
+        [python_path, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=project_root,
+    )
+
+    # Wait for server to be ready
+    if not _wait_for_server(base_url, timeout=30.0):
+        process.terminate()
+        stdout, stderr = process.communicate(timeout=5)
+        pytest.fail(
+            f"Local server failed to start within 30s.\n"
+            f"stdout: {stdout.decode()}\n"
+            f"stderr: {stderr.decode()}"
+        )
+
+    print("✓ Local server started")
+
+    yield process
+
+    # Shutdown
+    print("\n🛑 Stopping local server...")
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    print("✓ Local server stopped")
 
 
 @pytest.fixture
