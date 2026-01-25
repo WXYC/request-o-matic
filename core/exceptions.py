@@ -1,4 +1,5 @@
 """Custom exception classes for the request parser application."""
+
 from typing import Optional
 
 
@@ -45,4 +46,3 @@ class ConfigurationError(RequestParserException):
     """Raised when there's a configuration error."""
 
     pass
-

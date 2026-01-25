@@ -1,4 +1,5 @@
 """Unit tests for services/slack.py."""
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
@@ -161,8 +162,7 @@ class TestBuildSimpleSlackBlocks:
     def test_builds_simple_blocks_with_context(self):
         """Test building simple blocks with context."""
         blocks = build_simple_slack_blocks(
-            message="No results found",
-            context="Try a different search term"
+            message="No results found", context="Try a different search term"
         )
 
         assert len(blocks) == 2
@@ -208,9 +208,7 @@ class TestInitSlackService:
 
                 await init_slack_service()
 
-                mock_client.get.assert_called_once_with(
-                    "https://example.com/webhook-key"
-                )
+                mock_client.get.assert_called_once_with("https://example.com/webhook-key")
 
     @pytest.mark.asyncio
     async def test_init_raises_on_fetch_failure(self):
@@ -279,8 +277,7 @@ class TestPostToSlack:
         await post_to_slack(blocks)
 
         mock_client.post.assert_called_once_with(
-            "https://hooks.slack.com/test",
-            json={"blocks": blocks}
+            "https://hooks.slack.com/test", json={"blocks": blocks}
         )
 
     @pytest.mark.asyncio

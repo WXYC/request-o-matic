@@ -4,6 +4,7 @@ Baseline management for performance tests.
 Tracks performance baselines per environment (local, staging, prod) and
 compares current test runs against recorded baselines.
 """
+
 import json
 from datetime import datetime, timezone
 from enum import Enum
@@ -13,6 +14,7 @@ from typing import Any, Optional, cast
 
 class Environment(Enum):
     """Test environment."""
+
     LOCAL = "local"
     STAGING = "staging"
     PROD = "prod"
@@ -82,6 +84,7 @@ class BaselineManager:
 
 class PerformanceRegression(Exception):
     """Raised when performance regresses beyond the threshold."""
+
     pass
 
 

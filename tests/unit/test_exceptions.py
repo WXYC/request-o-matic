@@ -1,4 +1,5 @@
 """Unit tests for custom exceptions."""
+
 import pytest
 
 from core.exceptions import (
@@ -78,9 +79,8 @@ def test_exception_inheritance():
         ServiceInitializationError,
         ConfigurationError,
     ]
-    
+
     for exc_class in exceptions:
         exc = exc_class("Test")
         assert isinstance(exc, RequestParserException)
         assert isinstance(exc, Exception)
-

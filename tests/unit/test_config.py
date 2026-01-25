@@ -1,4 +1,5 @@
 """Unit tests for configuration module."""
+
 import pytest
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from config.settings import Settings
 def test_settings_defaults():
     """Test that settings have sensible defaults."""
     settings = Settings(groq_api_key="test_key")
-    
+
     assert settings.groq_api_key == "test_key"
     assert settings.port == 8000
     assert settings.host == "0.0.0.0"
@@ -26,7 +27,7 @@ def test_settings_optional_fields():
         discogs_token=None,
         slack_webhook_url=None,
     )
-    
+
     assert settings.discogs_token is None
     assert settings.slack_webhook_url is None
 
@@ -39,7 +40,7 @@ def test_settings_custom_values():
         log_level="DEBUG",
         enable_slack_integration=False,
     )
-    
+
     assert settings.port == 9000
     assert settings.log_level == "DEBUG"
     assert settings.enable_slack_integration is False
@@ -52,6 +53,5 @@ def test_library_db_path():
         groq_api_key="test_key",
         library_db_path=custom_path,
     )
-    
-    assert settings.library_db_path == custom_path
 
+    assert settings.library_db_path == custom_path

@@ -14,6 +14,7 @@ These tests measure the impact of various search strategies:
 3. Compilation search
 4. Ambiguous query handling
 """
+
 import asyncio
 import os
 import statistics
@@ -35,6 +36,7 @@ from .baseline import (
 
 # Import test environment utilities
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import get_test_environment, TestEnvironment
 
@@ -45,21 +47,21 @@ pytestmark = pytest.mark.integration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 skip_if_no_groq = pytest.mark.skipif(
-    not GROQ_API_KEY,
-    reason="GROQ_API_KEY not set - skipping performance tests"
+    not GROQ_API_KEY, reason="GROQ_API_KEY not set - skipping performance tests"
 )
 
 # Skip performance tests when running locally - they require too many API calls
 # and timeout. Performance tests should only run on staging/production.
 skip_if_local = pytest.mark.skipif(
     get_test_environment() == TestEnvironment.LOCAL,
-    reason="Performance tests skipped for local environment - run with TEST_ENV=staging or TEST_ENV=production"
+    reason="Performance tests skipped for local environment - run with TEST_ENV=staging or TEST_ENV=production",
 )
 
 
 @dataclass
 class TimingResult:
     """Result of a timed query."""
+
     query: str
     total_ms: float
     parsing_ms: Optional[float] = None
@@ -105,7 +107,7 @@ class PerformanceMetrics:
             print(f"  {'Max:':<40} {summary['max_ms']:>8.1f}ms")
             print(f"  {'Mean:':<40} {summary['mean_ms']:>8.1f}ms")
             print(f"  {'Median:':<40} {summary['median_ms']:>8.1f}ms")
-            if summary['stdev_ms'] > 0:
+            if summary["stdev_ms"] > 0:
                 print(f"  {'Std Dev:':<40} {summary['stdev_ms']:>8.1f}ms")
         print()
 
@@ -349,7 +351,9 @@ class TestQueryPerformance:
                 time_with = (time.perf_counter() - start) * 1000
 
                 diff = time_without - time_with
-                print(f"  {without_artist:<35} {time_without:>10.1f}ms {time_with:>10.1f}ms {diff:>+10.1f}ms")
+                print(
+                    f"  {without_artist:<35} {time_without:>10.1f}ms {time_with:>10.1f}ms {diff:>+10.1f}ms"
+                )
 
         print()
 
@@ -524,7 +528,9 @@ class TestPerformanceSummary:
 
         for category, metrics in all_metrics.items():
             summary = metrics.summary()
-            print(f"  {category:<40} {summary['mean_ms']:>8.1f}ms {summary['min_ms']:>8.1f}ms {summary['max_ms']:>8.1f}ms")
+            print(
+                f"  {category:<40} {summary['mean_ms']:>8.1f}ms {summary['min_ms']:>8.1f}ms {summary['max_ms']:>8.1f}ms"
+            )
 
         print(f"\n  {'-' * 70}")
         print("  Performance Impact Analysis:")

@@ -1,4 +1,5 @@
 """Unit tests for routers/health.py."""
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -64,10 +65,7 @@ class TestHealthCheck:
         self, app, mock_settings, mock_library_db, mock_discogs_service
     ):
         """Test health check when all services are healthy."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -100,10 +98,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
         app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -126,10 +121,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_db
         app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -155,10 +147,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
         app.dependency_overrides[get_discogs_service] = lambda: None
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -184,10 +173,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
         app.dependency_overrides[get_discogs_service] = lambda: Mock()
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -195,7 +181,9 @@ class TestHealthCheck:
         assert data["services"]["discogs"] == "disabled"
 
     @pytest.mark.asyncio
-    async def test_health_check_slack_disabled(self, mock_settings, mock_library_db, mock_discogs_service):
+    async def test_health_check_slack_disabled(
+        self, mock_settings, mock_library_db, mock_discogs_service
+    ):
         """Test health check when Slack integration is disabled."""
         settings = Settings(
             groq_api_key="test_key",
@@ -214,10 +202,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
         app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -225,14 +210,9 @@ class TestHealthCheck:
         assert data["services"]["slack"] == "disabled"
 
     @pytest.mark.asyncio
-    async def test_health_check_features_enabled(
-        self, app, mock_settings
-    ):
+    async def test_health_check_features_enabled(self, app, mock_settings):
         """Test that features are correctly reported."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200
@@ -260,10 +240,7 @@ class TestHealthCheck:
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
         app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
 
         assert response.status_code == 200

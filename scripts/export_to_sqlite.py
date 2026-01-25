@@ -74,13 +74,14 @@ def fetch_from_remote() -> list[dict]:
     # Use -B for batch mode (tab-separated), -N to skip column names
     mysql_cmd = (
         f"mysql -h {MYSQL_HOST} -u {MYSQL_USER} -p'{MYSQL_PASSWORD}' "
-        f"-B -N {MYSQL_DATABASE} -e \"{LIBRARY_QUERY}\""
+        f'-B -N {MYSQL_DATABASE} -e "{LIBRARY_QUERY}"'
     )
 
     print(f"Fetching data from {ssh_target}...", end="", flush=True)
 
     # Start spinner in background
     stop_spinner = threading.Event()
+
     def spin():
         for char in itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
             if stop_spinner.is_set():
@@ -115,8 +116,16 @@ def fetch_from_remote() -> list[dict]:
 
     # Parse tab-separated output
     rows = []
-    columns = ["id", "title", "artist", "call_letters", "artist_call_number",
-               "release_call_number", "genre", "format"]
+    columns = [
+        "id",
+        "title",
+        "artist",
+        "call_letters",
+        "artist_call_number",
+        "release_call_number",
+        "genre",
+        "format",
+    ]
 
     for line in output.strip().split("\n"):
         if not line:
@@ -133,8 +142,14 @@ def export():
     # Check required environment variables when using SSH
     if SSH_HOST:
         missing = []
-        for var in ["LIBRARY_SSH_HOST", "LIBRARY_SSH_USER", "LIBRARY_DB_HOST",
-                    "LIBRARY_DB_USER", "LIBRARY_DB_PASSWORD", "LIBRARY_DB_NAME"]:
+        for var in [
+            "LIBRARY_SSH_HOST",
+            "LIBRARY_SSH_USER",
+            "LIBRARY_DB_HOST",
+            "LIBRARY_DB_USER",
+            "LIBRARY_DB_PASSWORD",
+            "LIBRARY_DB_NAME",
+        ]:
             if not os.environ.get(var):
                 missing.append(var)
         if missing:

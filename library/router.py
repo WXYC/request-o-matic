@@ -1,4 +1,5 @@
 """Library router with dependency injection."""
+
 import logging
 from typing import Optional
 

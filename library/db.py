@@ -79,29 +79,35 @@ class LibraryDB:
             try:
                 cursor = await self._conn.execute(sql, (query, limit))
                 rows = await cursor.fetchall()
-                
+
                 # If no results and fallback enabled, try LIKE search
                 if not rows and fallback_to_like:
-                    logger.info(f"FTS search for '{query}' returned no results, trying LIKE fallback")
+                    logger.info(
+                        f"FTS search for '{query}' returned no results, trying LIKE fallback"
+                    )
                     rows = await self._fallback_like_search(query, limit)
-                
+
                 # If still no results, try fuzzy search
                 if not rows and fallback_to_fuzzy:
-                    logger.info(f"LIKE search for '{query}' returned no results, trying fuzzy fallback")
+                    logger.info(
+                        f"LIKE search for '{query}' returned no results, trying fuzzy fallback"
+                    )
                     return await self._fuzzy_search(query, limit)
             except Exception as e:
                 # FTS syntax errors (e.g., special characters) - fall back to LIKE
                 if fallback_to_like:
                     logger.info(f"FTS search for '{query}' failed ({e}), trying LIKE fallback")
                     rows = await self._fallback_like_search(query, limit)
-                    
+
                     # If still no results, try fuzzy search
                     if not rows and fallback_to_fuzzy:
-                        logger.info(f"LIKE search for '{query}' returned no results, trying fuzzy fallback")
+                        logger.info(
+                            f"LIKE search for '{query}' returned no results, trying fuzzy fallback"
+                        )
                         return await self._fuzzy_search(query, limit)
                 else:
                     raise
-            
+
             # Return results from FTS or fallback search
             return [LibraryItem(**dict(row)) for row in rows]
 
@@ -138,19 +144,19 @@ class LibraryDB:
         Handles cases where punctuation or articles like "The" cause FTS to fail.
         """
         # Normalize: remove special chars, keep only alphanumeric and spaces
-        normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
+        normalized = re.sub(r"[^a-z0-9\s]", " ", query.lower())
         words = normalized.split()
 
         # Remove stopwords that might cause mismatches
         significant_words = [w for w in words if w not in STOPWORDS and len(w) > 1]
-        
+
         # If we removed all words, use original words
         if not significant_words:
             significant_words = [w for w in words if len(w) > 1]
-        
+
         if not significant_words:
             return []
-        
+
         # Build LIKE conditions for each word
         conditions: list[str] = []
         params: list[str | int] = []
@@ -159,9 +165,9 @@ class LibraryDB:
             conditions.append("(title LIKE ? OR artist LIKE ?)")
             params.append(f"%{word}%")
             params.append(f"%{word}%")
-        
+
         params.append(limit)
-        
+
         sql = f"""
             SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
             FROM library
@@ -174,34 +180,32 @@ class LibraryDB:
         rows = await cursor.fetchall()
         return list(rows)
 
-    async def _fuzzy_search(
-        self, query: str, limit: int, threshold: int = 70
-    ) -> list[LibraryItem]:
+    async def _fuzzy_search(self, query: str, limit: int, threshold: int = 70) -> list[LibraryItem]:
         """
         Fuzzy search fallback using rapidfuzz for typo tolerance.
-        
+
         Searches for candidates that partially match the query words,
         then ranks them by fuzzy similarity score.
-        
+
         Args:
             query: Search query
             limit: Max results to return
             threshold: Minimum fuzzy match score (0-100) to include results
         """
         # Normalize query
-        normalized = re.sub(r'[^a-z0-9\s]', ' ', query.lower())
+        normalized = re.sub(r"[^a-z0-9\s]", " ", query.lower())
         words = normalized.split()
-        
+
         if not words:
             return []
-        
+
         # Get the longest word to use for candidate search (more selective)
         search_word = max(words, key=len)
-        
+
         # Search for candidates using partial match on longest word
         # Use first few characters to cast a wider net for typos
         prefix = search_word[:3] if len(search_word) >= 3 else search_word
-        
+
         sql = """
             SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
             FROM library
@@ -212,10 +216,10 @@ class LibraryDB:
         assert self._conn is not None, "Database not connected. Call connect() first."
         cursor = await self._conn.execute(sql, (f"%{prefix}%", f"%{prefix}%"))
         rows = await cursor.fetchall()
-        
+
         if not rows:
             return []
-        
+
         # Score each result by fuzzy matching against the query
         scored_results = []
         for row in rows:
@@ -223,22 +227,20 @@ class LibraryDB:
             # Compare query against "artist - title" combined
             combined = f"{item.artist or ''} {item.title or ''}".lower()
             score = fuzz.token_set_ratio(query.lower(), combined)
-            
+
             if score >= threshold:
                 scored_results.append((score, item))
-        
+
         # Sort by score descending and return top results
         scored_results.sort(key=lambda x: x[0], reverse=True)
         results = [item for _, item in scored_results[:limit]]
-        
+
         if results:
             logger.info(f"Fuzzy search for '{query}' found {len(results)} results")
 
         return results
 
-    async def find_similar_artist(
-        self, artist: str, threshold: int = 85
-    ) -> Optional[str]:
+    async def find_similar_artist(self, artist: str, threshold: int = 85) -> Optional[str]:
         """
         Find a similar artist name in the library using fuzzy matching.
 

@@ -1,4 +1,5 @@
 """Discogs API service with caching."""
+
 import logging
 from typing import Any, Optional
 
@@ -143,9 +144,7 @@ class DiscogsService:
             logger.error(f"Discogs search failed: {e}")
             return TrackReleasesResponse(track=track, artist=artist, cached=False)
 
-    def _process_search_result(
-        self, result: dict, seen_albums: set
-    ) -> Optional[ReleaseInfo]:
+    def _process_search_result(self, result: dict, seen_albums: set) -> Optional[ReleaseInfo]:
         """Process a single search result into a ReleaseInfo.
 
         Args:
@@ -245,9 +244,7 @@ class DiscogsService:
             return None
 
     @async_cached(SEARCH_CACHE)
-    async def search(
-        self, request: DiscogsSearchRequest, limit: int = 5
-    ) -> DiscogsSearchResponse:
+    async def search(self, request: DiscogsSearchRequest, limit: int = 5) -> DiscogsSearchResponse:
         """General release search for artwork discovery.
 
         Args:
@@ -358,9 +355,7 @@ class DiscogsService:
 
         return params
 
-    async def validate_track_on_release(
-        self, release_id: int, track: str, artist: str
-    ) -> bool:
+    async def validate_track_on_release(self, release_id: int, track: str, artist: str) -> bool:
         """Validate that a track by an artist exists on a release.
 
         Args:
@@ -400,9 +395,7 @@ class DiscogsService:
                 release_artist = release_artist.split("(")[0].strip()
 
                 if artist_lower in release_artist or release_artist in artist_lower:
-                    logger.info(
-                        f"Validated: '{track}' by '{artist}' found on release {release_id}"
-                    )
+                    logger.info(f"Validated: '{track}' by '{artist}' found on release {release_id}")
                     return True
 
         logger.info(f"Track '{track}' by '{artist}' NOT found on release {release_id}")

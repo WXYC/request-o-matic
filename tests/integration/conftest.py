@@ -1,4 +1,5 @@
 """Integration test fixtures - ensures local server is running for local tests."""
+
 import pytest
 
 

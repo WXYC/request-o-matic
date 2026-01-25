@@ -1,4 +1,5 @@
 """Unit tests for routers/parse.py."""
+
 import pytest
 from unittest.mock import Mock, patch
 
@@ -23,6 +24,7 @@ def app(mock_groq_client):
 
     # Override the dependency
     from core.dependencies import get_groq_client
+
     app.dependency_overrides[get_groq_client] = lambda: mock_groq_client
 
     return app
@@ -51,12 +53,10 @@ class TestParseEndpoint:
             mock_parse.return_value = sample_parsed_request
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "Play Bohemian Rhapsody by Queen"}
+                    "/api/v1/parse", json={"message": "Play Bohemian Rhapsody by Queen"}
                 )
 
             assert response.status_code == 200
@@ -68,22 +68,13 @@ class TestParseEndpoint:
             assert data["is_request"] is True
             assert data["message_type"] == "request"
 
-            mock_parse.assert_called_once_with(
-                "Play Bohemian Rhapsody by Queen",
-                mock_groq_client
-            )
+            mock_parse.assert_called_once_with("Play Bohemian Rhapsody by Queen", mock_groq_client)
 
     @pytest.mark.asyncio
     async def test_parse_empty_message_returns_400(self, app, mock_groq_client):
         """Test that empty message returns 400."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/parse",
-                json={"message": ""}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/parse", json={"message": ""})
 
         assert response.status_code == 400
         assert "Message cannot be empty" in response.json()["detail"]
@@ -91,14 +82,8 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_whitespace_only_message_returns_400(self, app, mock_groq_client):
         """Test that whitespace-only message returns 400."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/parse",
-                json={"message": "   \t\n  "}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/parse", json={"message": "   \t\n  "})
 
         assert response.status_code == 400
         assert "Message cannot be empty" in response.json()["detail"]
@@ -110,13 +95,9 @@ class TestParseEndpoint:
             mock_parse.side_effect = ValueError("Invalid message format")
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
-                response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "some message"}
-                )
+                response = await client.post("/api/v1/parse", json={"message": "some message"})
 
             assert response.status_code == 500
             assert "Invalid message format" in response.json()["detail"]
@@ -128,13 +109,9 @@ class TestParseEndpoint:
             mock_parse.side_effect = RuntimeError("Unexpected error")
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
-                response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "some message"}
-                )
+                response = await client.post("/api/v1/parse", json={"message": "some message"})
 
             assert response.status_code == 500
             assert "Internal server error" in response.json()["detail"]
@@ -155,12 +132,10 @@ class TestParseEndpoint:
             mock_parse.return_value = non_request
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "Thanks for listening!"}
+                    "/api/v1/parse", json={"message": "Thanks for listening!"}
                 )
 
             assert response.status_code == 200
@@ -187,13 +162,9 @@ class TestParseEndpoint:
             mock_parse.return_value = feedback
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
-                response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "Love the show!"}
-                )
+                response = await client.post("/api/v1/parse", json={"message": "Love the show!"})
 
             assert response.status_code == 200
             data = response.json()
@@ -204,27 +175,17 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_missing_message_field(self, app, mock_groq_client):
         """Test that missing message field returns 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/parse",
-                json={}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/v1/parse", json={})
 
         assert response.status_code == 422  # Validation error
 
     @pytest.mark.asyncio
     async def test_parse_wrong_message_type(self, app, mock_groq_client):
         """Test that wrong message type returns 422."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                "/api/v1/parse",
-                json={"message": 12345}  # Should be string
+                "/api/v1/parse", json={"message": 12345}  # Should be string
             )
 
         assert response.status_code == 422  # Validation error
@@ -245,12 +206,10 @@ class TestParseEndpoint:
             mock_parse.return_value = request
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "Play Stairway to Heaven by Led Zeppelin"}
+                    "/api/v1/parse", json={"message": "Play Stairway to Heaven by Led Zeppelin"}
                 )
 
             assert response.status_code == 200
@@ -277,12 +236,10 @@ class TestParseEndpoint:
             mock_parse.return_value = request
 
             async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post(
-                    "/api/v1/parse",
-                    json={"message": "Play something by The Beatles"}
+                    "/api/v1/parse", json={"message": "Play something by The Beatles"}
                 )
 
             assert response.status_code == 200

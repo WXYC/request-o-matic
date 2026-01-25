@@ -18,6 +18,7 @@ The script creates a dashboard with insights for:
 - Step success rate (table)
 - Slowest requests (table)
 """
+
 import json
 import os
 import sys
@@ -120,11 +121,41 @@ def build_insights() -> list[dict]:
                 "source": {
                     "kind": "TrendsQuery",
                     "series": [
-                        {"kind": "EventsNode", "event": "request_parse", "math": "avg", "math_property": "duration_ms", "name": "Parse"},
-                        {"kind": "EventsNode", "event": "request_album_lookup", "math": "avg", "math_property": "duration_ms", "name": "Album Lookup"},
-                        {"kind": "EventsNode", "event": "request_library_search", "math": "avg", "math_property": "duration_ms", "name": "Library Search"},
-                        {"kind": "EventsNode", "event": "request_artwork_fetch", "math": "avg", "math_property": "duration_ms", "name": "Artwork Fetch"},
-                        {"kind": "EventsNode", "event": "request_slack_post", "math": "avg", "math_property": "duration_ms", "name": "Slack Post"},
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_parse",
+                            "math": "avg",
+                            "math_property": "duration_ms",
+                            "name": "Parse",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_album_lookup",
+                            "math": "avg",
+                            "math_property": "duration_ms",
+                            "name": "Album Lookup",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_library_search",
+                            "math": "avg",
+                            "math_property": "duration_ms",
+                            "name": "Library Search",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_artwork_fetch",
+                            "math": "avg",
+                            "math_property": "duration_ms",
+                            "name": "Artwork Fetch",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_slack_post",
+                            "math": "avg",
+                            "math_property": "duration_ms",
+                            "name": "Slack Post",
+                        },
                     ],
                     "trendsFilter": {"display": "ActionsBar"},
                     "dateRange": {"date_from": "-7d"},
@@ -139,8 +170,20 @@ def build_insights() -> list[dict]:
                 "source": {
                     "kind": "TrendsQuery",
                     "series": [
-                        {"kind": "EventsNode", "event": "request_completed", "math": "avg", "math_property": "total_duration_ms", "name": "Avg Duration (ms)"},
-                        {"kind": "EventsNode", "event": "request_completed", "math": "p90", "math_property": "total_duration_ms", "name": "P90 Duration (ms)"},
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "avg",
+                            "math_property": "total_duration_ms",
+                            "name": "Avg Duration (ms)",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "p90",
+                            "math_property": "total_duration_ms",
+                            "name": "P90 Duration (ms)",
+                        },
                     ],
                     "trendsFilter": {"display": "ActionsLineGraph"},
                     "dateRange": {"date_from": "-7d"},
@@ -156,7 +199,12 @@ def build_insights() -> list[dict]:
                 "source": {
                     "kind": "TrendsQuery",
                     "series": [
-                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "Requests"},
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "Requests",
+                        },
                     ],
                     "breakdownFilter": {"breakdown": "search_type", "breakdown_type": "event"},
                     "trendsFilter": {"display": "ActionsPie"},
@@ -172,7 +220,12 @@ def build_insights() -> list[dict]:
                 "source": {
                     "kind": "TrendsQuery",
                     "series": [
-                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "Requests"},
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "Requests",
+                        },
                     ],
                     "trendsFilter": {"display": "ActionsLineGraph"},
                     "dateRange": {"date_from": "-7d"},
@@ -188,8 +241,34 @@ def build_insights() -> list[dict]:
                 "source": {
                     "kind": "TrendsQuery",
                     "series": [
-                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "With Results", "properties": [{"key": "results_count", "value": 0, "operator": "gt", "type": "event"}]},
-                        {"kind": "EventsNode", "event": "request_completed", "math": "total", "name": "No Results", "properties": [{"key": "results_count", "value": 0, "operator": "exact", "type": "event"}]},
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "With Results",
+                            "properties": [
+                                {
+                                    "key": "results_count",
+                                    "value": 0,
+                                    "operator": "gt",
+                                    "type": "event",
+                                }
+                            ],
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "No Results",
+                            "properties": [
+                                {
+                                    "key": "results_count",
+                                    "value": 0,
+                                    "operator": "exact",
+                                    "type": "event",
+                                }
+                            ],
+                        },
                     ],
                     "trendsFilter": {"display": "ActionsPie"},
                     "dateRange": {"date_from": "-7d"},

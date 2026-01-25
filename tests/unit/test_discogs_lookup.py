@@ -1,4 +1,5 @@
 """Unit tests for discogs/lookup.py."""
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -87,7 +88,7 @@ class TestLookupReleasesByTrack:
                     release_id=67890,
                     release_url="https://discogs.com/release/67890",
                 ),
-            ]
+            ],
         )
         mock_service.search_releases_by_track.return_value = mock_response
         # Mock validate_track_on_release to return True for all releases
@@ -119,7 +120,7 @@ class TestLookupReleasesByTrack:
                     release_id=67890,
                     release_url="https://discogs.com/release/67890",
                 ),
-            ]
+            ],
         )
         mock_service.search_releases_by_track.return_value = mock_response
 
@@ -146,7 +147,7 @@ class TestLookupReleasesByTrack:
                     release_id=12345,
                     release_url="https://discogs.com/release/12345",
                 ),
-            ]
+            ],
         )
         mock_service.search_releases_by_track.return_value = mock_response
 
@@ -170,7 +171,7 @@ class TestLookupReleasesByTrack:
                     release_id=0,  # Falsy release ID
                     release_url="https://discogs.com/release/0",
                 ),
-            ]
+            ],
         )
         mock_service.search_releases_by_track.return_value = mock_response
 

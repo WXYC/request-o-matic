@@ -1,4 +1,5 @@
 """Main application entry point with dependency injection and lifespan management."""
+
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,11 +45,13 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Log level: {settings.log_level}")
-    logger.info(f"Slack integration: {'enabled' if settings.enable_slack_integration else 'disabled'}")
+    logger.info(
+        f"Slack integration: {'enabled' if settings.enable_slack_integration else 'disabled'}"
+    )
     logger.info(f"Artwork lookup: {'enabled' if settings.enable_artwork_lookup else 'disabled'}")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down application")
     shutdown_posthog()

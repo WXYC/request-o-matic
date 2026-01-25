@@ -3,6 +3,7 @@
 These functions create their own service instances for use internally
 by the request handler, bypassing FastAPI dependency injection.
 """
+
 import logging
 from typing import Optional
 

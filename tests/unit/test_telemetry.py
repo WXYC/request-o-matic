@@ -1,4 +1,5 @@
 """Unit tests for the telemetry module."""
+
 import time
 from unittest.mock import MagicMock
 
@@ -141,7 +142,8 @@ class TestSendToPosthog:
 
         # Find the parse event
         parse_call = next(
-            call for call in mock_posthog.capture.call_args_list
+            call
+            for call in mock_posthog.capture.call_args_list
             if call.kwargs["event"] == "request_parse"
         )
 
@@ -166,7 +168,8 @@ class TestSendToPosthog:
 
         # Find the completed event
         completed_call = next(
-            call for call in mock_posthog.capture.call_args_list
+            call
+            for call in mock_posthog.capture.call_args_list
             if call.kwargs["event"] == "request_completed"
         )
 

@@ -1,4 +1,5 @@
 """Shared test fixtures for pytest."""
+
 import json
 import os
 import subprocess
@@ -14,7 +15,6 @@ from unittest.mock import AsyncMock, Mock
 from config.settings import Settings
 from library.models import LibraryItem
 
-
 # =============================================================================
 # Environment Configuration
 # =============================================================================
@@ -24,8 +24,10 @@ from library.models import LibraryItem
 #   - production: https://request-o-matic-production.up.railway.app
 # =============================================================================
 
+
 class ServerEnvironment(str, Enum):
     """Server environment for test targeting (renamed from TestEnvironment to avoid pytest warning)."""
+
     LOCAL = "local"
     STAGING = "staging"
     PRODUCTION = "production"
@@ -57,12 +59,12 @@ def pytest_configure(config):
     markexpr = config.getoption("-m", default="")
     if "integration" not in markexpr:
         return
-    
+
     # Check if RAILWAY_TOKEN_STAGING is set
     token = os.environ.get("RAILWAY_TOKEN_STAGING")
     if not token:
         return  # Will use whatever env vars are already set
-    
+
     try:
         result = subprocess.run(
             ["railway", "variables", "--json"],
@@ -269,7 +271,7 @@ def sample_library_items():
 def sample_parsed_request():
     """Create a sample parsed request for testing."""
     from services.parser import ParsedRequest, MessageType
-    
+
     return ParsedRequest(
         song="Bohemian Rhapsody",
         album="A Night at the Opera",
@@ -278,4 +280,3 @@ def sample_parsed_request():
         message_type=MessageType.REQUEST,
         raw_message="Play Bohemian Rhapsody by Queen",
     )
-

@@ -4,6 +4,7 @@ Integration tests against production services.
 Run with: pytest tests/test_integration.py -v
 Skip with: pytest tests/ -m "not integration"
 """
+
 import os
 import pytest
 from pathlib import Path
@@ -24,18 +25,15 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 LIBRARY_DB_PATH = Path(__file__).parent.parent.parent / "library.db"
 
 skip_if_no_token = pytest.mark.skipif(
-    not DISCOGS_TOKEN,
-    reason="DISCOGS_TOKEN not set - skipping integration tests"
+    not DISCOGS_TOKEN, reason="DISCOGS_TOKEN not set - skipping integration tests"
 )
 
 skip_if_no_db = pytest.mark.skipif(
-    not LIBRARY_DB_PATH.exists(),
-    reason="library.db not found - skipping integration tests"
+    not LIBRARY_DB_PATH.exists(), reason="library.db not found - skipping integration tests"
 )
 
 skip_if_no_groq = pytest.mark.skipif(
-    not GROQ_API_KEY,
-    reason="GROQ_API_KEY not set - skipping parser integration tests"
+    not GROQ_API_KEY, reason="GROQ_API_KEY not set - skipping parser integration tests"
 )
 
 
@@ -49,10 +47,7 @@ class TestDiscogsIntegration:
         service = DiscogsService(DISCOGS_TOKEN)
 
         # Test the real scenario
-        response = await service.search_releases_by_track(
-            "Abele Dance (85 Remix)",
-            "Manu Dibango"
-        )
+        response = await service.search_releases_by_track("Abele Dance (85 Remix)", "Manu Dibango")
 
         print(f"\n✅ Found {len(response.releases)} releases on Discogs:")
         for i, release in enumerate(response.releases[:5], 1):
@@ -64,14 +59,13 @@ class TestDiscogsIntegration:
         assert len(response.releases) >= 0, "Should return a list of releases"
 
         for release in response.releases[:5]:
-            assert hasattr(release, 'artist'), "Release should have artist"
-            assert hasattr(release, 'album'), "Release should have album"
+            assert hasattr(release, "artist"), "Release should have artist"
+            assert hasattr(release, "album"), "Release should have album"
 
         # Note if compilation is in results (informational, not required)
         album_titles = [r.album for r in response.releases]
         has_compilation = any(
-            "change" in album.lower() and "beat" in album.lower()
-            for album in album_titles
+            "change" in album.lower() and "beat" in album.lower() for album in album_titles
         )
 
         if has_compilation:
@@ -116,9 +110,9 @@ class TestDiscogsIntegration:
             artist_lower = artist.lower()
             is_sugar_plant = "sugar plant" in artist_lower
             is_compilation = "various" in artist_lower
-            assert is_sugar_plant or is_compilation, (
-                f"Expected Sugar Plant or verified compilation, got '{artist}'"
-            )
+            assert (
+                is_sugar_plant or is_compilation
+            ), f"Expected Sugar Plant or verified compilation, got '{artist}'"
 
         print(f"\n✅ Tracklist validation correctly filtered false positives!")
 
@@ -131,10 +125,7 @@ class TestDiscogsIntegration:
         # Make multiple rapid requests
         results = []
         for i in range(3):
-            response = await service.search_releases_by_track(
-                f"Test Track {i}",
-                "Test Artist"
-            )
+            response = await service.search_releases_by_track(f"Test Track {i}", "Test Artist")
             results.append(response)
 
         # Should complete without errors (even if rate limited)
@@ -145,71 +136,68 @@ class TestDiscogsIntegration:
 
 class TestLibraryIntegration:
     """Test against the real library.db database."""
-    
+
     @pytest.mark.asyncio
     @skip_if_no_db
     async def test_celluloid_compilation_in_library(self):
         """Test that the Celluloid compilation exists in the library."""
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         # Search for the compilation
         results = await db.search(query="Celluloid change beat", limit=5)
-        
+
         print(f"\n✅ Found {len(results)} results in library:")
         for result in results:
             print(f"  - {result.artist} - {result.title}")
             print(f"    Call: {result.call_number}")
-        
+
         # Verify we found it
         assert len(results) > 0, "Should find Celluloid compilation"
-        
+
         # Check for exact match
         found_exact = any(
-            "celluloid" in (result.title or "").lower() and
-            "change" in (result.title or "").lower() and
-            "beat" in (result.title or "").lower()
+            "celluloid" in (result.title or "").lower()
+            and "change" in (result.title or "").lower()
+            and "beat" in (result.title or "").lower()
             for result in results
         )
-        
+
         assert found_exact, "Should find exact Celluloid compilation"
-        
+
         await db.close()
-    
+
     @pytest.mark.asyncio
     @skip_if_no_db
     async def test_fuzzy_search_with_special_chars(self):
         """Test fuzzy search with real data."""
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         # Test with special characters (should use fallback)
-        results = await db.search(
-            query="Richard D. James Album = リチャード",
-            limit=5
-        )
-        
+        results = await db.search(query="Richard D. James Album = リチャード", limit=5)
+
         print(f"\n✅ Found {len(results)} results with special chars:")
         for result in results[:3]:
             print(f"  - {result.artist} - {result.title}")
-        
+
         await db.close()
-    
+
     @pytest.mark.asyncio
     @skip_if_no_db
     async def test_various_artists_search(self):
         """Test searching for Various Artists releases."""
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         # Search for soundtracks and compilations
         results = await db.search(query="Various Artists", limit=10)
-        
+
         print(f"\n✅ Found {len(results)} Various Artists releases:")
         for result in results[:5]:
             print(f"  - {result.title}")
             print(f"    Artist: {result.artist}")
-        
+
         assert len(results) > 0, "Should find Various Artists releases"
 
         await db.close()
@@ -240,10 +228,11 @@ class TestLibraryIntegration:
         # Verify they're actually by Echo and the Bunnymen
         for result in results:
             assert result.artist is not None, "Result should have artist"
-            assert "echo" in result.artist.lower(), f"Result should be by Echo and the Bunnymen, got {result.artist}"
+            assert (
+                "echo" in result.artist.lower()
+            ), f"Result should be by Echo and the Bunnymen, got {result.artist}"
 
         await db.close()
-
 
     @pytest.mark.asyncio
     @skip_if_no_db
@@ -274,9 +263,7 @@ class TestLibraryIntegration:
 
         # Check for expected catalog structure (DJ 70/1 in Hiphop)
         found_expected = any(
-            result.call_letters == "DJ" and
-            result.artist_call_number == 70
-            for result in results
+            result.call_letters == "DJ" and result.artist_call_number == 70 for result in results
         )
 
         if found_expected:
@@ -304,10 +291,7 @@ class TestEndToEndIntegration:
         """
         # Step 1: Search Discogs
         service = DiscogsService(DISCOGS_TOKEN)
-        response = await service.search_releases_by_track(
-            "Abele Dance (85 Remix)",
-            "Manu Dibango"
-        )
+        response = await service.search_releases_by_track("Abele Dance (85 Remix)", "Manu Dibango")
 
         print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
 
@@ -331,11 +315,12 @@ class TestEndToEndIntegration:
             if not results:
                 # Extract keywords
                 import re
-                words = re.sub(r'[^\w\s]', ' ', release.album.lower()).split()
+
+                words = re.sub(r"[^\w\s]", " ", release.album.lower()).split()
                 significant = [w for w in words if len(w) > 3][:3]
 
                 if significant:
-                    fuzzy_query = ' '.join(significant)
+                    fuzzy_query = " ".join(significant)
                     results = await db.search(query=fuzzy_query, limit=1)
 
             if results:
@@ -353,7 +338,8 @@ class TestEndToEndIntegration:
 
         # Check if we found the compilation (informational)
         has_compilation = any(
-            item.title is not None and ("celluloid" in item.title.lower() or "change" in item.title.lower())
+            item.title is not None
+            and ("celluloid" in item.title.lower() or "change" in item.title.lower())
             for _, item in found_in_library
         )
 
@@ -364,7 +350,7 @@ class TestEndToEndIntegration:
 
         await service.close()
         await db.close()
-    
+
     @pytest.mark.asyncio
     @skip_if_no_token
     @skip_if_no_db
@@ -375,44 +361,48 @@ class TestEndToEndIntegration:
         """
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
-        
+
         # Simulate the keyword extraction logic with an album that exists
         import re
-        
+
         # Use an album we know exists: "Selected Ambient works vol 2" by Aphex Twin
         song = "ambient works"  # Keywords from actual album title
         artist = "Aphex Twin"
-        
+
         # Extract significant words (matching routers/request.py logic)
-        artist_words = re.sub(r'[^\w\s]', ' ', artist.lower()).split()
-        song_words = re.sub(r'[^\w\s]', ' ', song.lower()).split()
-        
+        artist_words = re.sub(r"[^\w\s]", " ", artist.lower()).split()
+        song_words = re.sub(r"[^\w\s]", " ", song.lower()).split()
+
         all_words = artist_words + song_words
-        significant = [w for w in all_words if len(w) > 3 and w not in 
-            {'the', 'and', 'with', 'from', 'that', 'this', 'play', 'song', 'remix'}]
-        
-        keyword_query = ' '.join(significant[:3])
+        significant = [
+            w
+            for w in all_words
+            if len(w) > 3
+            and w not in {"the", "and", "with", "from", "that", "this", "play", "song", "remix"}
+        ]
+
+        keyword_query = " ".join(significant[:3])
         print(f"\n🔍 Testing keyword search: '{keyword_query}'")
-        
+
         results = await db.search(query=keyword_query, limit=3)
-        
+
         print(f"✅ Found {len(results)} results:")
         for result in results:
             print(f"  - {result.artist} - {result.title}")
-        
+
         # Verify we find something relevant
         assert len(results) > 0, "Keyword search should find results"
-        
+
         # Check if we found Aphex Twin albums
         has_aphex = any(
             result.artist is not None and "aphex" in result.artist.lower() for result in results
         )
-        
+
         assert has_aphex, "Should find Aphex Twin album with keyword search"
         print("  ✅ Keyword search found Aphex Twin album!")
-        
+
         await db.close()
-    
+
     @pytest.mark.asyncio
     @skip_if_no_token
     @skip_if_no_db
@@ -429,10 +419,7 @@ class TestEndToEndIntegration:
         """
         # Step 1: Search Discogs for the track
         service = DiscogsService(DISCOGS_TOKEN)
-        response = await service.search_releases_by_track(
-            "Shake It To The Ground",
-            "DJ Blaqstarr"
-        )
+        response = await service.search_releases_by_track("Shake It To The Ground", "DJ Blaqstarr")
 
         print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
         for i, release in enumerate(response.releases[:5], 1):
@@ -452,11 +439,12 @@ class TestEndToEndIntegration:
             # Try fuzzy match if exact fails
             if not results:
                 import re
-                words = re.sub(r'[^\w\s]', ' ', release.album.lower()).split()
+
+                words = re.sub(r"[^\w\s]", " ", release.album.lower()).split()
                 significant = [w for w in words if len(w) > 3][:3]
 
                 if significant:
-                    fuzzy_query = ' '.join(significant)
+                    fuzzy_query = " ".join(significant)
                     results = await db.search(query=fuzzy_query, limit=1)
 
             if results:
@@ -520,10 +508,12 @@ class TestParserIntegration:
         assert result.artist is not None
 
         # The key assertion: asterisks should be preserved
-        assert "*" in result.artist, \
-            f"Expected asterisks to be preserved in artist name, got: {result.artist}"
-        assert result.artist.lower().replace("*", "") == "quixotic", \
-            f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
+        assert (
+            "*" in result.artist
+        ), f"Expected asterisks to be preserved in artist name, got: {result.artist}"
+        assert (
+            result.artist.lower().replace("*", "") == "quixotic"
+        ), f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
 
         print(f"  ✅ Asterisks preserved: {result.artist}")
 
@@ -548,8 +538,9 @@ class TestParserIntegration:
 
             assert result.artist is not None, f"Expected artist for '{message}'"
             # Check special char is preserved (case-insensitive check on base name)
-            assert special_char in result.artist or special_char in result.artist.lower(), \
-                f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
+            assert (
+                special_char in result.artist or special_char in result.artist.lower()
+            ), f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
 
             print(f"  ✅ Special char '{special_char}' preserved")
 
@@ -578,10 +569,10 @@ class TestParserIntegration:
         assert result.is_request is True, "Should recognize as a request"
         assert result.song is not None, "Should extract song title"
         assert result.artist is not None, "Should extract artist name"
-        assert "man" in result.song.lower() and "house" in result.song.lower(), \
-            f"Expected song 'The Man in Your House', got: {result.song}"
-        assert "mi ami" in result.artist.lower(), \
-            f"Expected artist 'Mi Ami', got: {result.artist}"
+        assert (
+            "man" in result.song.lower() and "house" in result.song.lower()
+        ), f"Expected song 'The Man in Your House', got: {result.song}"
+        assert "mi ami" in result.artist.lower(), f"Expected artist 'Mi Ami', got: {result.artist}"
 
         print(f"  ✅ Correctly parsed comma-separated format!")
 
@@ -621,9 +612,9 @@ class TestFullRequestIntegration:
 
         # Check parsing
         parsed = data.get("parsed", {})
-        assert parsed.get("artist") == "Echo and the Bunnymen", (
-            f"Should parse artist as 'Echo and the Bunnymen', got {parsed.get('artist')}"
-        )
+        assert (
+            parsed.get("artist") == "Echo and the Bunnymen"
+        ), f"Should parse artist as 'Echo and the Bunnymen', got {parsed.get('artist')}"
 
         # Check results
         results = data.get("library_results", [])
@@ -631,9 +622,9 @@ class TestFullRequestIntegration:
 
         # Verify all results are by Echo and the Bunnymen
         for result in results:
-            assert "echo" in result.get("artist", "").lower(), (
-                f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
-            )
+            assert (
+                "echo" in result.get("artist", "").lower()
+            ), f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
 
         print(f"\n✅ Artist-only search returned {len(results)} results:")
         for r in results:
@@ -684,7 +675,9 @@ class TestFullRequestIntegration:
         print(f"\n✅ Correctly returned 'Meet Me in the City' album!")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Known bug: fallback search returns all artist albums without track filtering")
+    @pytest.mark.xfail(
+        reason="Known bug: fallback search returns all artist albums without track filtering"
+    )
     async def test_thoughtforms_by_lush_excludes_albums_without_song(self, base_url):
         """
         Test that 'Thoughtforms by Lush' only returns albums that have the song.
@@ -725,15 +718,13 @@ class TestFullRequestIntegration:
 
         # Should NOT include Lovelife (which doesn't have Thoughtforms)
         titles = [r.get("title", "").lower() for r in results]
-        assert "lovelife" not in titles, (
-            "Lovelife should NOT be in results because it doesn't have Thoughtforms"
-        )
+        assert (
+            "lovelife" not in titles
+        ), "Lovelife should NOT be in results because it doesn't have Thoughtforms"
 
         # Should include albums that actually have Thoughtforms
         # (According to Discogs: Mad Love, Scar, Gala, etc.)
-        has_valid_album = any(
-            title in ["mad love", "scar", "gala"] for title in titles
-        )
+        has_valid_album = any(title in ["mad love", "scar", "gala"] for title in titles)
         assert has_valid_album, (
             f"Expected at least one album that has Thoughtforms (Mad Love, Scar, or Gala), "
             f"but got: {titles}"
@@ -742,7 +733,9 @@ class TestFullRequestIntegration:
         print(f"\n✅ Correctly excluded albums without the requested song!")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Known bug: fallback search returns all artist albums without track filtering")
+    @pytest.mark.xfail(
+        reason="Known bug: fallback search returns all artist albums without track filtering"
+    )
     async def test_biosphere_excludes_albums_without_track(self, base_url):
         """
         Test that 'The Things I Tell You by Biosphere' excludes albums without the track.
@@ -783,15 +776,13 @@ class TestFullRequestIntegration:
 
         # Should NOT include Stator (which doesn't have The Things I Tell You)
         titles = [r.get("title", "").lower() for r in results]
-        assert "stator" not in titles, (
-            "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
-        )
+        assert (
+            "stator" not in titles
+        ), "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
 
         # Should include albums that actually have the track
         # (According to Discogs: Substrata, Wireless)
-        has_valid_album = any(
-            title in ["substrata", "wireless"] for title in titles
-        )
+        has_valid_album = any(title in ["substrata", "wireless"] for title in titles)
         assert has_valid_album, (
             f"Expected at least one album that has 'The Things I Tell You' "
             f"(Substrata or Wireless), but got: {titles}"
@@ -829,9 +820,9 @@ class TestFullRequestIntegration:
         # Should NOT include Young Black Teenagers
         for r in results:
             artist = r.get("artist", "").lower()
-            assert "young black teenagers" not in artist, (
-                f"'Young Black Teenagers' should not match 'Young Gov' search"
-            )
+            assert (
+                "young black teenagers" not in artist
+            ), f"'Young Black Teenagers' should not match 'Young Gov' search"
 
         print(f"\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
 
@@ -936,25 +927,25 @@ class TestFullRequestIntegration:
         # Should NOT include Edward Bear
         for r in results:
             artist = r.get("artist", "").lower()
-            assert "edward bear" not in artist, (
-                f"'Edward Bear' should not match 'Amps for Christ' search"
-            )
+            assert (
+                "edward bear" not in artist
+            ), f"'Edward Bear' should not match 'Amps for Christ' search"
 
         # If we have results, they should be by Amps for Christ
         if results:
             has_amps = any(
-                r.get("artist", "").lower().startswith("amps for christ")
-                for r in results
+                r.get("artist", "").lower().startswith("amps for christ") for r in results
             )
             assert has_amps, (
-                f"Expected 'Amps for Christ' albums, got: "
-                f"{[r.get('artist') for r in results]}"
+                f"Expected 'Amps for Christ' albums, got: " f"{[r.get('artist') for r in results]}"
             )
 
         print(f"\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Known bug: keyword search doesn't prioritize albums with the song title")
+    @pytest.mark.xfail(
+        reason="Known bug: keyword search doesn't prioritize albums with the song title"
+    )
     async def test_holland_1945_returns_aeroplane(self, base_url):
         """
         Test that 'Holland, 1945 Neutral Milk Hotel' returns the correct album.
@@ -1030,21 +1021,21 @@ class TestFullRequestIntegration:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
         # Should be recognized as a request
-        assert parsed.get("is_request") is True, (
-            "Should recognize 'song, artist' format as a request"
-        )
+        assert (
+            parsed.get("is_request") is True
+        ), "Should recognize 'song, artist' format as a request"
 
         # Should have results
         assert len(results) > 0, "Should find results for Mi Ami"
 
         # Should return Watersports
         first_result = results[0]
-        assert "watersports" in first_result.get("title", "").lower(), (
-            f"Expected 'Watersports' album, got '{first_result.get('title')}'"
-        )
-        assert "mi ami" in first_result.get("artist", "").lower(), (
-            f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
-        )
+        assert (
+            "watersports" in first_result.get("title", "").lower()
+        ), f"Expected 'Watersports' album, got '{first_result.get('title')}'"
+        assert (
+            "mi ami" in first_result.get("artist", "").lower()
+        ), f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
 
         print(f"\n✅ Correctly returned 'Watersports' by Mi Ami!")
 
@@ -1080,15 +1071,13 @@ class TestFullRequestIntegration:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
         # Should have results despite spelling difference
-        assert len(results) > 0, (
-            "Should find Living Colour albums even when spelled 'Living Color'"
-        )
+        assert len(results) > 0, "Should find Living Colour albums even when spelled 'Living Color'"
 
         # All results should be by Living Colour
         for r in results:
-            assert "living colour" in r.get("artist", "").lower(), (
-                f"Expected 'Living Colour', got '{r.get('artist')}'"
-            )
+            assert (
+                "living colour" in r.get("artist", "").lower()
+            ), f"Expected 'Living Colour', got '{r.get('artist')}'"
 
         print(f"\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
 
@@ -1141,9 +1130,9 @@ class TestFullRequestIntegration:
             # Either by Sugar Plant directly, or a verified compilation
             is_sugar_plant = "sugar plant" in artist
             is_valid_compilation = "various" in artist
-            assert is_sugar_plant or is_valid_compilation, (
-                f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
-            )
+            assert (
+                is_sugar_plant or is_valid_compilation
+            ), f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
 
         print(f"\n✅ Correctly excluded unrelated compilations!")
 
@@ -1178,15 +1167,13 @@ class TestFullRequestIntegration:
 
             # Check all IDs are unique
             ids = [r.get("id") for r in results]
-            assert len(ids) == len(set(ids)), (
-                f"Duplicate IDs found in results for '{query}': {ids}"
-            )
+            assert len(ids) == len(set(ids)), f"Duplicate IDs found in results for '{query}': {ids}"
 
             # Check all library URLs are unique
             library_urls = [r.get("library_url") for r in results]
-            assert len(library_urls) == len(set(library_urls)), (
-                f"Duplicate library URLs found in results for '{query}': {library_urls}"
-            )
+            assert len(library_urls) == len(
+                set(library_urls)
+            ), f"Duplicate library URLs found in results for '{query}': {library_urls}"
 
             if len(results) > 1:
                 found_multi_result = True
@@ -1227,15 +1214,15 @@ class TestFullRequestIntegration:
 
             # Check all IDs are unique
             ids = [r.get("id") for r in results]
-            assert len(ids) == len(set(ids)), (
-                f"Duplicate IDs found for '{query}' ({description}): {ids}"
-            )
+            assert len(ids) == len(
+                set(ids)
+            ), f"Duplicate IDs found for '{query}' ({description}): {ids}"
 
             # Check no duplicate (artist, title) pairs
             artist_title_pairs = [(r.get("artist"), r.get("title")) for r in results]
-            assert len(artist_title_pairs) == len(set(artist_title_pairs)), (
-                f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
-            )
+            assert len(artist_title_pairs) == len(
+                set(artist_title_pairs)
+            ), f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
 
             if len(results) > 1:
                 found_multi_result = True
@@ -1246,4 +1233,3 @@ class TestFullRequestIntegration:
 
         # At least one query should return multiple results
         assert found_multi_result, "Expected at least one query to return multiple results"
-

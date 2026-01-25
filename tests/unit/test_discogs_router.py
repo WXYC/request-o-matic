@@ -1,4 +1,5 @@
 """Tests for Discogs router endpoints."""
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,9 +47,7 @@ def app(mock_service: AsyncMock):
 @pytest_asyncio.fixture
 async def async_client(app: FastAPI):
     """Create async test client."""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
 
 
@@ -125,7 +124,9 @@ class TestReleaseEndpoint:
         assert "Electronic" in data["genres"]
 
     @pytest.mark.asyncio
-    async def test_returns_404_when_not_found(self, async_client: AsyncClient, mock_service: AsyncMock):
+    async def test_returns_404_when_not_found(
+        self, async_client: AsyncClient, mock_service: AsyncMock
+    ):
         """Test 404 when release not found."""
         mock_service.get_release.return_value = None
 
@@ -138,7 +139,9 @@ class TestSearchEndpoint:
     """Tests for POST /api/v1/discogs/search endpoint."""
 
     @pytest.mark.asyncio
-    async def test_search_by_artist_and_album(self, async_client: AsyncClient, mock_service: AsyncMock):
+    async def test_search_by_artist_and_album(
+        self, async_client: AsyncClient, mock_service: AsyncMock
+    ):
         """Test search with artist and album."""
         mock_service.search.return_value = DiscogsSearchResponse(
             results=[
@@ -166,7 +169,9 @@ class TestSearchEndpoint:
         assert data["results"][0]["album"] == TEST_ALBUM
 
     @pytest.mark.asyncio
-    async def test_requires_at_least_one_param(self, async_client: AsyncClient, mock_service: AsyncMock):
+    async def test_requires_at_least_one_param(
+        self, async_client: AsyncClient, mock_service: AsyncMock
+    ):
         """Test 400 when no search parameters provided."""
         response = await async_client.post(
             "/api/v1/discogs/search",
@@ -176,7 +181,9 @@ class TestSearchEndpoint:
         assert response.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_accepts_limit_parameter(self, async_client: AsyncClient, mock_service: AsyncMock):
+    async def test_accepts_limit_parameter(
+        self, async_client: AsyncClient, mock_service: AsyncMock
+    ):
         """Test search accepts limit query parameter."""
         mock_service.search.return_value = DiscogsSearchResponse(
             results=[],
@@ -208,9 +215,7 @@ class TestServiceUnavailable:
         app.include_router(router, prefix="/api/v1")
         app.dependency_overrides[get_discogs_service] = lambda: None
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/discogs/track-releases",
                 params={"track": TEST_TRACK},

@@ -1,4 +1,5 @@
 """Caching utilities for Discogs API responses using TTL-based LRU cache."""
+
 import hashlib
 import json
 import logging
@@ -102,6 +103,7 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
     Returns:
         Decorator function
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
@@ -131,6 +133,7 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
             return result  # type: ignore[no-any-return]
 
         return wrapper  # type: ignore[return-value]
+
     return decorator
 
 
@@ -140,6 +143,7 @@ def get_track_cache() -> TTLCache:
     if _track_cache is None:
         # Import settings lazily to avoid circular imports at module load time
         from config.settings import get_settings
+
         settings = get_settings()
         _track_cache = create_ttl_cache(
             maxsize=settings.discogs_cache_maxsize,
@@ -153,6 +157,7 @@ def get_release_cache() -> TTLCache:
     global _release_cache
     if _release_cache is None:
         from config.settings import get_settings
+
         settings = get_settings()
         # Release cache uses half the maxsize since entries are larger
         _release_cache = create_ttl_cache(
@@ -167,6 +172,7 @@ def get_search_cache() -> TTLCache:
     global _search_cache
     if _search_cache is None:
         from config.settings import get_settings
+
         settings = get_settings()
         _search_cache = create_ttl_cache(
             maxsize=settings.discogs_cache_maxsize,

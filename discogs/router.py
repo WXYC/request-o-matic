@@ -1,4 +1,5 @@
 """FastAPI router for Discogs API endpoints."""
+
 import logging
 from typing import Optional
 

@@ -1,4 +1,5 @@
 """Tests for core.search module - strategy pattern implementation."""
+
 import pytest
 
 from core.search import (

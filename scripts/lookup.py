@@ -5,6 +5,7 @@ Usage:
     python scripts/lookup.py "play bohemian rhapsody by queen"
     python scripts/lookup.py --verbose "the beatles abbey road"
 """
+
 import argparse
 import asyncio
 import logging
@@ -110,8 +111,8 @@ def print_library_results(
 
     for i, item in enumerate(results, 1):
         item_id = item.get("id")
-        title = item.get('title', '')
-        artist = item.get('artist', '')
+        title = item.get("title", "")
+        artist = item.get("artist", "")
         print(f"  [{i}] {title}")
         print(f"      Artist:   {artist}")
         print(f"      Genre:    {item.get('genre') or '(none)'}")

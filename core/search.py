@@ -5,6 +5,7 @@ Each strategy has explicit trigger conditions and can be easily tested in isolat
 
 Strategies are executed in array order until results are found.
 """
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Optional

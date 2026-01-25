@@ -1,4 +1,5 @@
 """Telemetry module for tracking request performance with PostHog."""
+
 import logging
 import time
 from contextlib import contextmanager

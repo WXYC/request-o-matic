@@ -1,4 +1,5 @@
 """Unit tests for refactored request handler helper functions."""
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 
@@ -37,7 +38,7 @@ def test_build_context_message_compilation():
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     context = build_context_message(parsed, found_on_compilation=True, song_not_found=False)
     assert context == 'Found "Test Song" by Test Artist on:'
 
@@ -52,7 +53,7 @@ def test_build_context_message_album_not_found():
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
     assert context is not None
     assert "not found in the library" in context
@@ -69,7 +70,7 @@ def test_build_context_message_song_not_found():
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
     assert context is not None
     assert "is not on any album" in context
@@ -134,7 +135,7 @@ def test_build_context_message_song_not_found_with_results():
 async def test_search_library_with_fallback_full_query(mock_library_db):
     """Test library search with full query."""
     from library.models import LibraryItem
-    
+
     mock_results = [
         LibraryItem(
             id=1,
@@ -148,7 +149,7 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
         )
     ]
     mock_library_db.search.return_value = mock_results
-    
+
     parsed = ParsedRequest(
         song="Bohemian Rhapsody",
         artist="Queen",
@@ -157,11 +158,11 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
         message_type=MessageType.REQUEST,
         raw_message="Test",
     )
-    
+
     results, fallback_used = await search_library_with_fallback(
         mock_library_db, parsed, ["A Night at the Opera"]
     )
-    
+
     assert len(results) == 1
     assert results[0].artist == "Queen"
     assert fallback_used is False
@@ -174,16 +175,18 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
     mock_library_db.search.side_effect = [
         [],  # First search with artist+album
         [],  # Second search with artist+song
-        [LibraryItem(
-            id=2,
-            artist="Queen",
-            title="The Game",
-            call_letters="Q",
-            artist_call_number=1,
-            release_call_number=2,
-            genre="Rock",
-            format="CD",
-        )],  # Third search with artist only
+        [
+            LibraryItem(
+                id=2,
+                artist="Queen",
+                title="The Game",
+                call_letters="Q",
+                artist_call_number=1,
+                release_call_number=2,
+                genre="Rock",
+                format="CD",
+            )
+        ],  # Third search with artist only
     ]
 
     parsed = ParsedRequest(
@@ -347,8 +350,8 @@ class TestFilterResultsByArtist:
     def test_young_gov_scenario(self):
         """Test the specific Young Gov scenario that was failing."""
         results = [
-            LibraryItem(id=1, artist="Biz Markie", title="Young Girl Bluez 12\""),
-            LibraryItem(id=2, artist="Young Black Teenagers", title="Proud to be Black 12\""),
+            LibraryItem(id=1, artist="Biz Markie", title='Young Girl Bluez 12"'),
+            LibraryItem(id=2, artist="Young Black Teenagers", title='Proud to be Black 12"'),
             LibraryItem(id=3, artist="Young Black Teenagers", title="Young Black Teenagers"),
         ]
 
@@ -360,7 +363,9 @@ class TestFilterResultsByArtist:
     def test_laid_back_scenario(self):
         """Test the Laid Back scenario - should not match albums with 'laid back' in title."""
         results = [
-            LibraryItem(id=1, artist="Various Artists - Hiphop", title="Night Shift - Laid Back Trip Hop"),
+            LibraryItem(
+                id=1, artist="Various Artists - Hiphop", title="Night Shift - Laid Back Trip Hop"
+            ),
             LibraryItem(id=2, artist="Gregg Allman", title="Laid Back"),
             LibraryItem(id=3, artist="Laid Back", title="Keep Smiling"),
         ]
@@ -418,9 +423,7 @@ async def test_search_library_filters_non_matching_artists(mock_library_db):
         raw_message="Test",
     )
 
-    results, fallback_used = await search_library_with_fallback(
-        mock_library_db, parsed, []
-    )
+    results, fallback_used = await search_library_with_fallback(mock_library_db, parsed, [])
 
     # Results should be empty after filtering
     assert len(results) == 0
@@ -579,4 +582,3 @@ class TestSearchWithAlternativeInterpretation:
         artists = {r.artist for r in results}
         assert "Amps for Christ" in artists
         assert "Edward Bear" in artists
-

@@ -1,4 +1,5 @@
 """FastAPI dependency injection providers."""
+
 import logging
 from functools import lru_cache
 from typing import Optional
@@ -24,7 +25,7 @@ _posthog_client: Optional[Posthog] = None
 
 async def get_http_client() -> httpx.AsyncClient:
     """Get or create HTTP client for async requests.
-    
+
     Returns:
         httpx.AsyncClient: Shared async HTTP client
     """
@@ -44,13 +45,13 @@ async def close_http_client() -> None:
 
 def get_groq_client(settings: Settings = Depends(get_settings)) -> Groq:
     """Get Groq client instance.
-    
+
     Args:
         settings: Application settings
-        
+
     Returns:
         Groq: Groq client instance
-        
+
     Raises:
         ServiceInitializationError: If Groq API key is not configured
     """
@@ -61,18 +62,18 @@ def get_groq_client(settings: Settings = Depends(get_settings)) -> Groq:
 
 async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryDB:
     """Get library database instance.
-    
+
     Args:
         settings: Application settings
-        
+
     Returns:
         LibraryDB: Connected library database instance
-        
+
     Raises:
         ServiceInitializationError: If database initialization fails
     """
     global _library_db
-    
+
     if _library_db is None:
         try:
             db_path = settings.resolved_library_db_path
@@ -82,7 +83,7 @@ async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryD
         except Exception as e:
             logger.error(f"Failed to initialize library database: {e}")
             raise ServiceInitializationError(f"Database initialization failed: {e}")
-    
+
     return _library_db
 
 
@@ -176,31 +177,29 @@ async def get_slack_webhook_url(
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> Optional[str]:
     """Get Slack webhook URL from settings or Railway endpoint.
-    
+
     Args:
         settings: Application settings
         http_client: HTTP client for fetching from Railway
-        
+
     Returns:
         Optional[str]: Slack webhook URL if configured and enabled
-        
+
     Raises:
         ServiceInitializationError: If fetching webhook URL fails
     """
     if not settings.enable_slack_integration:
         logger.info("Slack integration disabled")
         return None
-    
+
     # Check for webhook URL in settings
     if settings.slack_webhook_url:
         logger.info("Using Slack webhook URL from environment")
         return settings.slack_webhook_url
-    
+
     # Fetch from Railway endpoint
     try:
-        response = await http_client.get(
-            "https://wxyc-requests-endpoint-production.up.railway.app"
-        )
+        response = await http_client.get("https://wxyc-requests-endpoint-production.up.railway.app")
         response.raise_for_status()
         webhook_key = response.text.strip()
         webhook_url = f"https://hooks.slack.com/services/{webhook_key}"
@@ -213,24 +212,21 @@ async def get_slack_webhook_url(
 
 class SlackService:
     """Service for posting messages to Slack."""
-    
+
     def __init__(self, webhook_url: str, http_client: httpx.AsyncClient):
         self.webhook_url = webhook_url
         self.http_client = http_client
-    
+
     async def post_blocks(self, blocks: list[dict]) -> None:
         """Post message blocks to Slack.
-        
+
         Args:
             blocks: Slack message blocks
-            
+
         Raises:
             httpx.HTTPError: If posting to Slack fails
         """
-        response = await self.http_client.post(
-            self.webhook_url,
-            json={"blocks": blocks}
-        )
+        response = await self.http_client.post(self.webhook_url, json={"blocks": blocks})
         response.raise_for_status()
         logger.info("Posted to Slack successfully")
 
@@ -240,15 +236,14 @@ async def get_slack_service(
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> Optional[SlackService]:
     """Get Slack service instance.
-    
+
     Args:
         webhook_url: Slack webhook URL
         http_client: HTTP client
-        
+
     Returns:
         Optional[SlackService]: Slack service if enabled, None otherwise
     """
     if webhook_url is None:
         return None
     return SlackService(webhook_url, http_client)
-

@@ -27,6 +27,7 @@ The search flow follows these steps in order:
 
 Each step is tracked via telemetry for observability.
 """
+
 import asyncio
 import logging
 import re
@@ -88,12 +89,14 @@ router = APIRouter(tags=["request"])
 
 class RequestBody(BaseModel):
     """Request body for song request parsing."""
+
     message: str
     skip_slack: bool = False
 
 
 class UnifiedResponse(BaseModel):
     """Combined response from parsing, artwork lookup, and library search."""
+
     parsed: ParsedRequest
     artwork: Optional[DiscogsSearchResult] = None
     library_results: list[LibraryItem] = []
@@ -118,7 +121,8 @@ async def resolve_albums_for_track(
     # When the parser can't identify the album, it sometimes uses the artist name
     album_is_missing = not parsed.album
     album_is_artist = (
-        parsed.album and parsed.artist
+        parsed.album
+        and parsed.artist
         and parsed.album.lower().strip() == parsed.artist.lower().strip()
     )
 
@@ -238,7 +242,9 @@ async def search_with_alternative_interpretation(
     return [], None
 
 
-async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> tuple[list[LibraryItem], None]:
+async def search_song_as_artist(
+    db: LibraryDB, song_as_artist: str
+) -> tuple[list[LibraryItem], None]:
     """Try searching using the parsed song title as an artist name.
 
     This handles cases where the AI parser misinterpreted an artist name
@@ -299,7 +305,9 @@ async def search_song_as_artist(db: LibraryDB, song_as_artist: str) -> tuple[lis
             break
 
     if results:
-        logger.info(f"Found {len(results)} results via Discogs cross-reference for '{song_as_artist}'")
+        logger.info(
+            f"Found {len(results)} results via Discogs cross-reference for '{song_as_artist}'"
+        )
 
     return limit_results(results), None
 
@@ -340,17 +348,13 @@ async def search_library_with_fallback(
             # This prevents fuzzy search from returning unrelated albums by the same artist
             album_lower = album.lower()
             # Extract significant words from the Discogs album title
-            album_words = set(
-                w for w in re.sub(r'[^\w\s]', ' ', album_lower).split()
-                if len(w) > 2
-            )
+            album_words = set(w for w in re.sub(r"[^\w\s]", " ", album_lower).split() if len(w) > 2)
             filtered_results = []
             for item in results:
                 item_title_lower = (item.title or "").lower()
                 # Check if the library album title shares significant words with Discogs album
                 item_words = set(
-                    w for w in re.sub(r'[^\w\s]', ' ', item_title_lower).split()
-                    if len(w) > 2
+                    w for w in re.sub(r"[^\w\s]", " ", item_title_lower).split() if len(w) > 2
                 )
                 # Require at least one significant word match (besides common words)
                 common_words = album_words & item_words
@@ -404,28 +408,30 @@ async def search_compilations_for_track(
     parsed: ParsedRequest,
 ) -> tuple[list[LibraryItem], dict[int, str]]:
     """Search for track on compilation albums using Discogs and library keyword search.
-    
+
     Args:
         db: Library database
         parsed: Parsed request with song/artist info
-        
+
     Returns:
         Tuple of (list of matching library items, dict mapping item_id to discogs_album_title)
     """
     if not parsed.song or not parsed.artist:
         return [], {}
-    
+
     logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
-    
+
     results = []
     seen_ids = set()  # Track IDs to avoid duplicates
     discogs_titles: dict[int, str] = {}  # Map item ID to Discogs album title
-    
+
     # First, try a direct library keyword search
     keyword_matches = []
     try:
-        artist_words = re.sub(r'[^\w\s]', ' ', parsed.artist.lower()).split() if parsed.artist else []
-        song_words = re.sub(r'[^\w\s]', ' ', parsed.song.lower()).split() if parsed.song else []
+        artist_words = (
+            re.sub(r"[^\w\s]", " ", parsed.artist.lower()).split() if parsed.artist else []
+        )
+        song_words = re.sub(r"[^\w\s]", " ", parsed.song.lower()).split() if parsed.song else []
 
         # Filter to significant words (using shared STOPWORDS constant)
         sig_artist = [w for w in artist_words if len(w) > 3 and w not in STOPWORDS]
@@ -435,7 +441,7 @@ async def search_compilations_for_track(
         query_words = sig_artist[:2] + sig_song[:2]
 
         if query_words:
-            keyword_query = ' '.join(query_words)
+            keyword_query = " ".join(query_words)
             logger.info(f"Trying direct keyword search: '{keyword_query}'")
             keyword_results = await db.search(query=keyword_query, limit=MAX_SEARCH_RESULTS)
 
@@ -451,7 +457,9 @@ async def search_compilations_for_track(
                         filtered_results.append(item)
 
                 if filtered_results:
-                    logger.info(f"Found {len(filtered_results)} matches via keyword search (after artist filter)")
+                    logger.info(
+                        f"Found {len(filtered_results)} matches via keyword search (after artist filter)"
+                    )
                     # Don't add to results yet - prefer Discogs results which know actual track listings
                     keyword_matches = filtered_results
     except Exception as e:
@@ -465,7 +473,7 @@ async def search_compilations_for_track(
         raw_lower = parsed.raw_message.lower()
         song_search = parsed.song
 
-        remix_match = re.search(r'\((.*?(?:remix|mix|version|edit).*?)\)', raw_lower, re.IGNORECASE)
+        remix_match = re.search(r"\((.*?(?:remix|mix|version|edit).*?)\)", raw_lower, re.IGNORECASE)
         if remix_match and parsed.song.lower() in raw_lower:
             song_search = f"{parsed.song} ({remix_match.group(1)})"
             logger.info(f"Using full track name with version info: '{song_search}'")
@@ -562,11 +570,11 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
 
     if not results:
         # Extract significant keywords (using shared STOPWORDS constant)
-        words = re.sub(r'[^\w\s]', ' ', album_title.lower()).split()
+        words = re.sub(r"[^\w\s]", " ", album_title.lower()).split()
         significant_words = [w for w in words if len(w) > 3 and w not in STOPWORDS]
 
         if significant_words:
-            fuzzy_query = ' '.join(significant_words[:4])
+            fuzzy_query = " ".join(significant_words[:4])
             logger.info(f"Exact match failed for '{album_title}', trying fuzzy: '{fuzzy_query}'")
             results = await db.search(query=fuzzy_query, limit=MAX_SEARCH_RESULTS)
 
@@ -575,7 +583,7 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
                 album_lower = album_title.lower()
                 filtered_results = []
                 for result in results:
-                    result_title_lower = (result.title or '').lower()
+                    result_title_lower = (result.title or "").lower()
 
                     # Count keyword matches
                     keyword_matches = sum(
@@ -669,18 +677,18 @@ def build_context_message(
         Context message string or None
     """
     if found_on_compilation:
-        return f"Found \"{parsed.song}\" by {parsed.artist} on:"
+        return f'Found "{parsed.song}" by {parsed.artist} on:'
 
     if song_not_found and has_results:
         # Show "here are other albums" only if we have results to show
         if parsed.song and parsed.album:
-            return f"\"{parsed.album}\" not found in the library, but here are other albums by {parsed.artist}:"
+            return f'"{parsed.album}" not found in the library, but here are other albums by {parsed.artist}:'
         elif parsed.song:
-            return f"\"{parsed.song}\" is not on any album in the library, but here are some albums by {parsed.artist}:"
+            return f'"{parsed.song}" is not on any album in the library, but here are some albums by {parsed.artist}:'
     elif song_not_found and not has_results:
         # No results at all after filtering
         if parsed.song and parsed.artist:
-            return f"\"{parsed.song}\" by {parsed.artist} not found in library."
+            return f'"{parsed.song}" by {parsed.artist} not found in library.'
 
     return None
 
@@ -693,21 +701,21 @@ async def post_results_to_slack(
     context: Optional[str] = None,
 ) -> None:
     """Post formatted results to Slack.
-    
+
     Args:
         slack_service: Slack service instance
         message: Original request message
         parsed: Parsed request
         items_with_artwork: Library items with their artwork
         context: Optional context message
-        
+
     Raises:
         HTTPException: If posting to Slack fails
     """
     if not slack_service:
         logger.info("Slack integration disabled, skipping post")
         return
-    
+
     if items_with_artwork:
         blocks = build_slack_blocks(message, items_with_artwork, context)
     elif not parsed.is_request:
@@ -724,7 +732,7 @@ async def post_results_to_slack(
             context_parts.append(f"Song: {parsed.song}")
         ctx = " | ".join(context_parts) if context_parts else None
         blocks = build_simple_slack_blocks(message, f"_No results found_ {ctx or ''}")
-    
+
     try:
         await slack_service.post_blocks(blocks)
     except Exception as e:
@@ -794,7 +802,9 @@ async def handle_request(
         with telemetry.track_step("parse"):
             telemetry.record_api_call("groq")
             parsed = parse_request(request.message, groq_client)
-            logger.info(f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}")
+            logger.info(
+                f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}"
+            )
 
         library_results: list[LibraryItem] = []
         items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]] = []
@@ -853,7 +863,9 @@ async def handle_request(
                 # Count Discogs API calls for artwork (one per item)
                 for _ in library_results:
                     telemetry.record_api_call("discogs")
-                items_with_artwork = await fetch_artwork_for_items(library_results, discogs_service, discogs_titles)
+                items_with_artwork = await fetch_artwork_for_items(
+                    library_results, discogs_service, discogs_titles
+                )
 
         # Step 5: Build context and post to Slack (unless skip_slack is set)
         context = build_context_message(
@@ -867,21 +879,26 @@ async def handle_request(
                 )
 
         # Extract main artwork from first result
-        artwork = next(
-            (art for _, art in items_with_artwork if art), None
-        ) if items_with_artwork else None
+        artwork = (
+            next((art for _, art in items_with_artwork if art), None)
+            if items_with_artwork
+            else None
+        )
 
         # Send telemetry
         if posthog_client:
-            telemetry.send_to_posthog(posthog_client, {
-                "results_count": len(library_results),
-                "search_type": search_type,
-                "had_artist": bool(parsed.artist),
-                "had_album": bool(parsed.album),
-                "had_song": bool(parsed.song),
-                "is_request": parsed.is_request,
-                "message_type": parsed.message_type.value if parsed.message_type else None,
-            })
+            telemetry.send_to_posthog(
+                posthog_client,
+                {
+                    "results_count": len(library_results),
+                    "search_type": search_type,
+                    "had_artist": bool(parsed.artist),
+                    "had_album": bool(parsed.album),
+                    "had_song": bool(parsed.song),
+                    "is_request": parsed.is_request,
+                    "message_type": parsed.message_type.value if parsed.message_type else None,
+                },
+            )
 
         return UnifiedResponse(
             parsed=parsed,

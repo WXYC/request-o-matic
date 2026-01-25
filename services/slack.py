@@ -52,22 +52,11 @@ def build_slack_blocks(
     context: Optional[str] = None,
 ) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""
-    blocks = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{message}*"
-            }
-        }
-    ]
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{message}*"}}]
 
     # Add context message if provided (e.g., "song not found, showing artist albums")
     if context:
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": context}
-        })
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": context}})
 
     for item, artwork in items_with_artwork:
         # Build text with links to library and Discogs
@@ -79,19 +68,13 @@ def build_slack_blocks(
         if artwork and artwork.release_url:
             text_lines.append(f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>")
 
-        block: dict = {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "\n".join(text_lines)
-            }
-        }
+        block: dict = {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(text_lines)}}
 
         if artwork and artwork.artwork_url:
             block["accessory"] = {
                 "type": "image",
                 "image_url": artwork.artwork_url,
-                "alt_text": f"{item.title} album cover"
+                "alt_text": f"{item.title} album cover",
             }
 
         blocks.append(block)
@@ -102,25 +85,11 @@ def build_slack_blocks(
 def build_simple_slack_blocks(message: str, context: Optional[str] = None) -> list[dict[str, Any]]:
     """Build simple Slack message blocks for feedback or no-results messages."""
     blocks: list[dict[str, Any]] = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{message}*"
-            }
-        }
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{message}*"}}
     ]
 
     if context:
-        blocks.append({
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": context
-                }
-            ]
-        })
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": context}]})
 
     return blocks
 
@@ -130,9 +99,6 @@ async def post_to_slack(blocks: list[dict]) -> None:
     if not _webhook_url or not _http_client:
         raise RuntimeError("Slack webhook not configured")
 
-    response = await _http_client.post(
-        _webhook_url,
-        json={"blocks": blocks}
-    )
+    response = await _http_client.post(_webhook_url, json={"blocks": blocks})
     response.raise_for_status()
     logger.info("Posted to Slack successfully")

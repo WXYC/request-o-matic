@@ -1,4 +1,5 @@
 """Pydantic models for Discogs API responses."""
+
 from typing import Optional
 
 from pydantic import BaseModel
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 
 class TrackItem(BaseModel):
     """A single track on a release."""
+
     position: str
     title: str
     duration: Optional[str] = None
@@ -14,6 +16,7 @@ class TrackItem(BaseModel):
 
 class ReleaseInfo(BaseModel):
     """Information about a single release containing a track."""
+
     album: str
     artist: str
     release_id: int
@@ -23,6 +26,7 @@ class ReleaseInfo(BaseModel):
 
 class TrackReleasesResponse(BaseModel):
     """Response for finding all releases containing a track."""
+
     track: str
     artist: Optional[str] = None
     releases: list[ReleaseInfo] = []
@@ -32,6 +36,7 @@ class TrackReleasesResponse(BaseModel):
 
 class ReleaseMetadataResponse(BaseModel):
     """Full release metadata from Discogs."""
+
     release_id: int
     title: str
     artist: str
@@ -47,6 +52,7 @@ class ReleaseMetadataResponse(BaseModel):
 
 class DiscogsSearchRequest(BaseModel):
     """Request for general Discogs search."""
+
     artist: Optional[str] = None
     album: Optional[str] = None
     track: Optional[str] = None
@@ -54,6 +60,7 @@ class DiscogsSearchRequest(BaseModel):
 
 class DiscogsSearchResult(BaseModel):
     """A single result from Discogs search."""
+
     album: Optional[str] = None
     artist: Optional[str] = None
     release_id: int
@@ -64,6 +71,7 @@ class DiscogsSearchResult(BaseModel):
 
 class DiscogsSearchResponse(BaseModel):
     """Response for general Discogs search."""
+
     results: list[DiscogsSearchResult] = []
     total: int = 0
     cached: bool = False

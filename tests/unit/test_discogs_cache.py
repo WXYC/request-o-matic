@@ -1,4 +1,5 @@
 """Tests for Discogs caching layer."""
+
 from typing import Optional
 
 import pytest

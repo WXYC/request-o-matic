@@ -1,4 +1,5 @@
 """Tests for DiscogsService."""
+
 import re
 
 import pytest
@@ -157,7 +158,9 @@ class TestGetRelease:
         assert result.cached is False
 
     @pytest.mark.asyncio
-    async def test_handles_missing_optional_fields(self, service: DiscogsService, httpx_mock: HTTPXMock):
+    async def test_handles_missing_optional_fields(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
         """Test handles releases with missing optional fields."""
         httpx_mock.add_response(
             url=RELEASE_URL_PATTERN,
@@ -245,7 +248,9 @@ class TestSearch:
         assert result.results[0].artwork_url == "https://i.discogs.com/thumb.jpg"
 
     @pytest.mark.asyncio
-    async def test_search_calculates_confidence(self, service: DiscogsService, httpx_mock: HTTPXMock):
+    async def test_search_calculates_confidence(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
         """Test search results have confidence scores."""
         httpx_mock.add_response(
             url=SEARCH_URL_PATTERN,
@@ -307,7 +312,9 @@ class TestValidateTrackOnRelease:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_track_not_found(self, service: DiscogsService, httpx_mock: HTTPXMock):
+    async def test_returns_false_when_track_not_found(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
         """Test returns False when track not on release."""
         httpx_mock.add_response(
             url=RELEASE_URL_PATTERN,
@@ -316,7 +323,11 @@ class TestValidateTrackOnRelease:
                 "title": TEST_ALBUM,
                 "artists": [{"name": TEST_ARTIST}],
                 "tracklist": [
-                    {"position": "1", "title": "Different Track", "artists": [{"name": TEST_ARTIST}]},
+                    {
+                        "position": "1",
+                        "title": "Different Track",
+                        "artists": [{"name": TEST_ARTIST}],
+                    },
                 ],
             },
         )
@@ -326,7 +337,9 @@ class TestValidateTrackOnRelease:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_artist_not_found(self, service: DiscogsService, httpx_mock: HTTPXMock):
+    async def test_returns_false_when_artist_not_found(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
         """Test returns False when artist not on track."""
         httpx_mock.add_response(
             url=RELEASE_URL_PATTERN,
@@ -335,7 +348,11 @@ class TestValidateTrackOnRelease:
                 "title": TEST_ALBUM,
                 "artists": [{"name": "Different Artist"}],
                 "tracklist": [
-                    {"position": "1", "title": TEST_TRACK, "artists": [{"name": "Different Artist"}]},
+                    {
+                        "position": "1",
+                        "title": TEST_TRACK,
+                        "artists": [{"name": "Different Artist"}],
+                    },
                 ],
             },
         )

@@ -1,4 +1,5 @@
 """Application configuration using Pydantic Settings."""
+
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
 
     # API Keys - Required
     groq_api_key: str = Field(..., description="Groq API key for AI parsing")
-    
+
     # API Keys - Optional
     discogs_token: Optional[str] = Field(None, description="Discogs API token for artwork lookup")
     slack_webhook_url: Optional[str] = Field(
@@ -21,15 +22,15 @@ class Settings(BaseSettings):
     )
     slack_webhook_key_url: str = Field(
         default="https://wxyc-requests-endpoint-production.up.railway.app",
-        description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)"
+        description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)",
     )
-    
+
     # Database Configuration
     # Note: We use a validator to ensure empty strings default to library.db
     library_db_path: Path = Field(
         default=Path("library.db"), description="Path to SQLite library database"
     )
-    
+
     @property
     def resolved_library_db_path(self) -> Path:
         """Get the library database path, handling empty env var case."""
@@ -37,30 +38,22 @@ class Settings(BaseSettings):
         if not str(self.library_db_path) or str(self.library_db_path) == ".":
             return Path("library.db")
         return self.library_db_path
-    
+
     # Application Configuration
     host: str = Field(default="0.0.0.0", description="Host to bind the server to")
     port: int = Field(default=8000, description="Port to run the server on")
     log_level: str = Field(default="INFO", description="Logging level")
-    
+
     # Feature Flags
-    enable_slack_integration: bool = Field(
-        default=True, description="Enable Slack notifications"
-    )
+    enable_slack_integration: bool = Field(default=True, description="Enable Slack notifications")
     enable_artwork_lookup: bool = Field(
         default=True, description="Enable artwork lookup from external APIs"
     )
-    enable_telemetry: bool = Field(
-        default=True, description="Enable PostHog telemetry"
-    )
+    enable_telemetry: bool = Field(default=True, description="Enable PostHog telemetry")
 
     # PostHog Configuration
-    posthog_api_key: Optional[str] = Field(
-        None, description="PostHog API key for telemetry"
-    )
-    posthog_host: str = Field(
-        default="https://us.i.posthog.com", description="PostHog host URL"
-    )
+    posthog_api_key: Optional[str] = Field(None, description="PostHog API key for telemetry")
+    posthog_host: str = Field(default="https://us.i.posthog.com", description="PostHog host URL")
 
     # Discogs Cache Configuration
     discogs_track_cache_ttl: int = Field(
@@ -75,11 +68,11 @@ class Settings(BaseSettings):
     discogs_cache_maxsize: int = Field(
         default=1000, description="Maximum entries in Discogs caches"
     )
-    
+
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")
     app_version: str = Field(default="1.0.0", description="Application version")
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -91,9 +84,8 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance.
-    
+
     Returns:
         Settings: Application settings instance
     """
     return Settings()
-

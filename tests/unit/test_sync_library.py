@@ -76,7 +76,7 @@ def create_mock_etl(repo_dir: Path, should_succeed: bool = True, modify_db: bool
     if should_succeed:
         if modify_db:
             # Script that modifies library.db
-            etl_script.write_text(f'''#!/usr/bin/env python3
+            etl_script.write_text(f"""#!/usr/bin/env python3
 import sys
 from pathlib import Path
 
@@ -85,21 +85,21 @@ current = db_path.read_text()
 db_path.write_text(current + "\\nmodified")
 print("ETL completed successfully")
 sys.exit(0)
-''')
+""")
         else:
             # Script that succeeds but doesn't modify anything
-            etl_script.write_text('''#!/usr/bin/env python3
+            etl_script.write_text("""#!/usr/bin/env python3
 import sys
 print("ETL completed successfully - no changes")
 sys.exit(0)
-''')
+""")
     else:
         # Script that fails
-        etl_script.write_text('''#!/usr/bin/env python3
+        etl_script.write_text("""#!/usr/bin/env python3
 import sys
 print("ETL failed: database connection error", file=sys.stderr)
 sys.exit(1)
-''')
+""")
 
     etl_script.chmod(etl_script.stat().st_mode | stat.S_IEXEC)
 
@@ -108,9 +108,9 @@ def create_mock_python(repo_dir: Path):
     """Create a mock python executable in venv/bin that runs the real Python."""
     python_path = repo_dir / "venv" / "bin" / "python"
     # Create a shell script that calls the real Python
-    python_path.write_text(f'''#!/bin/bash
+    python_path.write_text(f"""#!/bin/bash
 exec python3 "$@"
-''')
+""")
     python_path.chmod(python_path.stat().st_mode | stat.S_IEXEC)
 
 
@@ -129,7 +129,7 @@ def create_sync_script(repo_dir: Path, log_file: Path, slack_marker_file: Path =
         slack_notify = "true  # No Slack configured"
 
     # Create a modified version that doesn't push (no remote in test)
-    sync_script.write_text(f'''#!/bin/bash
+    sync_script.write_text(f"""#!/bin/bash
 set -e
 
 LOG_FILE="{log_file}"
@@ -174,7 +174,7 @@ git add library.db
 git commit -m "Update library catalog $(date +%Y-%m-%d)"
 
 log "Committed successfully"
-''')
+""")
     sync_script.chmod(sync_script.stat().st_mode | stat.S_IEXEC)
     return sync_script
 
@@ -303,8 +303,9 @@ class TestSyncLibraryScript:
             text=True,
         )
         commit_message = result.stdout.strip()
-        assert commit_message.startswith("Update library catalog"), \
-            f"Commit message should start with 'Update library catalog', got: {commit_message}"
+        assert commit_message.startswith(
+            "Update library catalog"
+        ), f"Commit message should start with 'Update library catalog', got: {commit_message}"
 
         # Verify logged correctly
         log_content = log_file.read_text()
@@ -322,9 +323,11 @@ class TestSyncLibraryScript:
         log_content = log_file.read_text()
         # Check for timestamp format: YYYY-MM-DD HH:MM:SS
         import re
+
         timestamp_pattern = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"
-        assert re.search(timestamp_pattern, log_content), \
-            f"Log should contain timestamps. Log content: {log_content}"
+        assert re.search(
+            timestamp_pattern, log_content
+        ), f"Log should contain timestamps. Log content: {log_content}"
 
     def test_script_logs_start_message(self, temp_repo, log_file):
         """Script should log when it starts."""
@@ -367,8 +370,9 @@ class TestSyncLibraryScript:
             text=True,
         )
         committed_files = result.stdout.strip().split("\n")
-        assert committed_files == ["library.db"], \
-            f"Only library.db should be committed, got: {committed_files}"
+        assert committed_files == [
+            "library.db"
+        ], f"Only library.db should be committed, got: {committed_files}"
 
     def test_error_includes_details_in_notification(self, temp_repo, log_file, tmp_path):
         """Error notifications should include the actual error message."""
@@ -376,12 +380,12 @@ class TestSyncLibraryScript:
 
         # Create ETL that fails with a specific error message
         etl_script = temp_repo / "scripts" / "export_to_sqlite.py"
-        etl_script.write_text('''#!/usr/bin/env python3
+        etl_script.write_text("""#!/usr/bin/env python3
 import sys
 print("Connecting to database...", file=sys.stderr)
 print("ERROR: Connection refused - MySQL is not running", file=sys.stderr)
 sys.exit(1)
-''')
+""")
         etl_script.chmod(etl_script.stat().st_mode | stat.S_IEXEC)
 
         slack_marker = tmp_path / "slack_notification.txt"
@@ -392,8 +396,9 @@ sys.exit(1)
 
         # Verify notification includes error details
         notification = slack_marker.read_text()
-        assert "MySQL is not running" in notification, \
-            f"Notification should include error details, got: {notification}"
+        assert (
+            "MySQL is not running" in notification
+        ), f"Notification should include error details, got: {notification}"
 
     def test_error_extracts_final_exception_line(self, temp_repo, log_file, tmp_path):
         """Error notification should extract the final exception line, not full traceback."""
@@ -421,13 +426,16 @@ sys.exit(1)
 
         notification = slack_marker.read_text()
         # Should contain the final error line
-        assert "ConnectionRefusedError" in notification, \
-            f"Should include exception type, got: {notification}"
+        assert (
+            "ConnectionRefusedError" in notification
+        ), f"Should include exception type, got: {notification}"
         # Should NOT contain traceback noise
-        assert "Traceback" not in notification, \
-            f"Should not include traceback header, got: {notification}"
-        assert "File \"script.py\"" not in notification, \
-            f"Should not include file references, got: {notification}"
+        assert (
+            "Traceback" not in notification
+        ), f"Should not include traceback header, got: {notification}"
+        assert (
+            'File "script.py"' not in notification
+        ), f"Should not include file references, got: {notification}"
 
     def test_slack_notification_sent_on_etl_failure(self, temp_repo, log_file, tmp_path):
         """Slack notification should be sent when ETL fails."""

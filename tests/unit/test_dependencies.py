@@ -1,4 +1,5 @@
 """Unit tests for core/dependencies.py."""
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
@@ -161,9 +162,7 @@ class TestGetLibraryDb:
             mock_db.connect.side_effect = Exception("Connection failed")
             mock_db_class.return_value = mock_db
 
-            with pytest.raises(
-                ServiceInitializationError, match="Database initialization failed"
-            ):
+            with pytest.raises(ServiceInitializationError, match="Database initialization failed"):
                 await get_library_db(mock_settings)
 
 
@@ -388,9 +387,7 @@ class TestGetSlackWebhookUrl:
         mock_client = AsyncMock()
         mock_client.get.side_effect = Exception("Connection failed")
 
-        with pytest.raises(
-            ServiceInitializationError, match="Failed to fetch Slack webhook key"
-        ):
+        with pytest.raises(ServiceInitializationError, match="Failed to fetch Slack webhook key"):
             await get_slack_webhook_url(settings, mock_client)
 
 
@@ -414,8 +411,7 @@ class TestSlackService:
         await service.post_blocks(blocks)
 
         mock_client.post.assert_called_once_with(
-            "https://hooks.slack.com/test",
-            json={"blocks": blocks}
+            "https://hooks.slack.com/test", json={"blocks": blocks}
         )
 
     @pytest.mark.asyncio

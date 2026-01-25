@@ -6,6 +6,7 @@ Usage:
     python scripts/repl.py --local    # Use local server instead of production
     python scripts/repl.py --verbose  # Enable debug logging
 """
+
 import argparse
 import asyncio
 import logging
@@ -18,6 +19,7 @@ import httpx
 
 # History file location
 HISTORY_FILE = Path.home() / ".request_repl_history"
+
 
 def configure_readline() -> None:
     """Configure readline for proper keybindings."""
@@ -36,6 +38,7 @@ def configure_readline() -> None:
         readline.parse_and_bind("bind ^[[D ed-prev-char")
     else:
         readline.parse_and_bind("set editing-mode emacs")
+
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +86,11 @@ def print_result(data: dict) -> None:
         print("  No results found.")
     else:
         for i, item in enumerate(results, 1):
-            title = item.get('title', '')
-            artist = item.get('artist', '')
+            title = item.get("title", "")
+            artist = item.get("artist", "")
             print(f"  [{i}] {title}")
             print(f"      Artist:   {artist}")
-            if item.get('genre'):
+            if item.get("genre"):
                 print(f"      Genre:    {item.get('genre')}")
             call_letters = item.get("call_letters", "")
             artist_num = item.get("artist_call_number", "")
@@ -217,12 +220,14 @@ def main() -> None:
         description="Interactive REPL for testing the /request endpoint.",
     )
     parser.add_argument(
-        "-l", "--local",
+        "-l",
+        "--local",
         action="store_true",
         help="Use local server (localhost:8000) instead of production",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose/debug logging",
     )

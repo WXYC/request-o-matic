@@ -1,4 +1,5 @@
 """Parse router with dependency injection."""
+
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,7 @@ router = APIRouter(tags=["parse"])
 
 class ParseRequestBody(BaseModel):
     """Request body for parsing messages."""
+
     message: str
 
 

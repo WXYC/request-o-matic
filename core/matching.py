@@ -16,18 +16,28 @@ MAX_SEARCH_RESULTS = 5
 # Stopwords
 # =============================================================================
 
-STOPWORDS = frozenset({
-    # Articles
-    'the', 'a', 'an',
-    # Conjunctions/prepositions
-    'and', 'with', 'from',
-    # Demonstratives
-    'that', 'this',
-    # Request-specific noise
-    'play', 'song', 'remix',
-    # Label/format noise
-    'story', 'records',
-})
+STOPWORDS = frozenset(
+    {
+        # Articles
+        "the",
+        "a",
+        "an",
+        # Conjunctions/prepositions
+        "and",
+        "with",
+        "from",
+        # Demonstratives
+        "that",
+        "this",
+        # Request-specific noise
+        "play",
+        "song",
+        "remix",
+        # Label/format noise
+        "story",
+        "records",
+    }
+)
 """Words to exclude when extracting significant keywords from search queries."""
 
 
@@ -35,13 +45,15 @@ STOPWORDS = frozenset({
 # Compilation Detection
 # =============================================================================
 
-COMPILATION_KEYWORDS = frozenset({
-    'various',
-    'soundtrack',
-    'compilation',
-    'v/a',
-    'v.a.',
-})
+COMPILATION_KEYWORDS = frozenset(
+    {
+        "various",
+        "soundtrack",
+        "compilation",
+        "v/a",
+        "v.a.",
+    }
+)
 """Keywords indicating a compilation/soundtrack album (case-insensitive substring match)."""
 
 

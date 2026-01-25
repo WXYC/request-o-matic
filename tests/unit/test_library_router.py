@@ -1,4 +1,5 @@
 """Unit tests for library/router.py."""
+
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -27,6 +28,7 @@ def app(mock_library_db):
 
     # Override the dependency
     from core.dependencies import get_library_db
+
     app.dependency_overrides[get_library_db] = lambda: mock_library_db
 
     return app
@@ -67,10 +69,7 @@ class TestSearchLibrary:
         """Test searching with a full-text query."""
         mock_library_db.search.return_value = sample_library_items
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?q=Queen")
 
         assert response.status_code == 200
@@ -87,10 +86,7 @@ class TestSearchLibrary:
         """Test searching with artist filter."""
         mock_library_db.search.return_value = sample_library_items
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?artist=Queen")
 
         assert response.status_code == 200
@@ -105,10 +101,7 @@ class TestSearchLibrary:
         """Test searching with title filter."""
         mock_library_db.search.return_value = sample_library_items[:1]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?title=Opera")
 
         assert response.status_code == 200
@@ -123,10 +116,7 @@ class TestSearchLibrary:
         """Test searching with multiple filters."""
         mock_library_db.search.return_value = sample_library_items[:1]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/library/search?q=Bohemian&artist=Queen&title=Night"
             )
@@ -141,10 +131,7 @@ class TestSearchLibrary:
         """Test searching with custom limit."""
         mock_library_db.search.return_value = []
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?q=test&limit=50")
 
         assert response.status_code == 200
@@ -155,10 +142,7 @@ class TestSearchLibrary:
     @pytest.mark.asyncio
     async def test_search_no_params_returns_400(self, app, mock_library_db):
         """Test that searching without any parameters returns 400."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search")
 
         assert response.status_code == 400
@@ -169,10 +153,7 @@ class TestSearchLibrary:
         """Test searching with no results."""
         mock_library_db.search.return_value = []
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?q=NonexistentArtist")
 
         assert response.status_code == 200
@@ -185,10 +166,7 @@ class TestSearchLibrary:
         """Test that database errors return 500."""
         mock_library_db.search.side_effect = Exception("Database connection failed")
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?q=test")
 
         assert response.status_code == 500
@@ -199,10 +177,7 @@ class TestSearchLibrary:
         """Test that limit has valid bounds (1-100)."""
         mock_library_db.search.return_value = []
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # Test limit below minimum
             response = await client.get("/api/v1/library/search?q=test&limit=0")
             assert response.status_code == 422  # Validation error
@@ -216,10 +191,7 @@ class TestSearchLibrary:
         """Test that query string is formatted correctly for artist+title searches."""
         mock_library_db.search.return_value = []
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/v1/library/search?artist=Queen&title=Opera")
 
         assert response.status_code == 200
