@@ -88,10 +88,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy to staging
+      - name: Deploy to Railway
+        run: railway up --service request-o-matic --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-        run: railway up --service request-o-matic --environment staging --ci --verbose
 
   integration:
     name: Integration Tests
@@ -130,7 +130,7 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy to production
+      - name: Deploy to Railway
+        run: railway up --service request-o-matic --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
-        run: railway up --service request-o-matic --environment production --ci --verbose
