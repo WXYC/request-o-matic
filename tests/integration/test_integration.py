@@ -44,6 +44,7 @@ class TestDiscogsIntegration:
     @skip_if_no_token
     async def test_manu_dibango_compilation_search(self):
         """Test the actual Manu Dibango compilation search scenario."""
+        assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
 
         # Test the real scenario
@@ -120,6 +121,7 @@ class TestDiscogsIntegration:
     @skip_if_no_token
     async def test_discogs_rate_limiting(self):
         """Test that we handle rate limits gracefully."""
+        assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
 
         # Make multiple rapid requests
@@ -290,6 +292,7 @@ class TestEndToEndIntegration:
         which can change over time.
         """
         # Step 1: Search Discogs
+        assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
         response = await service.search_releases_by_track("Abele Dance (85 Remix)", "Manu Dibango")
 
@@ -418,6 +421,7 @@ class TestEndToEndIntegration:
         which can change over time.
         """
         # Step 1: Search Discogs for the track
+        assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
         response = await service.search_releases_by_track("Shake It To The Ground", "DJ Blaqstarr")
 

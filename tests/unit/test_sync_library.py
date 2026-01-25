@@ -114,7 +114,7 @@ exec python3 "$@"
     python_path.chmod(python_path.stat().st_mode | stat.S_IEXEC)
 
 
-def create_sync_script(repo_dir: Path, log_file: Path, slack_marker_file: Path = None):
+def create_sync_script(repo_dir: Path, log_file: Path, slack_marker_file: Path | None = None):
     """Create the sync-library.sh script configured for the test environment.
 
     Args:

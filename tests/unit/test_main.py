@@ -28,7 +28,7 @@ class TestAppConfiguration:
 
             from main import app
 
-            routes = [route.path for route in app.routes]
+            routes = [route.path for route in app.routes if hasattr(route, "path")]
 
             # Check for health endpoint
             assert "/health" in routes
@@ -47,7 +47,7 @@ class TestAppConfiguration:
 
             from main import app
 
-            routes = [route.path for route in app.routes]
+            routes = [route.path for route in app.routes if hasattr(route, "path")]
 
             # Check for legacy routes
             assert any("/request" in route and "/api/v1" not in route for route in routes)
@@ -92,7 +92,7 @@ class TestAppRouterTags:
             # Find health route and check tags
             for route in app.routes:
                 if hasattr(route, "path") and route.path == "/health":
-                    assert "health" in route.tags
+                    assert hasattr(route, "tags") and "health" in route.tags
                     break
 
     def test_versioned_routes_have_tags(self):
