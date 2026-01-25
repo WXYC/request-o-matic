@@ -1,6 +1,5 @@
 """Pydantic models for Discogs API responses."""
 
-
 from pydantic import BaseModel
 
 

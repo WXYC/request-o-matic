@@ -1,6 +1,5 @@
 """Unit tests for custom exceptions."""
 
-
 from core.exceptions import (
     ArtworkNotFoundError,
     ConfigurationError,

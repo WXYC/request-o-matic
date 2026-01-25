@@ -117,7 +117,6 @@ class TestAppLifespan:
 
             get_settings.cache_clear()
 
-
             from main import lifespan
 
             # Lifespan should be an async context manager

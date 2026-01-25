@@ -1,6 +1,5 @@
 """Tests for core.matching module."""
 
-
 from core.matching import (
     COMPILATION_KEYWORDS,
     MAX_SEARCH_RESULTS,

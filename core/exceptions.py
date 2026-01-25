@@ -1,7 +1,6 @@
 """Custom exception classes for the request parser application."""
 
 
-
 class RequestParserError(Exception):
     """Base exception for all request parser errors."""
 

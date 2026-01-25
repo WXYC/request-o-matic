@@ -1,6 +1,5 @@
 """Unit tests for refactored request handler helper functions."""
 
-
 import pytest
 
 from core.matching import detect_ambiguous_format

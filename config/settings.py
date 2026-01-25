@@ -15,9 +15,7 @@ class Settings(BaseSettings):
 
     # API Keys - Optional
     discogs_token: str | None = Field(None, description="Discogs API token for artwork lookup")
-    slack_webhook_url: str | None = Field(
-        None, description="Slack webhook URL for posting results"
-    )
+    slack_webhook_url: str | None = Field(None, description="Slack webhook URL for posting results")
     slack_webhook_key_url: str = Field(
         default="https://wxyc-requests-endpoint-production.up.railway.app",
         description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)",

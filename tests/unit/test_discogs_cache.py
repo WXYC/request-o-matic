@@ -1,6 +1,5 @@
 """Tests for Discogs caching layer."""
 
-
 import pytest
 
 from discogs.cache import async_cached, clear_all_caches, create_ttl_cache, make_cache_key
