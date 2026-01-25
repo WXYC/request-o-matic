@@ -3,10 +3,10 @@
 
 import pytest
 
+from core.matching import detect_ambiguous_format
 from library.models import LibraryItem
 from routers.request import (
     build_context_message,
-    detect_ambiguous_format,
     filter_results_by_artist,
     search_library_with_fallback,
     search_with_alternative_interpretation,
