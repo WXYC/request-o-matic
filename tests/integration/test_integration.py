@@ -870,18 +870,18 @@ class TestFullRequestIntegration:
             r for r in results if "various artists" in r.get("artist", "").lower()
         ]
 
-        assert len(various_artists_results) == 0, (
-            f"Should not return Various Artists compilations: {various_artists_results}"
-        )
+        assert (
+            len(various_artists_results) == 0
+        ), f"Should not return Various Artists compilations: {various_artists_results}"
 
         # Check that results contain "laid back" in either artist or title
         for r in results:
             artist = r.get("artist", "").lower()
             title = r.get("title", "").lower()
 
-            assert "laid back" in artist or "laid back" in title, (
-                f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
-            )
+            assert (
+                "laid back" in artist or "laid back" in title
+            ), f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
 
         print("\n✅ No Various Artists false positives!")
 
