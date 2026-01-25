@@ -113,9 +113,12 @@ venv/bin/python scripts/lookup.py --local "song request here"
 venv/bin/python scripts/repl.py --local
 ```
 
+**Note:** Integration and performance tests with `TEST_ENV=local` automatically start and stop the local server, so you don't need to manually run uvicorn first. The test fixture detects if a server is already running and skips startup if so.
+
 ### Manual Testing Tools
-- **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`)
+- **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`). Shows Discogs URLs for each library result.
 - **`scripts/repl.py`** - Interactive REPL with command history, server switching (`:local`/`:prod`)
+- **`scripts/create_posthog_dashboard.py`** - Creates PostHog dashboard for telemetry visualization (requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`)
 
 ### Bug Fix Protocol
 **For every request bug where a lookup fails to find the correct release:**

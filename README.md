@@ -4,11 +4,11 @@ A FastAPI service that supplements song requests with structured metadata, album
 
 ## Features
 
-- 🎵 **Smart Song Parsing**: Uses Groq AI to extract structured metadata from natural language song requests
-- 🎨 **Album Artwork Lookup**: Fetches album artwork from Discogs
-- 📚 **Library Catalog Search**: Full-text search across a local SQLite music library database
-- 💬 **Slack Integration**: Posts enriched song data to Slack with embedded artwork
-- ⚡ **Fast API**: Built with FastAPI for high performance and automatic API documentation
+- **Smart Song Parsing**: Uses Groq AI to extract structured metadata from natural language song requests
+- **Album Artwork Lookup**: Fetches album artwork from Discogs
+- **Library Catalog Search**: Full-text search across a local SQLite music library database
+- **Slack Integration**: Posts enriched song data to Slack with embedded artwork
+- **Fast API**: Built with FastAPI for high performance and automatic API documentation
 
 ## Prerequisites
 
@@ -68,6 +68,10 @@ DISCOGS_TOKEN=your_discogs_token_here
 # Optional - Slack Integration
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 
+# Optional - Telemetry
+POSTHOG_API_KEY=your_posthog_project_api_key
+POSTHOG_HOST=https://us.i.posthog.com
+
 # Application Configuration
 LOG_LEVEL=INFO
 PORT=8000
@@ -79,9 +83,10 @@ ENABLE_ARTWORK_LOOKUP=true
 
 #### Getting API Keys
 
-- **GROQ_API_KEY**: Sign up at [Groq](https://console.groq.com/) to get an API key
+- **GROQ_API_KEY**: Sign up at [Groq](https://console.groq.com/) (not Grok) to get an API key
 - **DISCOGS_TOKEN**: Create a personal access token at [Discogs Settings](https://www.discogs.com/settings/developers)
 - **SLACK_WEBHOOK_URL**: Create an incoming webhook in your Slack workspace's [App Settings](https://api.slack.com/messaging/webhooks)
+- **POSTHOG_API_KEY**: Optional - Get your project API key from [PostHog](https://posthog.com/) for telemetry tracking
 
 ### 4. Verify Database
 
@@ -197,69 +202,6 @@ curl "http://localhost:8000/api/v1/library/search?q=Queen+Bohemian&limit=5"
 curl "http://localhost:8000/health"
 ```
 
-## Project Structure
-
-```
-request-parser/
-├── main.py                  # Application entry point with lifespan management
-├── pyproject.toml          # Modern Python project configuration
-├── requirements.txt        # Python dependencies
-├── .env                    # Environment variables (create from .env.example)
-├── .env.example           # Environment template
-├── .dockerignore          # Docker build exclusions
-├── Dockerfile             # Multi-stage Docker build
-├── library.db             # SQLite music library database
-│
-├── config/                # Configuration management
-│   ├── __init__.py
-│   └── settings.py        # Centralized settings with Pydantic
-│
-├── core/                  # Core utilities and shared components
-│   ├── __init__.py
-│   ├── dependencies.py    # FastAPI dependency injection
-│   ├── exceptions.py      # Custom exception classes
-│   └── logging.py         # Logging configuration
-│
-├── artwork/               # Artwork lookup module
-│   ├── finder.py          # Artwork search orchestration
-│   ├── models.py          # Data models
-│   ├── router.py          # API routes with dependency injection
-│   └── providers/         # Provider implementations
-│       ├── base.py        # Base provider interface
-│       └── discogs.py     # Discogs API integration
-│
-├── library/               # Library catalog module
-│   ├── db.py             # SQLite database client
-│   ├── models.py         # Data models
-│   └── router.py         # API routes with dependency injection
-│
-├── routers/              # API route handlers
-│   ├── health.py        # Enhanced health check with service status
-│   ├── parse.py         # Text parsing with full documentation
-│   └── request.py       # Main workflow (refactored into smaller functions)
-│
-├── services/            # Core services
-│   ├── groq.py         # Groq utilities (managed by dependencies)
-│   ├── parser.py       # Song request parser
-│   └── slack.py        # Slack message building utilities
-│
-├── scripts/            # Utility scripts
-│   └── export_to_sqlite.py  # Database export tool
-│
-├── tests/              # Test suite
-│   ├── conftest.py    # Shared test fixtures
-│   ├── unit/          # Unit tests
-│   │   ├── test_config.py
-│   │   ├── test_exceptions.py
-│   │   ├── test_request_helpers.py
-│   │   ├── test_artwork.py
-│   │   └── test_library.py
-│   └── integration/   # Integration tests
-│       └── test_integration.py
-│
-└── logs/              # Application logs (created at runtime)
-```
-
 ## Development
 
 ### Running Tests
@@ -373,6 +315,8 @@ If Slack integration fails:
 | `LIBRARY_DB_PATH` | No | library.db | Path to SQLite library database |
 | `ENABLE_SLACK_INTEGRATION` | No | true | Enable/disable Slack notifications |
 | `ENABLE_ARTWORK_LOOKUP` | No | true | Enable/disable artwork lookup from external APIs |
+| `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
+| `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
 
 ## Architecture
 
