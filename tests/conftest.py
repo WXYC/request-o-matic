@@ -55,6 +55,10 @@ def get_test_environment() -> ServerEnvironment:
 
 def pytest_configure(config):
     """Load staging environment variables when running integration tests."""
+    # Set default GROQ_API_KEY for unit tests if not already set
+    if "GROQ_API_KEY" not in os.environ:
+        os.environ["GROQ_API_KEY"] = "test_groq_key_for_unit_tests"
+
     # Check if we're running integration tests
     markexpr = config.getoption("-m", default="")
     if "integration" not in markexpr:
