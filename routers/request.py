@@ -31,23 +31,23 @@ Each step is tracked via telemetry for observability.
 import asyncio
 import logging
 import re
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from groq import Groq
 from posthog import Posthog
 from pydantic import BaseModel
 
-from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
-from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
-from discogs.service import DiscogsService
-from core.dependencies import SlackService, get_groq_client, get_library_db, get_slack_service
-from core.dependencies import get_discogs_service, get_posthog_client
+from core.dependencies import (
+    SlackService,
+    get_discogs_service,
+    get_groq_client,
+    get_library_db,
+    get_posthog_client,
+    get_slack_service,
+)
 from core.matching import (
-    COMPILATION_KEYWORDS,
     MAX_SEARCH_RESULTS,
     STOPWORDS,
-    detect_ambiguous_format,
     is_compilation_artist,
 )
 from core.search import (
@@ -56,8 +56,11 @@ from core.search import (
     get_search_type_from_state,
 )
 from core.telemetry import RequestTelemetry
-from library.models import LibraryItem
+from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
+from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
+from discogs.service import DiscogsService
 from library.db import LibraryDB
+from library.models import LibraryItem
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks
 
@@ -98,7 +101,7 @@ class UnifiedResponse(BaseModel):
     """Combined response from parsing, artwork lookup, and library search."""
 
     parsed: ParsedRequest
-    artwork: Optional[DiscogsSearchResult] = None
+    artwork: DiscogsSearchResult | None = None
     library_results: list[LibraryItem] = []
 
 
@@ -156,7 +159,7 @@ async def resolve_albums_for_track(
 
 def filter_results_by_artist(
     results: list[LibraryItem],
-    artist: Optional[str],
+    artist: str | None,
 ) -> list[LibraryItem]:
     """Filter library results to only include those matching the artist.
 
@@ -230,7 +233,7 @@ async def search_with_alternative_interpretation(
         return results2, None
     elif results1 and results2:
         # Both have results - combine and dedupe by id
-        logger.info(f"Alternative search matched both interpretations, combining results")
+        logger.info("Alternative search matched both interpretations, combining results")
         seen_ids = set()
         combined = []
         for item in results1 + results2:
@@ -283,7 +286,7 @@ async def search_song_as_artist(
 
     # Step 3: Cross-reference album titles with library
     seen_ids = set()
-    for discogs_artist, album_title in discogs_releases:
+    for _discogs_artist, album_title in discogs_releases:
         if not album_title:
             continue
 
@@ -348,14 +351,14 @@ async def search_library_with_fallback(
             # This prevents fuzzy search from returning unrelated albums by the same artist
             album_lower = album.lower()
             # Extract significant words from the Discogs album title
-            album_words = set(w for w in re.sub(r"[^\w\s]", " ", album_lower).split() if len(w) > 2)
+            album_words = {w for w in re.sub(r"[^\w\s]", " ", album_lower).split() if len(w) > 2}
             filtered_results = []
             for item in results:
                 item_title_lower = (item.title or "").lower()
                 # Check if the library album title shares significant words with Discogs album
-                item_words = set(
+                item_words = {
                     w for w in re.sub(r"[^\w\s]", " ", item_title_lower).split() if len(w) > 2
-                )
+                }
                 # Require at least one significant word match (besides common words)
                 common_words = album_words & item_words
                 if common_words:
@@ -615,9 +618,9 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
 
 async def fetch_artwork_for_items(
     items: list[LibraryItem],
-    discogs_service: Optional[DiscogsService],
-    discogs_titles: Optional[dict[int, str]] = None,
-) -> list[tuple[LibraryItem, Optional[DiscogsSearchResult]]]:
+    discogs_service: DiscogsService | None,
+    discogs_titles: dict[int, str] | None = None,
+) -> list[tuple[LibraryItem, DiscogsSearchResult | None]]:
     """Fetch artwork for multiple library items in parallel.
 
     Args:
@@ -633,7 +636,7 @@ async def fetch_artwork_for_items(
 
     discogs_titles = discogs_titles or {}
 
-    async def fetch_one(item: LibraryItem) -> Optional[DiscogsSearchResult]:
+    async def fetch_one(item: LibraryItem) -> DiscogsSearchResult | None:
         try:
             # Use Discogs album title if we have it (from compilation search)
             album = discogs_titles.get(item.id, item.title)
@@ -656,7 +659,7 @@ async def fetch_artwork_for_items(
             return None
 
     artwork_results = await asyncio.gather(*[fetch_one(item) for item in items])
-    return list(zip(items, artwork_results))
+    return list(zip(items, artwork_results, strict=True))
 
 
 def build_context_message(
@@ -664,7 +667,7 @@ def build_context_message(
     found_on_compilation: bool,
     song_not_found: bool,
     has_results: bool = True,
-) -> Optional[str]:
+) -> str | None:
     """Build context message for Slack based on search results.
 
     Args:
@@ -694,11 +697,11 @@ def build_context_message(
 
 
 async def post_results_to_slack(
-    slack_service: Optional[SlackService],
+    slack_service: SlackService | None,
     message: str,
     parsed: ParsedRequest,
-    items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]],
-    context: Optional[str] = None,
+    items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]],
+    context: str | None = None,
 ) -> None:
     """Post formatted results to Slack.
 
@@ -737,7 +740,7 @@ async def post_results_to_slack(
         await slack_service.post_blocks(blocks)
     except Exception as e:
         logger.error(f"Failed to post to Slack: {e}")
-        raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}") from e
 
 
 @router.post(
@@ -746,21 +749,21 @@ async def post_results_to_slack(
     summary="Process song request",
     description="""
     Complete workflow: parse song request, search library, find artwork, and post to Slack.
-    
+
     This endpoint:
     1. Parses the message using AI to extract song/album/artist
     2. Searches the library catalog for matches
     3. Fetches album artwork from external providers
     4. Posts enriched results to Slack
     5. Returns combined results
-    
+
     Example request:
     ```json
     {
         "message": "Play Bohemian Rhapsody by Queen"
     }
     ```
-    
+
     The response includes:
     - Parsed metadata (song, artist, album, request type)
     - Library search results with catalog info
@@ -777,9 +780,9 @@ async def handle_request(
     request: RequestBody,
     groq_client: Groq = Depends(get_groq_client),
     db: LibraryDB = Depends(get_library_db),
-    discogs_service: Optional[DiscogsService] = Depends(get_discogs_service),
-    slack_service: Optional[SlackService] = Depends(get_slack_service),
-    posthog_client: Optional[Posthog] = Depends(get_posthog_client),
+    discogs_service: DiscogsService | None = Depends(get_discogs_service),
+    slack_service: SlackService | None = Depends(get_slack_service),
+    posthog_client: Posthog | None = Depends(get_posthog_client),
 ):
     """
     Unified endpoint: parse a song request, find artwork, search the library, and post to Slack.
@@ -807,7 +810,7 @@ async def handle_request(
             )
 
         library_results: list[LibraryItem] = []
-        items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]] = []
+        items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]] = []
         song_not_found = False
         found_on_compilation = False
         discogs_titles: dict[int, str] = {}
@@ -910,7 +913,7 @@ async def handle_request(
         raise
     except ValueError as e:
         logger.error(f"Parsing error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

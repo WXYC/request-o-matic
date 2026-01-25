@@ -17,8 +17,6 @@ Required environment variables:
     LIBRARY_DB_NAME     - MySQL database name
 """
 
-import csv
-import io
 import itertools
 import os
 import sqlite3
@@ -133,7 +131,7 @@ def fetch_from_remote() -> list[dict]:
             continue
         values = line.split("\t")
         if len(values) == len(columns):
-            rows.append(dict(zip(columns, values)))
+            rows.append(dict(zip(columns, values, strict=True)))
 
     print(f"\rFetched {len(rows):,} rows ({format_size(size)}) in {elapsed:.1f}s" + " " * 10)
     return rows

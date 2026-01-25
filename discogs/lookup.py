@@ -5,7 +5,6 @@ by the request handler, bypassing FastAPI dependency injection.
 """
 
 import logging
-from typing import Optional
 
 from discogs.models import DiscogsSearchRequest
 from discogs.service import DiscogsService
@@ -13,7 +12,7 @@ from discogs.service import DiscogsService
 logger = logging.getLogger(__name__)
 
 
-def _get_service() -> Optional[DiscogsService]:
+def _get_service() -> DiscogsService | None:
     """Get a DiscogsService instance if token is configured."""
     from config.settings import get_settings
 
@@ -25,7 +24,7 @@ def _get_service() -> Optional[DiscogsService]:
 
 async def lookup_releases_by_track(
     track: str,
-    artist: Optional[str] = None,
+    artist: str | None = None,
     limit: int = 20,
 ) -> list[tuple[str, str]]:
     """Look up all releases containing a track using Discogs.

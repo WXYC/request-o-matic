@@ -1,7 +1,6 @@
 """Health check router with service status monitoring."""
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 
@@ -26,7 +25,7 @@ router = APIRouter(tags=["health"])
 async def health_check(
     settings: Settings = Depends(get_settings),
     db: LibraryDB = Depends(get_library_db),
-    discogs_service: Optional[DiscogsService] = Depends(get_discogs_service),
+    discogs_service: DiscogsService | None = Depends(get_discogs_service),
 ):
     """Comprehensive health check with service status details."""
 

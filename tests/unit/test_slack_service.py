@@ -1,20 +1,19 @@
 """Unit tests for services/slack.py."""
 
-import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import pytest
 
+from discogs.models import DiscogsSearchResult
+from library.models import LibraryItem
 from services.slack import (
-    build_slack_blocks,
     build_simple_slack_blocks,
+    build_slack_blocks,
     init_slack_service,
     post_to_slack,
     shutdown_slack_service,
 )
-from library.models import LibraryItem
-from discogs.models import DiscogsSearchResult
 
 
 @pytest.fixture

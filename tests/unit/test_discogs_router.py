@@ -7,15 +7,15 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.dependencies import get_discogs_service
 from discogs.models import (
     DiscogsSearchResponse,
     DiscogsSearchResult,
+    ReleaseInfo,
     ReleaseMetadataResponse,
     TrackItem,
     TrackReleasesResponse,
-    ReleaseInfo,
 )
-from core.dependencies import get_discogs_service
 from discogs.router import router
 from discogs.service import DiscogsService
 

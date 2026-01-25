@@ -6,11 +6,11 @@ import subprocess
 import sys
 import time
 from enum import Enum
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, Mock
 
 from config.settings import Settings
 from library.models import LibraryItem
@@ -274,7 +274,7 @@ def sample_library_items():
 @pytest.fixture
 def sample_parsed_request():
     """Create a sample parsed request for testing."""
-    from services.parser import ParsedRequest, MessageType
+    from services.parser import MessageType, ParsedRequest
 
     return ParsedRequest(
         song="Bohemian Rhapsody",

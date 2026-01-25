@@ -1,6 +1,5 @@
 """Unit tests for configuration module."""
 
-import pytest
 from pathlib import Path
 
 from config.settings import Settings

@@ -1,7 +1,6 @@
 import json
 import logging
 from enum import Enum
-from typing import Optional
 
 from groq import Groq
 from pydantic import BaseModel
@@ -17,9 +16,9 @@ class MessageType(str, Enum):
 
 
 class ParsedRequest(BaseModel):
-    song: Optional[str] = None
-    album: Optional[str] = None
-    artist: Optional[str] = None
+    song: str | None = None
+    album: str | None = None
+    artist: str | None = None
     is_request: bool
     message_type: MessageType
     raw_message: str
@@ -89,7 +88,7 @@ def parse_request(message: str, client: Groq) -> ParsedRequest:
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON response: {e}")
-        raise ValueError(f"Invalid JSON response from Groq: {e}")
+        raise ValueError(f"Invalid JSON response from Groq: {e}") from e
     except Exception as e:
         logger.error(f"Error parsing request: {e}")
         raise

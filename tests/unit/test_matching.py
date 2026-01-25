@@ -1,6 +1,5 @@
 """Tests for core.matching module."""
 
-import pytest
 
 from core.matching import (
     COMPILATION_KEYWORDS,

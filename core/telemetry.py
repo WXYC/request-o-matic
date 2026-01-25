@@ -4,7 +4,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from posthog import Posthog
 
@@ -19,7 +19,7 @@ class StepResult:
 
     duration_ms: float
     success: bool = True
-    error_type: Optional[str] = None
+    error_type: str | None = None
 
 
 @dataclass
@@ -29,7 +29,7 @@ class RequestTelemetry:
     steps: dict[str, StepResult] = field(default_factory=dict)
     api_calls: dict[str, int] = field(default_factory=lambda: {"groq": 0, "discogs": 0, "slack": 0})
     start_time: float = field(default_factory=time.perf_counter)
-    _current_step: Optional[str] = field(default=None, repr=False)
+    _current_step: str | None = field(default=None, repr=False)
     _step_start: float = field(default=0.0, repr=False)
 
     @contextmanager
@@ -86,7 +86,7 @@ class RequestTelemetry:
     def send_to_posthog(
         self,
         posthog_client: Posthog,
-        extra_properties: Optional[dict[str, Any]] = None,
+        extra_properties: dict[str, Any] | None = None,
     ) -> None:
         """Send all telemetry events to PostHog.
 

@@ -26,12 +26,12 @@ class ParseRequestBody(BaseModel):
     summary="Parse listener message",
     description="""
     Parse a natural language listener message and extract structured metadata.
-    
+
     Returns information about:
     - Song, album, and artist
     - Whether it's a request or other message type
     - Message classification (request, dj_message, feedback, other)
-    
+
     Example request:
     ```json
     {
@@ -60,7 +60,7 @@ async def parse(
         return result
     except ValueError as e:
         logger.error(f"Parsing error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

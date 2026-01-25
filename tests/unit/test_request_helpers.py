@@ -1,17 +1,16 @@
 """Unit tests for refactored request handler helper functions."""
 
-import pytest
-from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from library.models import LibraryItem
 from routers.request import (
     build_context_message,
     detect_ambiguous_format,
     filter_results_by_artist,
-    resolve_albums_for_track,
     search_library_with_fallback,
     search_with_alternative_interpretation,
 )
-from library.models import LibraryItem
 from services.parser import MessageType, ParsedRequest
 
 

@@ -19,7 +19,6 @@ The script creates a dashboard with insights for:
 - Slowest requests (table)
 """
 
-import json
 import os
 import sys
 from typing import Any, cast

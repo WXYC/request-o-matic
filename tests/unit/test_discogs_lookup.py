@@ -1,8 +1,8 @@
 """Unit tests for discogs/lookup.py."""
 
-import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from config.settings import Settings
 from discogs.lookup import (

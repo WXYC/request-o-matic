@@ -1,8 +1,6 @@
 """FastAPI dependency injection providers."""
 
 import logging
-from functools import lru_cache
-from typing import Optional
 
 import httpx
 from fastapi import Depends
@@ -17,10 +15,10 @@ from library.db import LibraryDB
 logger = logging.getLogger(__name__)
 
 # Module-level instances for lifecycle management
-_http_client: Optional[httpx.AsyncClient] = None
-_library_db: Optional[LibraryDB] = None
-_discogs_service: Optional[DiscogsService] = None
-_posthog_client: Optional[Posthog] = None
+_http_client: httpx.AsyncClient | None = None
+_library_db: LibraryDB | None = None
+_discogs_service: DiscogsService | None = None
+_posthog_client: Posthog | None = None
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -82,7 +80,7 @@ async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryD
             logger.info(f"Library database connected: {db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize library database: {e}")
-            raise ServiceInitializationError(f"Database initialization failed: {e}")
+            raise ServiceInitializationError(f"Database initialization failed: {e}") from e
 
     return _library_db
 
@@ -97,7 +95,7 @@ async def close_library_db() -> None:
 
 async def get_discogs_service(
     settings: Settings = Depends(get_settings),
-) -> Optional[DiscogsService]:
+) -> DiscogsService | None:
     """Get Discogs service instance with caching.
 
     Args:
@@ -127,7 +125,7 @@ async def close_discogs_service() -> None:
         _discogs_service = None
 
 
-def get_posthog_client(settings: Settings = Depends(get_settings)) -> Optional[Posthog]:
+def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | None:
     """Get PostHog client instance.
 
     Args:
@@ -175,7 +173,7 @@ def shutdown_posthog() -> None:
 async def get_slack_webhook_url(
     settings: Settings = Depends(get_settings),
     http_client: httpx.AsyncClient = Depends(get_http_client),
-) -> Optional[str]:
+) -> str | None:
     """Get Slack webhook URL from settings or Railway endpoint.
 
     Args:
@@ -207,7 +205,7 @@ async def get_slack_webhook_url(
         return webhook_url
     except Exception as e:
         logger.error(f"Failed to fetch Slack webhook key: {e}")
-        raise ServiceInitializationError(f"Failed to fetch Slack webhook key: {e}")
+        raise ServiceInitializationError(f"Failed to fetch Slack webhook key: {e}") from e
 
 
 class SlackService:
@@ -232,9 +230,9 @@ class SlackService:
 
 
 async def get_slack_service(
-    webhook_url: Optional[str] = Depends(get_slack_webhook_url),
+    webhook_url: str | None = Depends(get_slack_webhook_url),
     http_client: httpx.AsyncClient = Depends(get_http_client),
-) -> Optional[SlackService]:
+) -> SlackService | None:
     """Get Slack service instance.
 
     Args:

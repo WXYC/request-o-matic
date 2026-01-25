@@ -3,8 +3,9 @@
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, TypeVar
 
 from cachetools import TTLCache  # type: ignore[import-untyped]
 from pydantic import BaseModel
@@ -15,9 +16,9 @@ logger = logging.getLogger(__name__)
 _cache_registry: list[TTLCache] = []
 
 # Lazily-initialized caches (using settings when accessed)
-_track_cache: Optional[TTLCache] = None
-_release_cache: Optional[TTLCache] = None
-_search_cache: Optional[TTLCache] = None
+_track_cache: TTLCache | None = None
+_release_cache: TTLCache | None = None
+_search_cache: TTLCache | None = None
 
 T = TypeVar("T")
 

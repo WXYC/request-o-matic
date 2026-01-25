@@ -1,14 +1,15 @@
 """Integration-style unit tests for the complete request flow."""
 
-import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
-from services.parser import MessageType, ParsedRequest
+import pytest
+
+from library.models import LibraryItem
 from routers.request import (
     build_context_message,
     search_compilations_for_track,
 )
-from library.models import LibraryItem
+from services.parser import MessageType, ParsedRequest
 
 
 @pytest.mark.asyncio

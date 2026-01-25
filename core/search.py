@@ -6,9 +6,10 @@ Each strategy has explicit trigger conditions and can be easily tested in isolat
 Strategies are executed in array order until results are found.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 from core.matching import detect_ambiguous_format
 from library.db import LibraryDB
@@ -161,7 +162,7 @@ def build_strategies(
     search_library_func: ExecuteFunc,
     search_alternative_func: ExecuteFunc,
     search_compilations_func: ExecuteFunc,
-    search_song_as_artist_func: Optional[ExecuteFunc] = None,
+    search_song_as_artist_func: ExecuteFunc | None = None,
 ) -> list[SearchStrategy]:
     """Build the list of search strategies with injected execute functions.
 

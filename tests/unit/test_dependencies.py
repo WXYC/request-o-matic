@@ -1,13 +1,14 @@
 """Unit tests for core/dependencies.py."""
 
-import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import pytest
 
 from config.settings import Settings
 from core.dependencies import (
+    SlackService,
     close_discogs_service,
     close_http_client,
     close_library_db,
@@ -20,7 +21,6 @@ from core.dependencies import (
     get_slack_service,
     get_slack_webhook_url,
     shutdown_posthog,
-    SlackService,
 )
 from core.exceptions import ServiceInitializationError
 
@@ -116,7 +116,7 @@ class TestGetGroqClient:
     def test_creates_client_with_api_key(self, mock_settings):
         """Test that get_groq_client creates client when API key is set."""
         with patch("core.dependencies.Groq") as mock_groq:
-            client = get_groq_client(mock_settings)
+            get_groq_client(mock_settings)
             mock_groq.assert_called_once_with(api_key="test_groq_key")
 
     def test_raises_without_api_key(self):

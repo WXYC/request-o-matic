@@ -1,9 +1,7 @@
 """Tests for the sync-library.sh script."""
 
-import os
 import stat
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -108,7 +106,7 @@ def create_mock_python(repo_dir: Path):
     """Create a mock python executable in venv/bin that runs the real Python."""
     python_path = repo_dir / "venv" / "bin" / "python"
     # Create a shell script that calls the real Python
-    python_path.write_text(f"""#!/bin/bash
+    python_path.write_text("""#!/bin/bash
 exec python3 "$@"
 """)
     python_path.chmod(python_path.stat().st_mode | stat.S_IEXEC)

@@ -1,7 +1,7 @@
 """Discogs API service with caching."""
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -32,7 +32,7 @@ class DiscogsService:
             token: Discogs API token
         """
         self.token = token
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -62,7 +62,7 @@ class DiscogsService:
 
     @async_cached(TRACK_CACHE)
     async def search_releases_by_track(
-        self, track: str, artist: Optional[str] = None, limit: int = 20
+        self, track: str, artist: str | None = None, limit: int = 20
     ) -> TrackReleasesResponse:
         """Search for ALL releases containing a track.
 
@@ -144,7 +144,7 @@ class DiscogsService:
             logger.error(f"Discogs search failed: {e}")
             return TrackReleasesResponse(track=track, artist=artist, cached=False)
 
-    def _process_search_result(self, result: dict, seen_albums: set) -> Optional[ReleaseInfo]:
+    def _process_search_result(self, result: dict, seen_albums: set) -> ReleaseInfo | None:
         """Process a single search result into a ReleaseInfo.
 
         Args:
@@ -181,7 +181,7 @@ class DiscogsService:
         )
 
     @async_cached(RELEASE_CACHE)
-    async def get_release(self, release_id: int) -> Optional[ReleaseMetadataResponse]:
+    async def get_release(self, release_id: int) -> ReleaseMetadataResponse | None:
         """Get full release metadata by ID.
 
         Args:

@@ -13,7 +13,7 @@ import logging
 import readline
 import sys
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import httpx
 
@@ -113,7 +113,7 @@ def print_result(data: dict) -> None:
     print()
 
 
-async def lookup(client: httpx.AsyncClient, base_url: str, query: str) -> Optional[dict[str, Any]]:
+async def lookup(client: httpx.AsyncClient, base_url: str, query: str) -> dict[str, Any] | None:
     """Execute a lookup query."""
     try:
         response = await client.post(

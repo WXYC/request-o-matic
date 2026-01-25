@@ -1,7 +1,6 @@
 """Library router with dependency injection."""
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -20,12 +19,12 @@ router = APIRouter(prefix="/library", tags=["library"])
     summary="Search library catalog",
     description="""
     Search the music library catalog using full-text search or filters.
-    
+
     You can search by:
     - `q`: Full-text search across artist and title
     - `artist`: Filter by artist name
     - `title`: Filter by album title
-    
+
     Example request:
     ```
     GET /api/v1/library/search?q=Queen+Bohemian+Rhapsody&limit=5
@@ -39,9 +38,9 @@ router = APIRouter(prefix="/library", tags=["library"])
     },
 )
 async def search_library(
-    q: Optional[str] = Query(None, description="Full-text search query"),
-    artist: Optional[str] = Query(None, description="Filter by artist name"),
-    title: Optional[str] = Query(None, description="Filter by album title"),
+    q: str | None = Query(None, description="Full-text search query"),
+    artist: str | None = Query(None, description="Filter by artist name"),
+    title: str | None = Query(None, description="Filter by album title"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     db: LibraryDB = Depends(get_library_db),
 ):
@@ -67,4 +66,4 @@ async def search_library(
         )
     except Exception as e:
         logger.error(f"Library search failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

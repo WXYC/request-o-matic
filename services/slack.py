@@ -1,10 +1,10 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
-from discogs.models import DiscogsSearchResult
 from config.settings import get_settings
+from discogs.models import DiscogsSearchResult
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def init_slack_service():
             logger.info(f"Slack webhook URL configured from {settings.slack_webhook_key_url}")
         except Exception as e:
             logger.error(f"Failed to fetch Slack webhook key: {e}")
-            raise RuntimeError(f"Failed to fetch Slack webhook key: {e}")
+            raise RuntimeError(f"Failed to fetch Slack webhook key: {e}") from e
 
 
 async def shutdown_slack_service():
@@ -48,8 +48,8 @@ async def shutdown_slack_service():
 
 def build_slack_blocks(
     message: str,
-    items_with_artwork: list[tuple[LibraryItem, Optional[DiscogsSearchResult]]],
-    context: Optional[str] = None,
+    items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]],
+    context: str | None = None,
 ) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{message}*"}}]
@@ -82,7 +82,7 @@ def build_slack_blocks(
     return blocks
 
 
-def build_simple_slack_blocks(message: str, context: Optional[str] = None) -> list[dict[str, Any]]:
+def build_simple_slack_blocks(message: str, context: str | None = None) -> list[dict[str, Any]]:
     """Build simple Slack message blocks for feedback or no-results messages."""
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{message}*"}}

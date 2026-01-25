@@ -1,7 +1,6 @@
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 import aiosqlite
 from rapidfuzz import fuzz
@@ -18,9 +17,9 @@ DEFAULT_DB_PATH = Path(__file__).parent.parent / "library.db"
 class LibraryDB:
     """Async SQLite client for library catalog searches."""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or DEFAULT_DB_PATH
-        self._conn: Optional[aiosqlite.Connection] = None
+        self._conn: aiosqlite.Connection | None = None
 
     async def connect(self):
         """Open database connection."""
@@ -43,9 +42,9 @@ class LibraryDB:
 
     async def search(
         self,
-        query: Optional[str] = None,
-        artist: Optional[str] = None,
-        title: Optional[str] = None,
+        query: str | None = None,
+        artist: str | None = None,
+        title: str | None = None,
         limit: int = 10,
         fallback_to_like: bool = True,
         fallback_to_fuzzy: bool = True,
@@ -240,7 +239,7 @@ class LibraryDB:
 
         return results
 
-    async def find_similar_artist(self, artist: str, threshold: int = 85) -> Optional[str]:
+    async def find_similar_artist(self, artist: str, threshold: int = 85) -> str | None:
         """
         Find a similar artist name in the library using fuzzy matching.
 
@@ -280,7 +279,7 @@ class LibraryDB:
             return None
 
         # Find best fuzzy match
-        best_match: Optional[str] = None
+        best_match: str | None = None
         best_score: float = 0
 
         for row in rows:

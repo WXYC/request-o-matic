@@ -6,10 +6,10 @@ compares current test runs against recorded baselines.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 
 class Environment(Enum):
@@ -33,7 +33,7 @@ def detect_environment(base_url: str) -> Environment:
 class BaselineManager:
     """Manages performance baselines stored in a JSON file."""
 
-    def __init__(self, baseline_path: Optional[Path] = None):
+    def __init__(self, baseline_path: Path | None = None):
         if baseline_path is None:
             baseline_path = Path(__file__).parent / "baselines.json"
         self.baseline_path = baseline_path
@@ -54,10 +54,10 @@ class BaselineManager:
         with open(self.baseline_path, "w") as f:
             json.dump(self.data, f, indent=2)
 
-    def get_baseline(self, env: Environment, test_name: str) -> Optional[dict[str, Any]]:
+    def get_baseline(self, env: Environment, test_name: str) -> dict[str, Any] | None:
         """Get baseline for a specific environment and test."""
         env_data = self.data.get(env.value, {})
-        return cast(Optional[dict[str, Any]], env_data.get(test_name))
+        return cast(dict[str, Any] | None, env_data.get(test_name))
 
     def save_baseline(
         self,
@@ -77,12 +77,12 @@ class BaselineManager:
             "min_ms": round(min_ms, 1),
             "max_ms": round(max_ms, 1),
             "query_count": query_count,
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "recorded_at": datetime.now(UTC).isoformat(),
         }
         self._save()
 
 
-class PerformanceRegression(Exception):
+class PerformanceRegressionError(Exception):
     """Raised when performance regresses beyond the threshold."""
 
     pass
@@ -99,7 +99,7 @@ def check_performance(
     Compare current metrics against baseline.
 
     - If no baseline exists, saves current metrics as baseline.
-    - If baseline exists, compares and raises PerformanceRegression if
+    - If baseline exists, compares and raises PerformanceRegressionError if
       the mean exceeds the baseline by more than threshold_pct.
 
     Args:
@@ -110,7 +110,7 @@ def check_performance(
         threshold_pct: Maximum allowed regression percentage (default 20%)
 
     Raises:
-        PerformanceRegression: If current mean exceeds baseline by threshold
+        PerformanceRegressionError: If current mean exceeds baseline by threshold
     """
     current_mean = metrics_summary["mean_ms"]
     current_min = metrics_summary["min_ms"]
@@ -154,7 +154,7 @@ def check_performance(
     print(f"             Difference:    {diff_ms:+.1f}ms ({diff_pct:+.1f}%)")
 
     if diff_pct > threshold_pct:
-        raise PerformanceRegression(
+        raise PerformanceRegressionError(
             f"Performance regression detected in {test_name}\n"
             f"  Environment: {environment.value}\n"
             f"  Baseline mean: {baseline_mean:.1f}ms (recorded {recorded_at})\n"

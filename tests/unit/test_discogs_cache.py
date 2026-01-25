@@ -1,10 +1,9 @@
 """Tests for Discogs caching layer."""
 
-from typing import Optional
 
 import pytest
 
-from discogs.cache import async_cached, make_cache_key, create_ttl_cache, clear_all_caches
+from discogs.cache import async_cached, clear_all_caches, create_ttl_cache, make_cache_key
 
 # Default test data
 TEST_TRACK = "VI Scose Poise"
@@ -184,7 +183,7 @@ class TestAsyncCached:
         call_count = 0
 
         @async_cached(cache)
-        async def my_func(track: str, artist: Optional[str] = None) -> dict:
+        async def my_func(track: str, artist: str | None = None) -> dict:
             nonlocal call_count
             call_count += 1
             return {"track": track, "artist": artist, "cached": False}
@@ -223,7 +222,7 @@ class TestAsyncCached:
         call_count = 0
 
         @async_cached(cache)
-        async def my_func(track: str) -> Optional[dict]:
+        async def my_func(track: str) -> dict | None:
             nonlocal call_count
             call_count += 1
             if track == "nonexistent":

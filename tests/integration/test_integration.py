@@ -6,8 +6,9 @@ Skip with: pytest tests/ -m "not integration"
 """
 
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 from dotenv import load_dotenv
 
 from discogs.service import DiscogsService
@@ -98,7 +99,7 @@ class TestDiscogsIntegration:
             print(f"  {i}. {artist} - {album}")
 
         # Should NOT include "22 Explosive Hits" or similar false positives
-        for artist, album in releases:
+        for _artist, album in releases:
             album_lower = album.lower()
             assert "explosive" not in album_lower, (
                 f"Should not include '{album}' - it contains 'A Simple Man' by "
@@ -107,7 +108,7 @@ class TestDiscogsIntegration:
 
         # If we have results, they should be actual Sugar Plant releases
         # or verified compilations (Various Artists that passed tracklist validation)
-        for artist, album in releases:
+        for artist, _album in releases:
             artist_lower = artist.lower()
             is_sugar_plant = "sugar plant" in artist_lower
             is_compilation = "various" in artist_lower
@@ -115,7 +116,7 @@ class TestDiscogsIntegration:
                 is_sugar_plant or is_compilation
             ), f"Expected Sugar Plant or verified compilation, got '{artist}'"
 
-        print(f"\n✅ Tracklist validation correctly filtered false positives!")
+        print("\n✅ Tracklist validation correctly filtered false positives!")
 
     @pytest.mark.asyncio
     @skip_if_no_token
@@ -498,13 +499,14 @@ class TestParserIntegration:
         The artist "Quix*o*tic" should NOT be normalized to "Quixotic".
         """
         from groq import Groq
+
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
 
         result = parse_request("something by quix*o*tic", client)
 
-        print(f"\n📝 Parsed result:")
+        print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
         print(f"  Is Request: {result.is_request}")
 
@@ -526,6 +528,7 @@ class TestParserIntegration:
     async def test_preserves_special_chars_in_various_artists(self):
         """Test preservation of special characters in well-known artist names."""
         from groq import Groq
+
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
@@ -535,7 +538,7 @@ class TestParserIntegration:
             ("deadmau5 please", "deadmau5", "5"),
         ]
 
-        for message, expected_contains, special_char in test_cases:
+        for message, _expected_contains, special_char in test_cases:
             result = parse_request(message, client)
 
             print(f"\n📝 '{message}' -> Artist: {result.artist}")
@@ -559,13 +562,14 @@ class TestParserIntegration:
         Expected: Should extract song and artist from comma-separated format.
         """
         from groq import Groq
+
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
 
         result = parse_request("the man in your house, mi ami", client)
 
-        print(f"\n📝 Parsed result:")
+        print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
         print(f"  Artist: {result.artist}")
         print(f"  Is Request: {result.is_request}")
@@ -578,7 +582,7 @@ class TestParserIntegration:
         ), f"Expected song 'The Man in Your House', got: {result.song}"
         assert "mi ami" in result.artist.lower(), f"Expected artist 'Mi Ami', got: {result.artist}"
 
-        print(f"  ✅ Correctly parsed comma-separated format!")
+        print("  ✅ Correctly parsed comma-separated format!")
 
 
 class TestFullRequestIntegration:
@@ -657,12 +661,12 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
         print(f"  Album: {parsed.get('album')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')} ({r.get('call_number')})")
 
@@ -676,7 +680,7 @@ class TestFullRequestIntegration:
             f"The search returned an album that doesn't contain the requested song."
         )
 
-        print(f"\n✅ Correctly returned 'Meet Me in the City' album!")
+        print("\n✅ Correctly returned 'Meet Me in the City' album!")
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(
@@ -705,11 +709,11 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -734,7 +738,7 @@ class TestFullRequestIntegration:
             f"but got: {titles}"
         )
 
-        print(f"\n✅ Correctly excluded albums without the requested song!")
+        print("\n✅ Correctly excluded albums without the requested song!")
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(
@@ -763,11 +767,11 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -792,7 +796,7 @@ class TestFullRequestIntegration:
             f"(Substrata or Wireless), but got: {titles}"
         )
 
-        print(f"\n✅ Correctly excluded albums without the requested track!")
+        print("\n✅ Correctly excluded albums without the requested track!")
 
     @pytest.mark.asyncio
     async def test_young_gov_excludes_young_black_teenagers(self, base_url):
@@ -817,7 +821,7 @@ class TestFullRequestIntegration:
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for 'Young Gov':")
+        print("\n📚 Library Results for 'Young Gov':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -826,9 +830,9 @@ class TestFullRequestIntegration:
             artist = r.get("artist", "").lower()
             assert (
                 "young black teenagers" not in artist
-            ), f"'Young Black Teenagers' should not match 'Young Gov' search"
+            ), "'Young Black Teenagers' should not match 'Young Gov' search"
 
-        print(f"\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
+        print("\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
 
     @pytest.mark.asyncio
     async def test_laid_back_matches_band_not_album_titles(self, base_url):
@@ -852,7 +856,7 @@ class TestFullRequestIntegration:
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for 'Laid Back':")
+        print("\n📚 Library Results for 'Laid Back':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -865,7 +869,7 @@ class TestFullRequestIntegration:
                 f"Should not match albums with 'laid back' only in title."
             )
 
-        print(f"\n✅ Correctly matched 'Laid Back' band, not just title matches!")
+        print("\n✅ Correctly matched 'Laid Back' band, not just title matches!")
 
     @pytest.mark.asyncio
     async def test_toy_excludes_chew_toy(self, base_url):
@@ -888,7 +892,7 @@ class TestFullRequestIntegration:
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for 'Toy':")
+        print("\n📚 Library Results for 'Toy':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -896,11 +900,11 @@ class TestFullRequestIntegration:
         for r in results:
             artist = r.get("artist", "").lower()
             assert "chew toy" not in artist, (
-                f"'Chew Toy' should not match 'Toy' search - "
-                f"artist filtering should use word boundaries"
+                "'Chew Toy' should not match 'Toy' search - "
+                "artist filtering should use word boundaries"
             )
 
-        print(f"\n✅ Correctly excluded 'Chew Toy' from 'Toy' search!")
+        print("\n✅ Correctly excluded 'Chew Toy' from 'Toy' search!")
 
     @pytest.mark.asyncio
     async def test_amps_for_christ_excludes_edward_bear(self, base_url):
@@ -924,7 +928,7 @@ class TestFullRequestIntegration:
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for 'Amps for Christ':")
+        print("\n📚 Library Results for 'Amps for Christ':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -933,7 +937,7 @@ class TestFullRequestIntegration:
             artist = r.get("artist", "").lower()
             assert (
                 "edward bear" not in artist
-            ), f"'Edward Bear' should not match 'Amps for Christ' search"
+            ), "'Edward Bear' should not match 'Amps for Christ' search"
 
         # If we have results, they should be by Amps for Christ
         if results:
@@ -944,7 +948,7 @@ class TestFullRequestIntegration:
                 f"Expected 'Amps for Christ' albums, got: " f"{[r.get('artist') for r in results]}"
             )
 
-        print(f"\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
+        print("\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(
@@ -972,11 +976,11 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -990,7 +994,7 @@ class TestFullRequestIntegration:
             f"The search returned an album that doesn't have 'Holland, 1945'."
         )
 
-        print(f"\n✅ Correctly returned 'In the Aeroplane Over the Sea'!")
+        print("\n✅ Correctly returned 'In the Aeroplane Over the Sea'!")
 
     @pytest.mark.asyncio
     async def test_mi_ami_comma_format_returns_watersports(self, base_url):
@@ -1015,12 +1019,12 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Is Request: {parsed.get('is_request')}")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1041,7 +1045,7 @@ class TestFullRequestIntegration:
             "mi ami" in first_result.get("artist", "").lower()
         ), f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
 
-        print(f"\n✅ Correctly returned 'Watersports' by Mi Ami!")
+        print("\n✅ Correctly returned 'Watersports' by Mi Ami!")
 
     @pytest.mark.asyncio
     async def test_living_color_corrects_to_living_colour(self, base_url):
@@ -1066,11 +1070,11 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1083,7 +1087,7 @@ class TestFullRequestIntegration:
                 "living colour" in r.get("artist", "").lower()
             ), f"Expected 'Living Colour', got '{r.get('artist')}'"
 
-        print(f"\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
+        print("\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
 
     @pytest.mark.asyncio
     async def test_sugar_plant_excludes_unrelated_compilations(self, base_url):
@@ -1111,11 +1115,11 @@ class TestFullRequestIntegration:
         parsed = data.get("parsed", {})
         results = data.get("library_results", [])
 
-        print(f"\n📝 Parsed:")
+        print("\n📝 Parsed:")
         print(f"  Artist: {parsed.get('artist')}")
         print(f"  Song: {parsed.get('song')}")
 
-        print(f"\n📚 Library Results:")
+        print("\n📚 Library Results:")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1138,7 +1142,7 @@ class TestFullRequestIntegration:
                 is_sugar_plant or is_valid_compilation
             ), f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
 
-        print(f"\n✅ Correctly excluded unrelated compilations!")
+        print("\n✅ Correctly excluded unrelated compilations!")
 
     @pytest.mark.asyncio
     async def test_results_have_unique_library_urls(self, base_url):

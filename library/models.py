@@ -1,4 +1,3 @@
-from typing import Optional
 
 from pydantic import BaseModel, computed_field
 
@@ -6,9 +5,9 @@ from pydantic import BaseModel, computed_field
 class LibrarySearchRequest(BaseModel):
     """Request to search the library catalog."""
 
-    query: Optional[str] = None
-    artist: Optional[str] = None
-    title: Optional[str] = None
+    query: str | None = None
+    artist: str | None = None
+    title: str | None = None
     limit: int = 10
 
 
@@ -16,13 +15,13 @@ class LibraryItem(BaseModel):
     """A single item from the library catalog."""
 
     id: int
-    title: Optional[str] = None
-    artist: Optional[str] = None
-    call_letters: Optional[str] = None
-    artist_call_number: Optional[int] = None
-    release_call_number: Optional[int] = None
-    genre: Optional[str] = None
-    format: Optional[str] = None
+    title: str | None = None
+    artist: str | None = None
+    call_letters: str | None = None
+    artist_call_number: int | None = None
+    release_call_number: int | None = None
+    genre: str | None = None
+    format: str | None = None
 
     @property
     def call_number(self) -> str:
@@ -52,4 +51,4 @@ class LibrarySearchResponse(BaseModel):
 
     results: list[LibraryItem]
     total: int
-    query: Optional[str] = None
+    query: str | None = None

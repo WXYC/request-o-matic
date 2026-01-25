@@ -1,13 +1,13 @@
 """Unit tests for routers/parse.py."""
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from routers.parse import router
-from services.parser import ParsedRequest, MessageType
+from services.parser import MessageType, ParsedRequest
 
 
 @pytest.fixture

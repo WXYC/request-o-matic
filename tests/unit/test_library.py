@@ -1,11 +1,9 @@
+
+import aiosqlite
 import pytest
 import pytest_asyncio
-from pathlib import Path
-import tempfile
-import aiosqlite
 
 from library.db import LibraryDB
-from library.models import LibraryItem
 
 # --- Fixtures ---
 
@@ -177,8 +175,10 @@ class TestFallbackSearch:
     @pytest.mark.asyncio
     async def test_fallback_disabled(self, test_db: LibraryDB):
         """Test that fallback can be disabled."""
+        import aiosqlite
+
         # Query with special chars that would normally trigger fallback
-        with pytest.raises(Exception):
+        with pytest.raises(aiosqlite.Error):  # SQLite error when FTS5 fails
             await test_db.search(
                 query="Richard D. James Album = Test", limit=10, fallback_to_like=False
             )

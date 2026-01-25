@@ -15,13 +15,15 @@ These tests measure the impact of various search strategies:
 4. Ambiguous query handling
 """
 
-import asyncio
 import os
 import statistics
+
+# Import test environment utilities
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 import pytest
@@ -29,16 +31,12 @@ from dotenv import load_dotenv
 
 from .baseline import (
     BaselineManager,
-    Environment,
     check_performance,
     detect_environment,
 )
 
-# Import test environment utilities
-import sys
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from conftest import get_test_environment, TestEnvironment
+from conftest import TestEnvironment, get_test_environment
 
 load_dotenv()
 
@@ -64,9 +62,9 @@ class TimingResult:
 
     query: str
     total_ms: float
-    parsing_ms: Optional[float] = None
-    search_ms: Optional[float] = None
-    artwork_ms: Optional[float] = None
+    parsing_ms: float | None = None
+    search_ms: float | None = None
+    artwork_ms: float | None = None
 
 
 class PerformanceMetrics:

@@ -1,7 +1,6 @@
 """FastAPI router for Discogs API endpoints."""
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/discogs", tags=["discogs"])
 
 
-def _require_service(service: Optional[DiscogsService]) -> DiscogsService:
+def _require_service(service: DiscogsService | None) -> DiscogsService:
     """Raise 503 if service is not available."""
     if service is None:
         raise HTTPException(
@@ -52,9 +51,9 @@ def _require_service(service: Optional[DiscogsService]) -> DiscogsService:
 )
 async def get_track_releases(
     track: str = Query(..., description="Track/song title to search for"),
-    artist: Optional[str] = Query(None, description="Optional artist name for filtering"),
+    artist: str | None = Query(None, description="Optional artist name for filtering"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of results"),
-    service: Optional[DiscogsService] = Depends(get_discogs_service),
+    service: DiscogsService | None = Depends(get_discogs_service),
 ) -> TrackReleasesResponse:
     """Find all releases containing a specific track."""
     svc = _require_service(service)
@@ -87,7 +86,7 @@ async def get_track_releases(
 )
 async def get_release(
     release_id: int,
-    service: Optional[DiscogsService] = Depends(get_discogs_service),
+    service: DiscogsService | None = Depends(get_discogs_service),
 ) -> ReleaseMetadataResponse:
     """Get full metadata for a release by ID."""
     svc = _require_service(service)
@@ -130,7 +129,7 @@ async def get_release(
 async def search_releases(
     request: DiscogsSearchRequest,
     limit: int = Query(5, ge=1, le=50, description="Maximum number of results"),
-    service: Optional[DiscogsService] = Depends(get_discogs_service),
+    service: DiscogsService | None = Depends(get_discogs_service),
 ) -> DiscogsSearchResponse:
     """Search Discogs for releases matching the criteria."""
     svc = _require_service(service)

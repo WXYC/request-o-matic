@@ -1,7 +1,5 @@
 """Unit tests for main.py."""
 
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -119,8 +117,8 @@ class TestAppLifespan:
 
             get_settings.cache_clear()
 
+
             from main import lifespan
-            import contextlib
 
             # Lifespan should be an async context manager
-            assert hasattr(lifespan, "__call__")
+            assert callable(lifespan)

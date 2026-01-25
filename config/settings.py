@@ -1,9 +1,7 @@
 """Application configuration using Pydantic Settings."""
 
-import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,8 +14,8 @@ class Settings(BaseSettings):
     groq_api_key: str = Field(..., description="Groq API key for AI parsing")
 
     # API Keys - Optional
-    discogs_token: Optional[str] = Field(None, description="Discogs API token for artwork lookup")
-    slack_webhook_url: Optional[str] = Field(
+    discogs_token: str | None = Field(None, description="Discogs API token for artwork lookup")
+    slack_webhook_url: str | None = Field(
         None, description="Slack webhook URL for posting results"
     )
     slack_webhook_key_url: str = Field(
@@ -52,7 +50,7 @@ class Settings(BaseSettings):
     enable_telemetry: bool = Field(default=True, description="Enable PostHog telemetry")
 
     # PostHog Configuration
-    posthog_api_key: Optional[str] = Field(None, description="PostHog API key for telemetry")
+    posthog_api_key: str | None = Field(None, description="PostHog API key for telemetry")
     posthog_host: str = Field(default="https://us.i.posthog.com", description="PostHog host URL")
 
     # Discogs Cache Configuration
@@ -81,7 +79,7 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance.
 

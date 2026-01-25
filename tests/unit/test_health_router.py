@@ -1,9 +1,9 @@
 """Unit tests for routers/health.py."""
 
-import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
+import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -48,7 +48,7 @@ def app(mock_settings, mock_library_db, mock_discogs_service):
 
     # Override dependencies
     from config.settings import get_settings
-    from core.dependencies import get_library_db, get_discogs_service
+    from core.dependencies import get_discogs_service, get_library_db
 
     app.dependency_overrides[get_settings] = lambda: mock_settings
     app.dependency_overrides[get_library_db] = lambda: mock_library_db
@@ -92,7 +92,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: settings
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
@@ -115,7 +115,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: mock_settings
         app.dependency_overrides[get_library_db] = lambda: mock_db
@@ -141,7 +141,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: settings
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
@@ -167,7 +167,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: settings
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
@@ -196,7 +196,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: settings
         app.dependency_overrides[get_library_db] = lambda: mock_library_db
@@ -234,7 +234,7 @@ class TestHealthCheck:
         app.include_router(router)
 
         from config.settings import get_settings
-        from core.dependencies import get_library_db, get_discogs_service
+        from core.dependencies import get_discogs_service, get_library_db
 
         app.dependency_overrides[get_settings] = lambda: settings
         app.dependency_overrides[get_library_db] = lambda: mock_library_db

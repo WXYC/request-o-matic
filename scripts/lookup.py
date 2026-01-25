@@ -10,7 +10,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import httpx
 
@@ -62,7 +62,7 @@ async def lookup_discogs_urls(
     """
     discogs_urls: dict[int, str] = {}
 
-    async def fetch_discogs_url(item: dict) -> tuple[int, Optional[str]]:
+    async def fetch_discogs_url(item: dict) -> tuple[int, str | None]:
         """Fetch Discogs URL for a single item."""
         item_id: int = item.get("id", 0)
         artist = item.get("artist", "")
@@ -97,8 +97,8 @@ async def lookup_discogs_urls(
 
 def print_library_results(
     results: list[dict],
-    artwork: Optional[dict],
-    discogs_urls: Optional[dict[int, str]] = None,
+    artwork: dict | None,
+    discogs_urls: dict[int, str] | None = None,
 ) -> None:
     """Print library search results."""
     print_section("Library Results")
@@ -123,7 +123,7 @@ def print_library_results(
         if call_letters:
             print(f"      Location: {call_letters} {artist_num}/{release_num}")
         else:
-            print(f"      Location: (none)")
+            print("      Location: (none)")
         if item_id in discogs_urls:
             print(f"      Discogs:  {discogs_urls[item_id]}")
         print(f"      WXYC:     {item.get('library_url') or '(none)'}")
@@ -173,7 +173,7 @@ async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> 
         except httpx.HTTPStatusError as e:
             logger.error(f"Request failed: {e.response.status_code}")
             logger.error(f"Response: {e.response.text}")
-            raise SystemExit(1)
+            raise SystemExit(1) from e
 
 
 def main() -> None:
