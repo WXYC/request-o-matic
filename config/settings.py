@@ -65,6 +65,17 @@ class Settings(BaseSettings):
         default=1000, description="Maximum entries in Discogs caches"
     )
 
+    # Discogs Rate Limiting Configuration
+    discogs_rate_limit: int = Field(
+        default=50, description="Max Discogs API requests per minute (stay under 60/min limit)"
+    )
+    discogs_max_concurrent: int = Field(
+        default=5, description="Max concurrent Discogs API requests"
+    )
+    discogs_max_retries: int = Field(
+        default=2, description="Max retry attempts on 429 rate limit errors"
+    )
+
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")
     app_version: str = Field(default="1.0.0", description="Application version")

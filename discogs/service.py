@@ -1,10 +1,12 @@
-"""Discogs API service with caching."""
+"""Discogs API service with caching and rate limiting."""
 
+import asyncio
 import logging
 from typing import Any
 
 import httpx
 
+from config.settings import get_settings
 from core.matching import calculate_confidence, is_compilation_artist
 from discogs.cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
 from discogs.models import (
@@ -16,6 +18,7 @@ from discogs.models import (
     TrackItem,
     TrackReleasesResponse,
 )
+from discogs.ratelimit import get_rate_limiter, get_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,65 @@ class DiscogsService:
             await self._client.aclose()
             self._client = None
 
+    async def _request_with_retry(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        max_retries: int | None = None,
+    ) -> httpx.Response | None:
+        """Make an HTTP request with rate limiting and retry on 429.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            path: API path (e.g., "/database/search")
+            params: Optional query parameters
+            max_retries: Max retry attempts on 429 (defaults to settings)
+
+        Returns:
+            httpx.Response on success, None on exhausted retries or error
+        """
+        if max_retries is None:
+            max_retries = get_settings().discogs_max_retries
+
+        client = await self._get_client()
+        semaphore = get_semaphore()
+        rate_limiter = get_rate_limiter()
+
+        async with semaphore:
+            for attempt in range(max_retries + 1):
+                await rate_limiter.acquire()
+
+                try:
+                    response = await client.request(method, path, params=params)
+
+                    # Log rate limit remaining for observability
+                    remaining = response.headers.get("X-Discogs-Ratelimit-Remaining")
+                    if remaining:
+                        logger.debug(f"Discogs rate limit remaining: {remaining}")
+
+                    if response.status_code == 429:
+                        if attempt < max_retries:
+                            # Exponential backoff: 1s, 2s, 4s...
+                            delay = 2**attempt
+                            logger.warning(
+                                f"Discogs rate limit hit, retrying in {delay}s "
+                                f"(attempt {attempt + 1}/{max_retries + 1})"
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logger.error("Discogs rate limit hit, max retries exhausted")
+                            return None
+
+                    return response
+
+                except httpx.RequestError as e:
+                    logger.error(f"Discogs request failed: {e}")
+                    return None
+
+        return None
+
     def _parse_title(self, title: str) -> tuple[str, str]:
         """Parse Discogs title format 'Artist - Album' into components."""
         if " - " in title:
@@ -78,7 +140,6 @@ class DiscogsService:
         Returns:
             TrackReleasesResponse with list of releases
         """
-        client = await self._get_client()
         releases: list[ReleaseInfo] = []
         seen_albums: set = set()
 
@@ -93,9 +154,9 @@ class DiscogsService:
         logger.info(f"Searching Discogs for releases with track: '{track}', artist: {artist}")
 
         try:
-            response = await client.get("/database/search", params=params)
+            response = await self._request_with_retry("GET", "/database/search", params=params)
 
-            if response.status_code != 429:
+            if response is not None:
                 response.raise_for_status()
                 data = response.json()
 
@@ -119,9 +180,11 @@ class DiscogsService:
                 }
 
                 logger.info(f"Supplementing with keyword search: '{query_params['q']}'")
-                response = await client.get("/database/search", params=query_params)
+                response = await self._request_with_retry(
+                    "GET", "/database/search", params=query_params
+                )
 
-                if response.status_code != 429:
+                if response is not None:
                     response.raise_for_status()
                     data = response.json()
 
@@ -190,13 +253,11 @@ class DiscogsService:
         Returns:
             ReleaseMetadataResponse with full metadata, or None on error
         """
-        client = await self._get_client()
-
         try:
-            response = await client.get(f"/releases/{release_id}")
+            response = await self._request_with_retry("GET", f"/releases/{release_id}")
 
-            if response.status_code == 429:
-                logger.warning("Discogs rate limit hit")
+            if response is None:
+                logger.warning(f"Failed to fetch release {release_id} (rate limited or error)")
                 return None
 
             response.raise_for_status()
@@ -260,13 +321,12 @@ class DiscogsService:
             return DiscogsSearchResponse(cached=False)
 
         logger.info(f"Searching Discogs with params: {params}")
-        client = await self._get_client()
 
         try:
-            response = await client.get("/database/search", params=params)
+            response = await self._request_with_retry("GET", "/database/search", params=params)
 
-            if response.status_code == 429:
-                logger.warning("Discogs rate limit hit")
+            if response is None:
+                logger.warning("Discogs search failed (rate limited or error)")
                 return DiscogsSearchResponse(cached=False)
 
             response.raise_for_status()
@@ -285,9 +345,12 @@ class DiscogsService:
                     "q": " ".join(query_parts),
                 }
                 logger.info(f"Strict search empty, trying fuzzy query: {fallback_params}")
-                response = await client.get("/database/search", params=fallback_params)
-                response.raise_for_status()
-                data = response.json()
+                response = await self._request_with_retry(
+                    "GET", "/database/search", params=fallback_params
+                )
+                if response is not None:
+                    response.raise_for_status()
+                    data = response.json()
 
             results = []
             for item in data.get("results", []):

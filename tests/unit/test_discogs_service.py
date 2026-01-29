@@ -12,6 +12,7 @@ from discogs.models import (
     ReleaseMetadataResponse,
     TrackReleasesResponse,
 )
+from discogs.ratelimit import reset_rate_limiting
 from discogs.service import DiscogsService
 
 # Default test data
@@ -37,10 +38,12 @@ async def service():
 
 @pytest.fixture(autouse=True)
 def clear_caches():
-    """Clear all caches before and after each test."""
+    """Clear all caches and rate limiting state before and after each test."""
     clear_all_caches()
+    reset_rate_limiting()
     yield
     clear_all_caches()
+    reset_rate_limiting()
 
 
 class TestSearchReleasesByTrack:
@@ -206,8 +209,10 @@ class TestGetRelease:
         assert len(httpx_mock.get_requests()) == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
     async def test_handles_rate_limit(self, service: DiscogsService, httpx_mock: HTTPXMock):
         """Test graceful handling of rate limit."""
+        # With retries, we need multiple 429 responses
         httpx_mock.add_response(
             url=RELEASE_URL_PATTERN,
             status_code=429,
@@ -215,8 +220,8 @@ class TestGetRelease:
 
         result = await service.get_release(TEST_RELEASE_ID)
 
-        # Should return a response with minimal info on rate limit
-        assert result is None or result.release_id == TEST_RELEASE_ID
+        # Should return None after exhausting retries
+        assert result is None
 
 
 class TestSearch:
@@ -360,3 +365,88 @@ class TestValidateTrackOnRelease:
         result = await service.validate_track_on_release(TEST_RELEASE_ID, TEST_TRACK, TEST_ARTIST)
 
         assert result is False
+
+
+class TestRequestWithRetry:
+    """Tests for _request_with_retry rate limiting and retry behavior."""
+
+    @pytest.mark.asyncio
+    async def test_successful_request(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test successful request returns response."""
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={"results": []},
+        )
+
+        response = await service._request_with_retry("GET", "/database/search", params={})
+
+        assert response is not None
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_retries_on_429(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test retries request on 429 status code."""
+        # First request returns 429, second succeeds
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            status_code=429,
+        )
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={"results": []},
+        )
+
+        response = await service._request_with_retry(
+            "GET", "/database/search", params={}, max_retries=1
+        )
+
+        assert response is not None
+        assert response.status_code == 200
+        assert len(httpx_mock.get_requests()) == 2
+
+    @pytest.mark.asyncio
+    async def test_returns_none_after_max_retries(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None after exhausting retries."""
+        # All requests return 429
+        httpx_mock.add_response(url=SEARCH_URL_PATTERN, status_code=429)
+        httpx_mock.add_response(url=SEARCH_URL_PATTERN, status_code=429)
+
+        response = await service._request_with_retry(
+            "GET", "/database/search", params={}, max_retries=1
+        )
+
+        assert response is None
+        # Initial request + 1 retry = 2 requests
+        assert len(httpx_mock.get_requests()) == 2
+
+    @pytest.mark.asyncio
+    async def test_logs_rate_limit_remaining(
+        self, service: DiscogsService, httpx_mock: HTTPXMock, caplog
+    ):
+        """Test logs X-Discogs-Ratelimit-Remaining header."""
+        import logging
+
+        caplog.set_level(logging.DEBUG)
+
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={"results": []},
+            headers={"X-Discogs-Ratelimit-Remaining": "42"},
+        )
+
+        await service._request_with_retry("GET", "/database/search", params={})
+
+        assert "rate limit remaining: 42" in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_handles_request_error(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test handles httpx.RequestError gracefully."""
+        import httpx
+
+        httpx_mock.add_exception(httpx.RequestError("Connection failed"))
+
+        response = await service._request_with_retry("GET", "/database/search", params={})
+
+        assert response is None
