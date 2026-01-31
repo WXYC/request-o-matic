@@ -4,6 +4,8 @@ This module centralizes the matching rules used throughout the search flow.
 Constants were consolidated from multiple locations to ensure consistency.
 """
 
+import re
+
 # =============================================================================
 # Search Result Limiting
 # =============================================================================
@@ -155,11 +157,17 @@ def detect_ambiguous_format(raw_message: str) -> tuple[str, str] | None:
     Returns:
         Tuple of (part1, part2) if ambiguous format detected, None otherwise.
     """
-    # Check for "X - Y" pattern (with spaces around dash)
-    if " - " in raw_message:
-        parts = raw_message.split(" - ", 1)
-        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-            return (parts[0].strip(), parts[1].strip())
+    # Check for "X - Y" pattern with various spacing around dash
+    # Matches: "X - Y", "X- Y", "X -Y" (requires at least one space to avoid "hip-hop")
+    dash_match = re.search(r"(.+?)\s*-\s+(.+)|(.+?)\s+-\s*(.+)", raw_message)
+    if dash_match:
+        # Groups 1,2 for "X- Y" pattern, groups 3,4 for "X -Y" pattern
+        if dash_match.group(1) and dash_match.group(2):
+            part1, part2 = dash_match.group(1).strip(), dash_match.group(2).strip()
+        else:
+            part1, part2 = dash_match.group(3).strip(), dash_match.group(4).strip()
+        if part1 and part2:
+            return (part1, part2)
 
     # Check for "X. Y" pattern (period followed by space)
     if ". " in raw_message:

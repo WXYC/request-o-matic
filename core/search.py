@@ -253,14 +253,12 @@ async def execute_search_pipeline(
 
         elif strategy.name == SearchStrategyType.SWAPPED_INTERPRETATION:
             # Parse the ambiguous format
-            if " - " in raw_message:
-                part1, part2 = raw_message.split(" - ", 1)
+            parts = detect_ambiguous_format(raw_message)
+            if parts:
+                part1, part2 = parts
+                results, _ = await strategy.execute(db, part1, part2)
             else:
-                part1, part2 = raw_message.split(". ", 1)
-            part1 = part1.strip()
-            part2 = part2.strip()
-
-            results, _ = await strategy.execute(db, part1, part2)
+                results = []
             if results:
                 state.results = results
                 state.song_not_found = False

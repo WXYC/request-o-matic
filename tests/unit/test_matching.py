@@ -193,3 +193,13 @@ class TestDetectAmbiguousFormat:
         # Hyphenated words should not match
         result = detect_ambiguous_format("Jean-Michel Jarre Oxygene")
         assert result is None
+
+    def test_dash_with_space_only_after(self):
+        # "Puzzle pop- cootie catcher" should detect ambiguous format
+        result = detect_ambiguous_format("Puzzle pop- cootie catcher")
+        assert result == ("Puzzle pop", "cootie catcher")
+
+    def test_dash_with_space_only_before(self):
+        # "Puzzle pop -cootie catcher" should detect ambiguous format
+        result = detect_ambiguous_format("Puzzle pop -cootie catcher")
+        assert result == ("Puzzle pop", "cootie catcher")
