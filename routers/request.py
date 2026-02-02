@@ -103,6 +103,11 @@ class UnifiedResponse(BaseModel):
     parsed: ParsedRequest
     artwork: DiscogsSearchResult | None = None
     library_results: list[LibraryItem] = []
+    # Search metadata
+    search_type: str = "none"
+    song_not_found: bool = False
+    found_on_compilation: bool = False
+    context_message: str | None = None
 
 
 async def resolve_albums_for_track(
@@ -907,6 +912,10 @@ async def handle_request(
             parsed=parsed,
             artwork=artwork,
             library_results=library_results,
+            search_type=search_type,
+            song_not_found=song_not_found,
+            found_on_compilation=found_on_compilation,
+            context_message=context,
         )
 
     except HTTPException:

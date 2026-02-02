@@ -99,12 +99,18 @@ def print_library_results(
     results: list[dict],
     artwork: dict | None,
     discogs_urls: dict[int, str] | None = None,
+    context_message: str | None = None,
 ) -> None:
     """Print library search results."""
     print_section("Library Results")
 
+    if context_message:
+        print(f"  {context_message}")
+        print()
+
     if not results:
-        print("  No results found in library.")
+        if not context_message:
+            print("  No results found in library.")
         return
 
     discogs_urls = discogs_urls or {}
@@ -165,8 +171,13 @@ async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> 
                 logger.info("Looking up Discogs URLs...")
                 discogs_urls = await lookup_discogs_urls(client, base_url, library_results)
 
-            # Display results with Discogs URLs
-            print_library_results(library_results, data.get("artwork"), discogs_urls)
+            # Display results with Discogs URLs and context
+            print_library_results(
+                library_results,
+                data.get("artwork"),
+                discogs_urls,
+                data.get("context_message"),
+            )
 
             return cast(dict[str, Any], data)
 
