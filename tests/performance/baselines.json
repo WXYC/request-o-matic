@@ -1,1 +1,32 @@
-{}
+{
+  "staging": {
+    "test_simple_queries_with_artist": {
+      "mean_ms": 3814.9,
+      "min_ms": 1755.7,
+      "max_ms": 5462.9,
+      "query_count": 5,
+      "recorded_at": "2026-02-04T23:30:04.140688+00:00"
+    },
+    "test_artist_discovery_queries": {
+      "mean_ms": 5001.4,
+      "min_ms": 4258.9,
+      "max_ms": 6017.9,
+      "query_count": 5,
+      "recorded_at": "2026-02-04T23:30:29.154689+00:00"
+    },
+    "test_compilation_search_queries": {
+      "mean_ms": 5047.5,
+      "min_ms": 3938.4,
+      "max_ms": 6093.5,
+      "query_count": 5,
+      "recorded_at": "2026-02-04T23:30:54.397752+00:00"
+    },
+    "test_ambiguous_queries": {
+      "mean_ms": 4919.5,
+      "min_ms": 4282.8,
+      "max_ms": 6304.2,
+      "query_count": 5,
+      "recorded_at": "2026-02-04T23:31:19.001085+00:00"
+    }
+  }
+}
