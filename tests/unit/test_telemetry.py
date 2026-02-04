@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.telemetry import RequestTelemetry, StepResult
+from core.telemetry import CacheStats, RequestTelemetry, StepResult
 
 
 class TestRequestTelemetry:
@@ -214,3 +214,103 @@ class TestStepResult:
         assert result.duration_ms == 50.0
         assert result.success is False
         assert result.error_type == "ValueError"
+
+
+class TestCacheStats:
+    """Tests for CacheStats dataclass."""
+
+    def test_default_values(self):
+        """Verify default values are zero."""
+        stats = CacheStats()
+
+        assert stats.hits == 0
+        assert stats.misses == 0
+        assert stats.writes == 0
+        assert stats.errors == 0
+
+    def test_total_queries(self):
+        """Verify total_queries calculation."""
+        stats = CacheStats(hits=10, misses=5)
+
+        assert stats.total_queries == 15
+
+    def test_hit_rate_with_data(self):
+        """Verify hit_rate calculation."""
+        stats = CacheStats(hits=8, misses=2)
+
+        assert stats.hit_rate == 0.8
+
+    def test_hit_rate_no_queries(self):
+        """Verify hit_rate is 0 when no queries made."""
+        stats = CacheStats()
+
+        assert stats.hit_rate == 0.0
+
+
+class TestCacheTracking:
+    """Tests for cache tracking in RequestTelemetry."""
+
+    def test_record_cache_hit(self):
+        """Verify cache hit is recorded."""
+        telemetry = RequestTelemetry()
+
+        telemetry.record_cache_hit()
+        telemetry.record_cache_hit()
+
+        assert telemetry.cache_stats.hits == 2
+
+    def test_record_cache_miss(self):
+        """Verify cache miss is recorded."""
+        telemetry = RequestTelemetry()
+
+        telemetry.record_cache_miss()
+
+        assert telemetry.cache_stats.misses == 1
+
+    def test_record_cache_write(self):
+        """Verify cache write is recorded."""
+        telemetry = RequestTelemetry()
+
+        telemetry.record_cache_write()
+        telemetry.record_cache_write()
+        telemetry.record_cache_write()
+
+        assert telemetry.cache_stats.writes == 3
+
+    def test_record_cache_error(self):
+        """Verify cache error is recorded."""
+        telemetry = RequestTelemetry()
+
+        telemetry.record_cache_error()
+
+        assert telemetry.cache_stats.errors == 1
+
+    def test_cache_stats_in_posthog(self):
+        """Verify cache stats are included in PostHog completed event."""
+        telemetry = RequestTelemetry()
+        mock_posthog = MagicMock()
+
+        telemetry.record_cache_hit()
+        telemetry.record_cache_hit()
+        telemetry.record_cache_miss()
+        telemetry.record_cache_write()
+
+        with telemetry.track_step("test"):
+            pass
+
+        telemetry.send_to_posthog(mock_posthog, {})
+
+        # Find the completed event
+        completed_call = next(
+            call
+            for call in mock_posthog.capture.call_args_list
+            if call.kwargs["event"] == "request_completed"
+        )
+
+        props = completed_call.kwargs["properties"]
+        assert "cache" in props
+        assert props["cache"]["hits"] == 2
+        assert props["cache"]["misses"] == 1
+        assert props["cache"]["writes"] == 1
+        assert props["cache"]["errors"] == 0
+        assert props["cache"]["hit_rate"] == 0.67  # 2/3 rounded to 2 decimals

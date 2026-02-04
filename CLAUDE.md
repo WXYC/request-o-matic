@@ -19,7 +19,28 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `routers/request.py` - Main request handling and search orchestration
 - `services/parser.py` - Groq AI message parsing
 - `library/db.py` - SQLite full-text search with FTS5 and fuzzy fallback
-- `artwork/providers/discogs.py` - Discogs API integration
+- `discogs/service.py` - Discogs API service with optional PostgreSQL cache
+- `discogs/cache_service.py` - PostgreSQL cache for Discogs data (reduces API calls)
+- `discogs/memory_cache.py` - In-memory TTL cache for API responses
+- `core/sentry.py` - Sentry error tracking integration
+- `core/telemetry.py` - PostHog telemetry with cache stats tracking
+
+### Discogs Cache (Optional)
+The service supports an optional PostgreSQL cache for Discogs data to reduce API calls:
+
+**Cache Strategy:**
+1. Query local PostgreSQL cache first
+2. On cache miss, query Discogs API
+3. Write API results back to cache for future queries
+4. Gracefully degrade to API-only if cache unavailable
+
+**Cache Service (`discogs/cache_service.py`):**
+- Uses asyncpg for async PostgreSQL connections
+- Trigram similarity (pg_trgm) for fuzzy text matching
+- `CacheUnavailableError` exception for connection failures
+
+**Enabling the Cache:**
+Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. If not set, the service uses Discogs API directly (existing behavior).
 
 ### Library ETL
 The `library.db` SQLite database is synced daily from the WXYC MySQL database:
@@ -160,6 +181,8 @@ Required:
 Optional:
 - `DISCOGS_TOKEN` - For artwork and track lookup
 - `SLACK_WEBHOOK_URL` - For posting results
+- `SENTRY_DSN` - For error tracking (Sentry)
+- `DATABASE_URL_DISCOGS` - PostgreSQL URL for Discogs cache (e.g., `postgresql://user:pass@host:5432/discogs`)
 
 Library ETL (for `scripts/sync-library.sh`):
 - `LIBRARY_SSH_HOST` - SSH host to connect to

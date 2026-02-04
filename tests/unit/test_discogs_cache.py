@@ -2,7 +2,7 @@
 
 import pytest
 
-from discogs.cache import async_cached, clear_all_caches, create_ttl_cache, make_cache_key
+from discogs.memory_cache import async_cached, clear_all_caches, create_ttl_cache, make_cache_key
 
 # Default test data
 TEST_TRACK = "VI Scose Poise"

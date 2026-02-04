@@ -1,15 +1,18 @@
 """Tests for DiscogsService."""
 
 import re
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 from pytest_httpx import HTTPXMock
 
-from discogs.cache import clear_all_caches
+from discogs.memory_cache import clear_all_caches
 from discogs.models import (
     DiscogsSearchRequest,
+    ReleaseInfo,
     ReleaseMetadataResponse,
+    TrackItem,
     TrackReleasesResponse,
 )
 from discogs.ratelimit import reset_rate_limiting
@@ -450,3 +453,239 @@ class TestRequestWithRetry:
         response = await service._request_with_retry("GET", "/database/search", params={})
 
         assert response is None
+
+
+class TestCacheIntegration:
+    """Tests for PostgreSQL cache integration in DiscogsService."""
+
+    @pytest.fixture
+    def mock_cache_service(self):
+        """Create a mock cache service."""
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = MagicMock(spec=DiscogsCacheService)
+        cache.search_releases_by_track = AsyncMock()
+        cache.get_release = AsyncMock()
+        cache.write_release = AsyncMock()
+        cache.validate_track_on_release = AsyncMock()
+        cache.is_available = AsyncMock(return_value=True)
+        return cache
+
+    @pytest_asyncio.fixture
+    async def service_with_cache(self, mock_cache_service):
+        """Create a DiscogsService with cache service."""
+        svc = DiscogsService(token="test-token", cache_service=mock_cache_service)
+        yield svc
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_search_releases_cache_hit_skips_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test cache hit skips API call."""
+        # Cache returns results
+        mock_cache_service.search_releases_by_track.return_value = [
+            ReleaseInfo(
+                album=TEST_ALBUM,
+                artist=TEST_ARTIST,
+                release_id=TEST_RELEASE_ID,
+                release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
+                is_compilation=False,
+            )
+        ]
+
+        result = await service_with_cache.search_releases_by_track(TEST_TRACK, TEST_ARTIST)
+
+        assert len(result.releases) == 1
+        assert result.releases[0].album == TEST_ALBUM
+        # No HTTP requests should have been made
+        assert len(httpx_mock.get_requests()) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_search_releases_cache_miss_calls_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test cache miss falls back to API."""
+        # Cache returns empty (miss)
+        mock_cache_service.search_releases_by_track.return_value = []
+
+        # API returns results
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                    }
+                ]
+            },
+        )
+
+        result = await service_with_cache.search_releases_by_track(TEST_TRACK, TEST_ARTIST)
+
+        assert len(result.releases) >= 1
+        # HTTP request should have been made
+        assert len(httpx_mock.get_requests()) >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_release_cache_hit_skips_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test get_release cache hit skips API call."""
+        # Cache returns release
+        mock_cache_service.get_release.return_value = ReleaseMetadataResponse(
+            release_id=TEST_RELEASE_ID,
+            title=TEST_ALBUM,
+            artist=TEST_ARTIST,
+            year=2001,
+            tracklist=[TrackItem(position="1", title=TEST_TRACK)],
+            release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
+            cached=True,
+        )
+
+        result = await service_with_cache.get_release(TEST_RELEASE_ID)
+
+        assert result is not None
+        assert result.title == TEST_ALBUM
+        assert result.cached is True
+        # No HTTP requests should have been made
+        assert len(httpx_mock.get_requests()) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_release_cache_miss_calls_api_and_writes_back(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test cache miss calls API and writes result back to cache."""
+        # Cache returns None (miss)
+        mock_cache_service.get_release.return_value = None
+
+        # API returns release
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "year": 2001,
+                "tracklist": [{"position": "1", "title": TEST_TRACK}],
+            },
+        )
+
+        result = await service_with_cache.get_release(TEST_RELEASE_ID)
+
+        assert result is not None
+        assert result.title == TEST_ALBUM
+        # HTTP request should have been made
+        assert len(httpx_mock.get_requests()) == 1
+        # Result should be written back to cache
+        mock_cache_service.write_release.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_cache_unavailable_continues_with_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test service continues with API when cache is unavailable."""
+        from discogs.cache_service import CacheUnavailableError
+
+        # Cache raises error
+        mock_cache_service.get_release.side_effect = CacheUnavailableError("Connection failed")
+        mock_cache_service.write_release.side_effect = CacheUnavailableError("Connection failed")
+
+        # API returns release
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "tracklist": [],
+            },
+        )
+
+        result = await service_with_cache.get_release(TEST_RELEASE_ID)
+
+        assert result is not None
+        assert result.title == TEST_ALBUM
+        # Should have fallen back to API
+        assert len(httpx_mock.get_requests()) == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_unavailable_logged(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock, caplog
+    ):
+        """Test cache unavailability is logged."""
+        import logging
+
+        from discogs.cache_service import CacheUnavailableError
+
+        caplog.set_level(logging.WARNING)
+
+        # Cache raises error
+        mock_cache_service.get_release.side_effect = CacheUnavailableError("Connection failed")
+        mock_cache_service.write_release.side_effect = CacheUnavailableError("Connection failed")
+
+        # API returns release
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "tracklist": [],
+            },
+        )
+
+        await service_with_cache.get_release(TEST_RELEASE_ID)
+
+        assert "cache" in caplog.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_validate_track_cache_hit_skips_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test validate_track_on_release uses cache when available."""
+        # Cache returns True (track found)
+        mock_cache_service.validate_track_on_release.return_value = True
+
+        result = await service_with_cache.validate_track_on_release(
+            TEST_RELEASE_ID, TEST_TRACK, TEST_ARTIST
+        )
+
+        assert result is True
+        # No HTTP requests should have been made
+        assert len(httpx_mock.get_requests()) == 0
+
+    @pytest.mark.asyncio
+    async def test_validate_track_cache_miss_calls_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test validate_track_on_release falls back to API on cache miss."""
+        # Cache validation returns None (not cached)
+        mock_cache_service.validate_track_on_release.return_value = None
+        # Cache get_release also returns None (forcing API call)
+        mock_cache_service.get_release.return_value = None
+
+        # API returns release with track
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "tracklist": [
+                    {"position": "1", "title": TEST_TRACK, "artists": [{"name": TEST_ARTIST}]}
+                ],
+            },
+        )
+
+        result = await service_with_cache.validate_track_on_release(
+            TEST_RELEASE_ID, TEST_TRACK, TEST_ARTIST
+        )
+
+        assert result is True
+        # HTTP request should have been made
+        assert len(httpx_mock.get_requests()) == 1

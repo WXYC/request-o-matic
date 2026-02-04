@@ -317,6 +317,8 @@ If Slack integration fails:
 | `ENABLE_ARTWORK_LOOKUP` | No | true | Enable/disable artwork lookup from external APIs |
 | `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
 | `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
+| `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
+| `DATABASE_URL_DISCOGS` | No | - | PostgreSQL URL for Discogs cache (reduces API calls) |
 
 ## Architecture
 
@@ -328,6 +330,8 @@ If Slack integration fails:
 4. **Async Throughout**: All I/O operations use async/await for optimal performance
 5. **Custom Exceptions**: Domain-specific exceptions for better error handling and debugging
 6. **Comprehensive Logging**: Structured logging at appropriate levels throughout the application
+7. **Hybrid Caching**: Optional PostgreSQL cache for Discogs data with graceful degradation to API-only mode
+8. **Error Tracking**: Sentry integration for production error monitoring with breadcrumbs for debugging
 
 ### Service Lifecycle
 
@@ -347,4 +351,3 @@ Services are managed through FastAPI's lifespan context manager:
 ## Support
 
 For issues and questions, please [open an issue](https://github.com/your-repo/request-parser/issues) on GitHub.
-

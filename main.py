@@ -16,6 +16,7 @@ from core.dependencies import (
     shutdown_posthog,
 )
 from core.logging import setup_logging
+from core.sentry import init_sentry
 from discogs.router import router as discogs_router
 from library.router import router as library_router
 from routers.health import router as health_router
@@ -27,6 +28,13 @@ load_dotenv()
 
 # Get settings
 settings = get_settings()
+
+# Initialize Sentry for error tracking
+init_sentry(
+    dsn=settings.sentry_dsn,
+    environment="production" if settings.log_level != "DEBUG" else "development",
+    release=settings.app_version,
+)
 
 # Configure logging
 # In production, log to /app/logs which is writable by appuser

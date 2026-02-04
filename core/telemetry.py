@@ -23,11 +23,34 @@ class StepResult:
 
 
 @dataclass
+class CacheStats:
+    """Statistics for cache operations."""
+
+    hits: int = 0
+    misses: int = 0
+    writes: int = 0
+    errors: int = 0
+
+    @property
+    def total_queries(self) -> int:
+        """Total number of cache queries (hits + misses)."""
+        return self.hits + self.misses
+
+    @property
+    def hit_rate(self) -> float:
+        """Cache hit rate as a percentage (0.0 to 1.0)."""
+        if self.total_queries == 0:
+            return 0.0
+        return self.hits / self.total_queries
+
+
+@dataclass
 class RequestTelemetry:
     """Tracks performance metrics for a single request."""
 
     steps: dict[str, StepResult] = field(default_factory=dict)
     api_calls: dict[str, int] = field(default_factory=lambda: {"groq": 0, "discogs": 0, "slack": 0})
+    cache_stats: CacheStats = field(default_factory=CacheStats)
     start_time: float = field(default_factory=time.perf_counter)
     _current_step: str | None = field(default=None, repr=False)
     _step_start: float = field(default=0.0, repr=False)
@@ -75,6 +98,22 @@ class RequestTelemetry:
         else:
             logger.warning(f"Unknown service for API call tracking: {service}")
 
+    def record_cache_hit(self) -> None:
+        """Record a cache hit."""
+        self.cache_stats.hits += 1
+
+    def record_cache_miss(self) -> None:
+        """Record a cache miss."""
+        self.cache_stats.misses += 1
+
+    def record_cache_write(self) -> None:
+        """Record a cache write operation."""
+        self.cache_stats.writes += 1
+
+    def record_cache_error(self) -> None:
+        """Record a cache error (connection failure, etc.)."""
+        self.cache_stats.errors += 1
+
     def get_total_duration_ms(self) -> float:
         """Get total elapsed time since telemetry was created."""
         return (time.perf_counter() - self.start_time) * 1000
@@ -119,11 +158,17 @@ class RequestTelemetry:
                 "total_duration_ms": round(self.get_total_duration_ms(), 2),
                 "steps": self.get_step_timings(),
                 "api_calls": self.api_calls.copy(),
+                "cache": {
+                    "hits": self.cache_stats.hits,
+                    "misses": self.cache_stats.misses,
+                    "writes": self.cache_stats.writes,
+                    "errors": self.cache_stats.errors,
+                    "hit_rate": round(self.cache_stats.hit_rate, 2),
+                },
                 **extra_properties,
             },
         )
 
         logger.debug(
-            f"Sent telemetry: {len(self.steps)} steps, "
-            f"total {self.get_total_duration_ms():.1f}ms"
+            f"Sent telemetry: {len(self.steps)} steps, total {self.get_total_duration_ms():.1f}ms"
         )

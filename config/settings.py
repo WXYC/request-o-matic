@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     posthog_api_key: str | None = Field(None, description="PostHog API key for telemetry")
     posthog_host: str = Field(default="https://us.i.posthog.com", description="PostHog host URL")
 
+    # Sentry Configuration
+    sentry_dsn: str | None = Field(None, description="Sentry DSN for error tracking")
+
+    # Discogs Cache Database Configuration
+    database_url_discogs: str | None = Field(
+        None,
+        description="PostgreSQL connection URL for Discogs cache (e.g., postgresql://user:pass@host:5432/discogs)",
+    )
+
     # Discogs Cache Configuration
     discogs_track_cache_ttl: int = Field(
         default=3600, description="TTL in seconds for Discogs track cache (default: 1 hour)"

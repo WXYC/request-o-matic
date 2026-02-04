@@ -1,14 +1,16 @@
 """Discogs API service with caching and rate limiting."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from config.settings import get_settings
 from core.matching import calculate_confidence, is_compilation_artist
-from discogs.cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
+from discogs.memory_cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
 from discogs.models import (
     DiscogsSearchRequest,
     DiscogsSearchResponse,
@@ -20,21 +22,40 @@ from discogs.models import (
 )
 from discogs.ratelimit import get_rate_limiter, get_semaphore
 
+if TYPE_CHECKING:
+    from discogs.cache_service import DiscogsCacheService
+
+# Import Sentry breadcrumb helper (fail gracefully if not initialized)
+try:
+    from core.sentry import add_discogs_breadcrumb
+except ImportError:
+
+    def add_discogs_breadcrumb(operation: str, data: dict | None = None, level: str = "info"):
+        pass  # No-op if Sentry not available
+
+
 logger = logging.getLogger(__name__)
 
 DISCOGS_API_BASE = "https://api.discogs.com"
 
 
 class DiscogsService:
-    """Service for all Discogs API interactions with caching."""
+    """Service for all Discogs API interactions with caching.
 
-    def __init__(self, token: str):
+    Supports an optional PostgreSQL cache service for faster lookups.
+    When cache_service is provided, queries check local cache first,
+    then fall back to Discogs API, and cache API results for future queries.
+    """
+
+    def __init__(self, token: str, cache_service: DiscogsCacheService | None = None):
         """Initialize the service with a Discogs API token.
 
         Args:
             token: Discogs API token
+            cache_service: Optional PostgreSQL cache service for local caching
         """
         self.token = token
+        self.cache_service = cache_service
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -128,9 +149,10 @@ class DiscogsService:
     ) -> TrackReleasesResponse:
         """Search for ALL releases containing a track.
 
-        Uses a hybrid approach:
-        1. First search with 'track' parameter for precise matches
-        2. If few results, supplement with keyword search for compilations
+        Uses a hybrid approach with optional PostgreSQL cache:
+        1. Try local cache first (if available)
+        2. On cache miss, search Discogs API
+        3. Supplement with keyword search if few results
 
         Args:
             track: Track title to search for
@@ -140,6 +162,35 @@ class DiscogsService:
         Returns:
             TrackReleasesResponse with list of releases
         """
+        # Try local cache first
+        if self.cache_service:
+            try:
+                add_discogs_breadcrumb(
+                    "cache_search_releases_by_track",
+                    {"track": track, "artist": artist},
+                )
+                cached_releases = await self.cache_service.search_releases_by_track(
+                    track=track, artist=artist, limit=limit
+                )
+                if cached_releases:
+                    logger.info(f"Cache hit: found {len(cached_releases)} releases for '{track}'")
+                    add_discogs_breadcrumb(
+                        "cache_hit", {"track": track, "count": len(cached_releases)}
+                    )
+                    return TrackReleasesResponse(
+                        track=track,
+                        artist=artist,
+                        releases=cached_releases,
+                        total=len(cached_releases),
+                        cached=True,
+                    )
+                logger.debug(f"Cache miss for track '{track}'")
+                add_discogs_breadcrumb("cache_miss", {"track": track})
+            except Exception as e:
+                logger.warning(f"Cache lookup failed, falling back to API: {e}")
+                add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
+
+        # Fall back to Discogs API
         releases: list[ReleaseInfo] = []
         seen_albums: set = set()
 
@@ -247,12 +298,33 @@ class DiscogsService:
     async def get_release(self, release_id: int) -> ReleaseMetadataResponse | None:
         """Get full release metadata by ID.
 
+        Uses optional PostgreSQL cache with write-back strategy:
+        1. Try local cache first (if available)
+        2. On cache miss, fetch from Discogs API
+        3. Write API result back to cache for future queries
+
         Args:
             release_id: Discogs release ID
 
         Returns:
             ReleaseMetadataResponse with full metadata, or None on error
         """
+        # Try local cache first
+        if self.cache_service:
+            try:
+                add_discogs_breadcrumb("cache_get_release", {"release_id": release_id})
+                cached_release = await self.cache_service.get_release(release_id)
+                if cached_release:
+                    logger.info(f"Cache hit: release {release_id}")
+                    add_discogs_breadcrumb("cache_hit", {"release_id": release_id})
+                    return cached_release
+                logger.debug(f"Cache miss for release {release_id}")
+                add_discogs_breadcrumb("cache_miss", {"release_id": release_id})
+            except Exception as e:
+                logger.warning(f"Cache lookup failed, falling back to API: {e}")
+                add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
+
+        # Fall back to Discogs API
         try:
             response = await self._request_with_retry("GET", f"/releases/{release_id}")
 
@@ -286,7 +358,7 @@ class DiscogsService:
             images = data.get("images", [])
             artwork_url = images[0].get("uri") if images else None
 
-            return ReleaseMetadataResponse(
+            release = ReleaseMetadataResponse(
                 release_id=release_id,
                 title=data.get("title", ""),
                 artist=artist_name,
@@ -299,6 +371,18 @@ class DiscogsService:
                 release_url=f"https://www.discogs.com/release/{release_id}",
                 cached=False,
             )
+
+            # Write back to cache for future queries
+            if self.cache_service:
+                try:
+                    add_discogs_breadcrumb("cache_write_release", {"release_id": release_id})
+                    await self.cache_service.write_release(release)
+                    logger.debug(f"Cached release {release_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to cache release {release_id}: {e}")
+                    add_discogs_breadcrumb("cache_write_error", {"error": str(e)}, level="warning")
+
+            return release
 
         except Exception as e:
             logger.error(f"Failed to fetch release {release_id}: {e}")
@@ -421,6 +505,10 @@ class DiscogsService:
     async def validate_track_on_release(self, release_id: int, track: str, artist: str) -> bool:
         """Validate that a track by an artist exists on a release.
 
+        Uses optional PostgreSQL cache for validation:
+        1. Try cache validation first (if available)
+        2. On cache miss (None), fall back to API via get_release
+
         Args:
             release_id: Discogs release ID
             track: Track title to find
@@ -429,6 +517,32 @@ class DiscogsService:
         Returns:
             True if the track by the artist is found on the release
         """
+        # Try cache validation first
+        if self.cache_service:
+            try:
+                add_discogs_breadcrumb(
+                    "cache_validate_track",
+                    {"release_id": release_id, "track": track, "artist": artist},
+                )
+                cached_result = await self.cache_service.validate_track_on_release(
+                    release_id, track, artist
+                )
+                if cached_result is not None:
+                    logger.info(
+                        f"Cache {'validated' if cached_result else 'rejected'}: "
+                        f"'{track}' by '{artist}' on release {release_id}"
+                    )
+                    add_discogs_breadcrumb(
+                        "cache_hit", {"release_id": release_id, "validated": cached_result}
+                    )
+                    return cached_result
+                logger.debug(f"Cache miss for validation on release {release_id}")
+                add_discogs_breadcrumb("cache_miss", {"release_id": release_id})
+            except Exception as e:
+                logger.warning(f"Cache validation failed, falling back to API: {e}")
+                add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
+
+        # Fall back to API via get_release
         release = await self.get_release(release_id)
         if release is None:
             return False
