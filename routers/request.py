@@ -355,18 +355,31 @@ async def search_library_with_fallback(
             # Filter to only include albums that match the Discogs album name
             # This prevents fuzzy search from returning unrelated albums by the same artist
             album_lower = album.lower()
-            # Extract significant words from the Discogs album title
-            album_words = {w for w in re.sub(r"[^\w\s]", " ", album_lower).split() if len(w) > 2}
+            # Normalize for comparison (remove punctuation, extra spaces)
+            album_normalized = re.sub(r"[^\w\s]", " ", album_lower)
+            album_normalized = " ".join(album_normalized.split())
+            # Extract significant words from the Discogs album title (exclude stopwords)
+            album_words = {w for w in album_normalized.split() if len(w) > 2 and w not in STOPWORDS}
             filtered_results = []
             for item in results:
                 item_title_lower = (item.title or "").lower()
+                item_normalized = re.sub(r"[^\w\s]", " ", item_title_lower)
+                item_normalized = " ".join(item_normalized.split())
                 # Check if the library album title shares significant words with Discogs album
                 item_words = {
-                    w for w in re.sub(r"[^\w\s]", " ", item_title_lower).split() if len(w) > 2
+                    w for w in item_normalized.split() if len(w) > 2 and w not in STOPWORDS
                 }
-                # Require at least one significant word match (besides common words)
+                # Require meaningful overlap to avoid false positives from common words
+                # - Short titles (1-2 words): Discogs album must START with the library title
+                #   (e.g., "Wireless" matches "Wireless - Live At...", but "The Band" doesn't
+                #   match "Live Band # One" because it doesn't start with "The Band")
+                # - Longer titles: require at least 2 common significant words
                 common_words = album_words & item_words
-                if common_words:
+                if len(item_words) <= 2:
+                    # Short title: Discogs album must start with library title
+                    if album_normalized.startswith(item_normalized):
+                        filtered_results.append(item)
+                elif len(common_words) >= 2:
                     filtered_results.append(item)
             results = filtered_results
 
@@ -386,6 +399,7 @@ async def search_library_with_fallback(
             return all_results, False
 
     # If no albums from Discogs, try artist + song
+    # This is a fallback when we couldn't confirm which album contains the track
     if parsed.artist and parsed.song:
         query = f"{parsed.artist} {parsed.song}"
         results = await db.search(query=query, limit=MAX_SEARCH_RESULTS)
@@ -398,7 +412,9 @@ async def search_library_with_fallback(
                 key=lambda r: song_lower in (r.title or "").lower(),
                 reverse=True,
             )
-            return results, False
+            # We had a song but couldn't find/confirm albums from Discogs
+            # Set song_not_found=True so context message indicates uncertainty
+            return results, True
 
     # If still no results, try just artist
     if not all_results and parsed.artist:

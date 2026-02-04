@@ -257,6 +257,60 @@ async def test_search_library_with_fallback_filters_by_album_title(mock_library_
     assert fallback_used is False
 
 
+@pytest.mark.asyncio
+async def test_search_library_album_filter_excludes_single_common_word_matches(mock_library_db):
+    """Test that album word filter requires meaningful overlap, not just common words.
+
+    Regression test for bug where searching for "Chest Fever" by The Band would
+    return "The Band" (self-titled album) because Discogs album "Live Band # One"
+    shares the word "band" with "The Band". Single common words like "band" or "the"
+    should not be enough to match.
+    """
+    # Mock: fuzzy search returns The Band albums
+    mock_library_db.search.return_value = [
+        LibraryItem(
+            id=1,
+            artist="The Band",
+            title="Music from Big Pink",  # Should match "Music From Big Pink" from Discogs
+            call_letters="B",
+            artist_call_number=1,
+            release_call_number=1,
+            genre="Rock",
+            format="vinyl",
+        ),
+        LibraryItem(
+            id=2,
+            artist="The Band",
+            title="The Band",  # Should NOT match - only shares "band" with "Live Band # One"
+            call_letters="B",
+            artist_call_number=1,
+            release_call_number=2,
+            genre="Rock",
+            format="vinyl",
+        ),
+    ]
+
+    parsed = ParsedRequest(
+        song="Chest Fever",
+        artist="The Band",
+        album=None,
+        is_request=True,
+        message_type=MessageType.REQUEST,
+        raw_message="Chest Fever The Band",
+    )
+
+    # Albums from Discogs track lookup - "Live Band # One" shares only "band" with "The Band"
+    discogs_albums = ["Music From Big Pink", "Live Band # One"]
+    results, fallback_used = await search_library_with_fallback(
+        mock_library_db, parsed, discogs_albums
+    )
+
+    # Only "Music from Big Pink" should match, not "The Band" (self-titled)
+    assert len(results) == 1
+    assert results[0].title == "Music from Big Pink"
+    assert fallback_used is False
+
+
 # Tests for filter_results_by_artist
 class TestFilterResultsByArtist:
     """Tests for the filter_results_by_artist function."""
