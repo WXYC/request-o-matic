@@ -318,7 +318,57 @@ If Slack integration fails:
 | `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
 | `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
 | `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
-| `DATABASE_URL_DISCOGS` | No | - | PostgreSQL URL for Discogs cache (reduces API calls) |
+| `DATABASE_URL_DISCOGS` | No | - | PostgreSQL URL for Discogs cache (see [Discogs Cache Setup](#discogs-cache-setup)) |
+
+## Discogs Cache Setup
+
+The service supports an optional PostgreSQL cache for Discogs data to reduce API calls. When enabled, the service queries the local cache first and falls back to the Discogs API on cache misses.
+
+### Prerequisites
+
+- PostgreSQL with the `pg_trgm` extension
+- Discogs monthly data dump (XML format) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
+- [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) to convert XML to CSV
+
+### Setup Steps
+
+1. **Convert XML to CSV** using discogs-xml2db:
+   ```bash
+   python -m discogs_xml2db releases.xml --output csv
+   ```
+
+2. **Filter to library artists** to reduce data volume (~70% reduction):
+   ```bash
+   python scripts/setup-discogs-db/filter_discogs_csv.py \
+     --library-db library.db \
+     --input-dir /path/to/csv \
+     --output-dir /path/to/filtered
+   ```
+
+3. **Create database and schema:**
+   ```bash
+   createdb discogs
+   psql -d discogs -f scripts/setup-discogs-db/04-create-database.sql
+   ```
+
+4. **Import filtered CSVs:**
+   ```bash
+   python scripts/setup-discogs-db/import_csv.py \
+     --csv-dir /path/to/filtered \
+     --database discogs
+   ```
+
+5. **Create indexes** (including trigram indexes for fuzzy search):
+   ```bash
+   psql -d discogs -f scripts/setup-discogs-db/05-create-indexes.sql
+   ```
+
+6. **Set the environment variable:**
+   ```bash
+   DATABASE_URL_DISCOGS=postgresql://user:pass@host:5432/discogs
+   ```
+
+If `DATABASE_URL_DISCOGS` is not set, the service uses the Discogs API directly (existing behavior).
 
 ## Architecture
 
@@ -330,7 +380,7 @@ If Slack integration fails:
 4. **Async Throughout**: All I/O operations use async/await for optimal performance
 5. **Custom Exceptions**: Domain-specific exceptions for better error handling and debugging
 6. **Comprehensive Logging**: Structured logging at appropriate levels throughout the application
-7. **Hybrid Caching**: Optional PostgreSQL cache for Discogs data with graceful degradation to API-only mode
+7. **Hybrid Caching**: Optional PostgreSQL cache built from Discogs data dumps with trigram fuzzy matching, graceful degradation to API-only mode
 8. **Error Tracking**: Sentry integration for production error monitoring with breadcrumbs for debugging
 
 ### Service Lifecycle
