@@ -378,7 +378,7 @@ class TestQueryPerformance:
                 elapsed_ms = (time.perf_counter() - start) * 1000
 
                 response.raise_for_status()
-                metrics.add(TimingResult(query=f"Iteration {i+1}", total_ms=elapsed_ms))
+                metrics.add(TimingResult(query=f"Iteration {i + 1}", total_ms=elapsed_ms))
 
         metrics.print_report(f"Repeated Query: {query}")
 
@@ -460,7 +460,7 @@ class TestApiCallCounts:
 
         for scenario in scenarios:
             print(f"\n  {scenario['name']}")
-            print(f"  Example: \"{scenario['example']}\"")
+            print(f'  Example: "{scenario["example"]}"')
             print(f"  {'-' * 50}")
             for api, count in scenario["calls"].items():
                 print(f"    {api:<35} {count}")

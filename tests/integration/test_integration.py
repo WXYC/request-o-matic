@@ -112,9 +112,9 @@ class TestDiscogsIntegration:
             artist_lower = artist.lower()
             is_sugar_plant = "sugar plant" in artist_lower
             is_compilation = "various" in artist_lower
-            assert (
-                is_sugar_plant or is_compilation
-            ), f"Expected Sugar Plant or verified compilation, got '{artist}'"
+            assert is_sugar_plant or is_compilation, (
+                f"Expected Sugar Plant or verified compilation, got '{artist}'"
+            )
 
         print("\n✅ Tracklist validation correctly filtered false positives!")
 
@@ -231,9 +231,9 @@ class TestLibraryIntegration:
         # Verify they're actually by Echo and the Bunnymen
         for result in results:
             assert result.artist is not None, "Result should have artist"
-            assert (
-                "echo" in result.artist.lower()
-            ), f"Result should be by Echo and the Bunnymen, got {result.artist}"
+            assert "echo" in result.artist.lower(), (
+                f"Result should be by Echo and the Bunnymen, got {result.artist}"
+            )
 
         await db.close()
 
@@ -514,12 +514,12 @@ class TestParserIntegration:
         assert result.artist is not None
 
         # The key assertion: asterisks should be preserved
-        assert (
-            "*" in result.artist
-        ), f"Expected asterisks to be preserved in artist name, got: {result.artist}"
-        assert (
-            result.artist.lower().replace("*", "") == "quixotic"
-        ), f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
+        assert "*" in result.artist, (
+            f"Expected asterisks to be preserved in artist name, got: {result.artist}"
+        )
+        assert result.artist.lower().replace("*", "") == "quixotic", (
+            f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
+        )
 
         print(f"  ✅ Asterisks preserved: {result.artist}")
 
@@ -545,9 +545,9 @@ class TestParserIntegration:
 
             assert result.artist is not None, f"Expected artist for '{message}'"
             # Check special char is preserved (case-insensitive check on base name)
-            assert (
-                special_char in result.artist or special_char in result.artist.lower()
-            ), f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
+            assert special_char in result.artist or special_char in result.artist.lower(), (
+                f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
+            )
 
             print(f"  ✅ Special char '{special_char}' preserved")
 
@@ -577,9 +577,9 @@ class TestParserIntegration:
         assert result.is_request is True, "Should recognize as a request"
         assert result.song is not None, "Should extract song title"
         assert result.artist is not None, "Should extract artist name"
-        assert (
-            "man" in result.song.lower() and "house" in result.song.lower()
-        ), f"Expected song 'The Man in Your House', got: {result.song}"
+        assert "man" in result.song.lower() and "house" in result.song.lower(), (
+            f"Expected song 'The Man in Your House', got: {result.song}"
+        )
         assert "mi ami" in result.artist.lower(), f"Expected artist 'Mi Ami', got: {result.artist}"
 
         print("  ✅ Correctly parsed comma-separated format!")
@@ -620,9 +620,9 @@ class TestFullRequestIntegration:
 
         # Check parsing
         parsed = data.get("parsed", {})
-        assert (
-            parsed.get("artist") == "Echo and the Bunnymen"
-        ), f"Should parse artist as 'Echo and the Bunnymen', got {parsed.get('artist')}"
+        assert parsed.get("artist") == "Echo and the Bunnymen", (
+            f"Should parse artist as 'Echo and the Bunnymen', got {parsed.get('artist')}"
+        )
 
         # Check results
         results = data.get("library_results", [])
@@ -630,9 +630,9 @@ class TestFullRequestIntegration:
 
         # Verify all results are by Echo and the Bunnymen
         for result in results:
-            assert (
-                "echo" in result.get("artist", "").lower()
-            ), f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
+            assert "echo" in result.get("artist", "").lower(), (
+                f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
+            )
 
         print(f"\n✅ Artist-only search returned {len(results)} results:")
         for r in results:
@@ -726,9 +726,9 @@ class TestFullRequestIntegration:
 
         # Should NOT include Lovelife (which doesn't have Thoughtforms)
         titles = [r.get("title", "").lower() for r in results]
-        assert (
-            "lovelife" not in titles
-        ), "Lovelife should NOT be in results because it doesn't have Thoughtforms"
+        assert "lovelife" not in titles, (
+            "Lovelife should NOT be in results because it doesn't have Thoughtforms"
+        )
 
         # Should include albums that actually have Thoughtforms
         # (According to Discogs: Mad Love, Scar, Gala, etc.)
@@ -784,9 +784,9 @@ class TestFullRequestIntegration:
 
         # Should NOT include Stator (which doesn't have The Things I Tell You)
         titles = [r.get("title", "").lower() for r in results]
-        assert (
-            "stator" not in titles
-        ), "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
+        assert "stator" not in titles, (
+            "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
+        )
 
         # Should include albums that actually have the track
         # (According to Discogs: Substrata, Wireless)
@@ -828,9 +828,9 @@ class TestFullRequestIntegration:
         # Should NOT include Young Black Teenagers
         for r in results:
             artist = r.get("artist", "").lower()
-            assert (
-                "young black teenagers" not in artist
-            ), "'Young Black Teenagers' should not match 'Young Gov' search"
+            assert "young black teenagers" not in artist, (
+                "'Young Black Teenagers' should not match 'Young Gov' search"
+            )
 
         print("\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
 
@@ -870,18 +870,18 @@ class TestFullRequestIntegration:
             r for r in results if "various artists" in r.get("artist", "").lower()
         ]
 
-        assert (
-            len(various_artists_results) == 0
-        ), f"Should not return Various Artists compilations: {various_artists_results}"
+        assert len(various_artists_results) == 0, (
+            f"Should not return Various Artists compilations: {various_artists_results}"
+        )
 
         # Check that results contain "laid back" in either artist or title
         for r in results:
             artist = r.get("artist", "").lower()
             title = r.get("title", "").lower()
 
-            assert (
-                "laid back" in artist or "laid back" in title
-            ), f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
+            assert "laid back" in artist or "laid back" in title, (
+                f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
+            )
 
         print("\n✅ No Various Artists false positives!")
 
@@ -949,9 +949,9 @@ class TestFullRequestIntegration:
         # Should NOT include Edward Bear
         for r in results:
             artist = r.get("artist", "").lower()
-            assert (
-                "edward bear" not in artist
-            ), "'Edward Bear' should not match 'Amps for Christ' search"
+            assert "edward bear" not in artist, (
+                "'Edward Bear' should not match 'Amps for Christ' search"
+            )
 
         # If we have results, they should be by Amps for Christ
         if results:
@@ -959,7 +959,7 @@ class TestFullRequestIntegration:
                 r.get("artist", "").lower().startswith("amps for christ") for r in results
             )
             assert has_amps, (
-                f"Expected 'Amps for Christ' albums, got: " f"{[r.get('artist') for r in results]}"
+                f"Expected 'Amps for Christ' albums, got: {[r.get('artist') for r in results]}"
             )
 
         print("\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
@@ -1043,21 +1043,21 @@ class TestFullRequestIntegration:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
         # Should be recognized as a request
-        assert (
-            parsed.get("is_request") is True
-        ), "Should recognize 'song, artist' format as a request"
+        assert parsed.get("is_request") is True, (
+            "Should recognize 'song, artist' format as a request"
+        )
 
         # Should have results
         assert len(results) > 0, "Should find results for Mi Ami"
 
         # Should return Watersports
         first_result = results[0]
-        assert (
-            "watersports" in first_result.get("title", "").lower()
-        ), f"Expected 'Watersports' album, got '{first_result.get('title')}'"
-        assert (
-            "mi ami" in first_result.get("artist", "").lower()
-        ), f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
+        assert "watersports" in first_result.get("title", "").lower(), (
+            f"Expected 'Watersports' album, got '{first_result.get('title')}'"
+        )
+        assert "mi ami" in first_result.get("artist", "").lower(), (
+            f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
+        )
 
         print("\n✅ Correctly returned 'Watersports' by Mi Ami!")
 
@@ -1097,9 +1097,9 @@ class TestFullRequestIntegration:
 
         # All results should be by Living Colour
         for r in results:
-            assert (
-                "living colour" in r.get("artist", "").lower()
-            ), f"Expected 'Living Colour', got '{r.get('artist')}'"
+            assert "living colour" in r.get("artist", "").lower(), (
+                f"Expected 'Living Colour', got '{r.get('artist')}'"
+            )
 
         print("\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
 
@@ -1152,9 +1152,9 @@ class TestFullRequestIntegration:
             # Either by Sugar Plant directly, or a verified compilation
             is_sugar_plant = "sugar plant" in artist
             is_valid_compilation = "various" in artist
-            assert (
-                is_sugar_plant or is_valid_compilation
-            ), f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
+            assert is_sugar_plant or is_valid_compilation, (
+                f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
+            )
 
         print("\n✅ Correctly excluded unrelated compilations!")
 
@@ -1193,9 +1193,9 @@ class TestFullRequestIntegration:
 
             # Check all library URLs are unique
             library_urls = [r.get("library_url") for r in results]
-            assert len(library_urls) == len(
-                set(library_urls)
-            ), f"Duplicate library URLs found in results for '{query}': {library_urls}"
+            assert len(library_urls) == len(set(library_urls)), (
+                f"Duplicate library URLs found in results for '{query}': {library_urls}"
+            )
 
             if len(results) > 1:
                 found_multi_result = True
@@ -1236,15 +1236,15 @@ class TestFullRequestIntegration:
 
             # Check all IDs are unique
             ids = [r.get("id") for r in results]
-            assert len(ids) == len(
-                set(ids)
-            ), f"Duplicate IDs found for '{query}' ({description}): {ids}"
+            assert len(ids) == len(set(ids)), (
+                f"Duplicate IDs found for '{query}' ({description}): {ids}"
+            )
 
             # Check no duplicate (artist, title) pairs
             artist_title_pairs = [(r.get("artist"), r.get("title")) for r in results]
-            assert len(artist_title_pairs) == len(
-                set(artist_title_pairs)
-            ), f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
+            assert len(artist_title_pairs) == len(set(artist_title_pairs)), (
+                f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
+            )
 
             if len(results) > 1:
                 found_multi_result = True

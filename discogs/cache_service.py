@@ -45,7 +45,7 @@ class DiscogsCacheService:
         """
         try:
             result = await self.pool.fetchval("SELECT 1")
-            return result == 1
+            return bool(result == 1)
         except Exception as e:
             logger.warning(f"Cache health check failed: {e}")
             return False

@@ -185,7 +185,8 @@ class TestParseEndpoint:
         """Test that wrong message type returns 422."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                "/api/v1/parse", json={"message": 12345}  # Should be string
+                "/api/v1/parse",
+                json={"message": 12345},  # Should be string
             )
 
         assert response.status_code == 422  # Validation error

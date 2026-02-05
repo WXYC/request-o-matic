@@ -57,7 +57,7 @@ async def search_releases_by_track(
 ) -> list[tuple[str, str]]:
     """
     Search Discogs for ALL releases containing a track.
-    
+
     Returns:
         List of (artist, album) tuples for releases containing the track.
     """
@@ -80,7 +80,7 @@ async def lookup_releases_by_track(
 ) -> list[tuple[str, str]]:
     """
     Look up all releases containing a track using Discogs.
-    
+
     Returns:
         List of (artist, album) tuples for releases containing the track.
         Useful for finding compilations and alternate releases.
@@ -100,9 +100,9 @@ The main request handler now includes a third fallback step:
 # search Discogs for ALL releases with that track and check our library
 if not library_results and parsed.song and parsed.artist:
     logger.info(f"Searching for '{parsed.song}' on other releases (compilations, etc.)")
-    
+
     releases = await lookup_releases_by_track(parsed.song, parsed.artist)
-    
+
     # Check each release against our library
     for release_artist, release_album in releases:
         # Search by album title only (to catch V/A compilations)
@@ -198,4 +198,3 @@ pytest tests/test_artwork.py::TestTrackSearch -v
 2. **Track table**: Add a dedicated `tracks` table to the library database for faster lookups
 3. **Fuzzy matching**: Use fuzzy string matching when comparing album titles
 4. **Sorting**: Prioritize original artist albums over compilations in results
-

@@ -70,7 +70,7 @@ Release 1: "Electric Africa"
 Release 2: "Celluloid Records- change the beat 1979-87"
   Library search: query = "Celluloid Records- change the beat 1979-87"
   Result: MATCH! ✅
-  
+
   Found:
   {
     "id": 12345,
@@ -82,7 +82,7 @@ Release 2: "Celluloid Records- change the beat 1979-87"
     "genre": "Rock",
     "format": "CD"
   }
-  
+
   Stop searching (found result)
 ```
 
@@ -187,4 +187,3 @@ For a successful compilation match:
    - 1-3 searches for compilation releases
 
 Total: ~4-8 total API/DB calls per request (when compilation search is needed)
-

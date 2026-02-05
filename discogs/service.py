@@ -30,7 +30,9 @@ try:
     from core.sentry import add_discogs_breadcrumb
 except ImportError:
 
-    def add_discogs_breadcrumb(operation: str, data: dict | None = None, level: str = "info"):
+    def add_discogs_breadcrumb(
+        operation: str, data: dict[str, Any] | None = None, level: str = "info"
+    ) -> None:
         pass  # No-op if Sentry not available
 
 

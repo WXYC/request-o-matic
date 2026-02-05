@@ -309,16 +309,16 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
     # ANY compilation-type album from the fuzzy search is allowed through.
     # This is permissive but may cause false positives.
     # For refactoring, we preserve this behavior.
-    assert (
-        len(results) == 3
-    ), f"Expected 3 results, got {len(results)}: {[r.title for r in results]}"
+    assert len(results) == 3, (
+        f"Expected 3 results, got {len(results)}: {[r.title for r in results]}"
+    )
 
     result_ids = {r.id for r in results}
     assert 101 in result_ids, "Should include artist's own album"
     assert 100 in result_ids, "Should include soundtrack (Discogs said 'Various')"
-    assert (
-        102 in result_ids
-    ), "Current behavior: unrelated compilation also included (permissive filter)"
+    assert 102 in result_ids, (
+        "Current behavior: unrelated compilation also included (permissive filter)"
+    )
 
 
 @pytest.mark.asyncio
@@ -466,9 +466,9 @@ async def test_compilation_found_replaces_artist_albums():
         song_not_found = False
 
     # Verify final state: ONLY compilation, not artist albums
-    assert (
-        len(library_results) == 1
-    ), f"Expected 1 compilation, got {len(library_results)}: {[r.title for r in library_results]}"
+    assert len(library_results) == 1, (
+        f"Expected 1 compilation, got {len(library_results)}: {[r.title for r in library_results]}"
+    )
     assert library_results[0].id == 62503
     assert library_results[0].title == "Celluloid Records- change the beat 1979-87"
     assert library_results[0].artist is not None

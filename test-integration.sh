@@ -11,7 +11,3 @@ if [ -z "$RAILWAY_TOKEN" ]; then
 fi
 
 railway run pytest tests/integration/ "$@"
-
-
-
-

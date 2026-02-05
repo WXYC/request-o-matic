@@ -125,7 +125,7 @@ class LibraryDB:
             sql = f"""
                 SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
                 FROM library
-                WHERE {' AND '.join(conditions)}
+                WHERE {" AND ".join(conditions)}
                 LIMIT ?
             """
             cursor = await self._conn.execute(sql, params)
@@ -170,7 +170,7 @@ class LibraryDB:
         sql = f"""
             SELECT id, title, artist, call_letters, artist_call_number, release_call_number, genre, format
             FROM library
-            WHERE {' AND '.join(conditions)}
+            WHERE {" AND ".join(conditions)}
             LIMIT ?
         """
 
