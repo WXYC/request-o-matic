@@ -115,35 +115,23 @@ class TestSentryExceptionCapture:
 class TestSentrySettingsIntegration:
     """Tests for Sentry integration with application settings."""
 
-    def test_settings_includes_sentry_dsn(self):
+    def test_settings_includes_sentry_dsn(self, monkeypatch):
         """Test that Settings model includes sentry_dsn field."""
-        import os
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
 
-        # Temporarily set environment variables
-        original_groq = os.environ.get("GROQ_API_KEY")
-        os.environ["GROQ_API_KEY"] = "test_key"
+        from config.settings import Settings
 
-        try:
-            from config.settings import Settings
+        # Use _env_file=None to skip .env file and only use env vars
+        settings = Settings(sentry_dsn="https://test@sentry.io/123", _env_file=None)
+        assert settings.sentry_dsn == "https://test@sentry.io/123"
 
-            settings = Settings(sentry_dsn="https://test@sentry.io/123")
-            assert settings.sentry_dsn == "https://test@sentry.io/123"
-        finally:
-            if original_groq:
-                os.environ["GROQ_API_KEY"] = original_groq
-
-    def test_settings_sentry_dsn_defaults_to_none(self):
+    def test_settings_sentry_dsn_defaults_to_none(self, monkeypatch):
         """Test that sentry_dsn defaults to None when not set."""
-        import os
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
+        monkeypatch.delenv("SENTRY_DSN", raising=False)
 
-        original_groq = os.environ.get("GROQ_API_KEY")
-        os.environ["GROQ_API_KEY"] = "test_key"
+        from config.settings import Settings
 
-        try:
-            from config.settings import Settings
-
-            settings = Settings()
-            assert settings.sentry_dsn is None
-        finally:
-            if original_groq:
-                os.environ["GROQ_API_KEY"] = original_groq
+        # Use _env_file=None to skip .env file and only use env vars
+        settings = Settings(_env_file=None)
+        assert settings.sentry_dsn is None
