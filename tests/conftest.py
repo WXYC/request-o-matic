@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import time
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -25,7 +25,7 @@ from library.models import LibraryItem
 # =============================================================================
 
 
-class ServerEnvironment(str, Enum):
+class ServerEnvironment(StrEnum):
     """Server environment for test targeting (renamed from TestEnvironment to avoid pytest warning)."""
 
     LOCAL = "local"

@@ -1,6 +1,6 @@
 import json
 import logging
-from enum import Enum
+from enum import StrEnum
 
 from groq import Groq
 from pydantic import BaseModel
@@ -8,7 +8,7 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     REQUEST = "request"
     DJ_MESSAGE = "dj_message"
     FEEDBACK = "feedback"

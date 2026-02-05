@@ -8,7 +8,7 @@ Strategies are executed in array order until results are found.
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from core.matching import detect_ambiguous_format
@@ -17,7 +17,7 @@ from library.models import LibraryItem
 from services.parser import ParsedRequest
 
 
-class SearchStrategyType(str, Enum):
+class SearchStrategyType(StrEnum):
     """Descriptive names for each search strategy.
 
     These names are used in telemetry to track which strategy succeeded.
