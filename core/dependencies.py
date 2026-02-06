@@ -125,7 +125,7 @@ async def get_discogs_service(
                 _discogs_pool = await asyncpg.create_pool(settings.database_url_discogs)
                 logger.info("Discogs cache pool connected")
             except Exception as e:
-                logger.warning(f"Failed to create Discogs cache pool: {e}")
+                logger.warning(f"Failed to create Discogs cache pool: {type(e).__name__}: {e}")
 
         if _discogs_pool is not None:
             cache_service = DiscogsCacheService(_discogs_pool)
