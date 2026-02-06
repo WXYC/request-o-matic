@@ -481,7 +481,9 @@ class TestDiscogsCacheWiring:
 
             service = await get_discogs_service(settings)
 
-            mock_create.assert_called_once_with("postgresql://jake@localhost:5432/discogs")
+            mock_create.assert_called_once_with(
+                "postgresql://jake@localhost:5432/discogs", min_size=1, max_size=5
+            )
             assert service is not None
             assert isinstance(service.cache_service, DiscogsCacheService)
             assert service.cache_service.pool is mock_pool
