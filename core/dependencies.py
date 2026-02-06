@@ -2,6 +2,7 @@
 
 import logging
 
+import asyncpg
 import httpx
 from fastapi import Depends
 from groq import Groq
@@ -9,6 +10,7 @@ from posthog import Posthog
 
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
+from discogs.cache_service import DiscogsCacheService
 from discogs.service import DiscogsService
 from library.db import LibraryDB
 
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 _http_client: httpx.AsyncClient | None = None
 _library_db: LibraryDB | None = None
 _discogs_service: DiscogsService | None = None
+_discogs_pool: asyncpg.Pool | None = None
 _posthog_client: Posthog | None = None
 
 
@@ -96,7 +99,10 @@ async def close_library_db() -> None:
 async def get_discogs_service(
     settings: Settings = Depends(get_settings),
 ) -> DiscogsService | None:
-    """Get Discogs service instance with caching.
+    """Get Discogs service instance with optional PostgreSQL cache.
+
+    When DATABASE_URL_DISCOGS is configured, creates an asyncpg connection pool
+    and wires up DiscogsCacheService for local caching of Discogs data.
 
     Args:
         settings: Application settings
@@ -105,24 +111,44 @@ async def get_discogs_service(
         Optional[DiscogsService]: Discogs service if configured, None otherwise
     """
     global _discogs_service
+    global _discogs_pool
 
     if not settings.discogs_token:
         logger.debug("DISCOGS_TOKEN not set - Discogs service disabled")
         return None
 
     if _discogs_service is None:
-        _discogs_service = DiscogsService(settings.discogs_token)
-        logger.info("Discogs service initialized")
+        cache_service = None
+
+        if settings.database_url_discogs and _discogs_pool is None:
+            try:
+                _discogs_pool = await asyncpg.create_pool(settings.database_url_discogs)
+                logger.info("Discogs cache pool connected")
+            except Exception as e:
+                logger.warning(f"Failed to create Discogs cache pool: {e}")
+
+        if _discogs_pool is not None:
+            cache_service = DiscogsCacheService(_discogs_pool)
+            logger.info("Discogs cache service enabled")
+
+        _discogs_service = DiscogsService(settings.discogs_token, cache_service=cache_service)
+        logger.info(
+            f"Discogs service initialized (cache: {'enabled' if cache_service else 'disabled'})"
+        )
 
     return _discogs_service
 
 
 async def close_discogs_service() -> None:
-    """Close Discogs service and its HTTP client."""
+    """Close Discogs service, its HTTP client, and the cache pool."""
     global _discogs_service
+    global _discogs_pool
     if _discogs_service:
         await _discogs_service.close()
         _discogs_service = None
+    if _discogs_pool:
+        await _discogs_pool.close()
+        _discogs_pool = None
 
 
 def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | None:
