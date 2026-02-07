@@ -3,6 +3,7 @@
 
 Usage:
     python scripts/lookup.py "play bohemian rhapsody by queen"
+    python scripts/lookup.py --staging "the beatles abbey road"
     python scripts/lookup.py --verbose "the beatles abbey road"
 """
 
@@ -17,6 +18,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 PROD_URL = "https://request-o-matic-production.up.railway.app/api/v1"
+STAGING_URL = "https://request-o-matic-staging.up.railway.app/api/v1"
 LOCAL_URL = "http://localhost:8000/api/v1"
 
 
@@ -145,10 +147,22 @@ def print_library_results(
         print(f"  Confidence: {artwork.get('confidence', 0):.2f}")
 
 
-async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> dict[str, Any]:
+def print_cache_stats(cache_stats: dict) -> None:
+    """Print Discogs cache statistics."""
+    print_section("Discogs Cache")
+    pg_hits = cache_stats.get("pg_hits", 0)
+    pg_misses = cache_stats.get("pg_misses", 0)
+    api_calls = cache_stats.get("api_calls", 0)
+    print(f"  PostgreSQL cache:  {pg_hits} hits, {pg_misses} misses")
+    print(f"  Discogs API calls: {api_calls}")
+
+
+async def run_lookup(
+    query: str, verbose: bool = False, local: bool = False, staging: bool = False
+) -> dict[str, Any]:
     """Call the /request endpoint with skip_slack=true."""
     set_up_logging(verbose)
-    base_url = LOCAL_URL if local else PROD_URL
+    base_url = LOCAL_URL if local else STAGING_URL if staging else PROD_URL
     logger.info(f"Processing query: {query}")
     logger.info(f"Using API: {base_url}")
 
@@ -180,6 +194,11 @@ async def run_lookup(query: str, verbose: bool = False, local: bool = False) -> 
                 data.get("context_message"),
             )
 
+            # Display cache stats if present
+            cache_stats = data.get("cache_stats")
+            if cache_stats:
+                print_cache_stats(cache_stats)
+
             return cast(dict[str, Any], data)
 
         except httpx.HTTPStatusError as e:
@@ -210,17 +229,24 @@ Examples:
         action="store_true",
         help="Enable verbose/debug logging",
     )
-    parser.add_argument(
+    server_group = parser.add_mutually_exclusive_group()
+    server_group.add_argument(
         "-l",
         "--local",
         action="store_true",
         help="Use local server (localhost:8000) instead of production",
     )
+    server_group.add_argument(
+        "-s",
+        "--staging",
+        action="store_true",
+        help="Use staging server instead of production",
+    )
 
     args = parser.parse_args()
 
     try:
-        asyncio.run(run_lookup(args.query, args.verbose, args.local))
+        asyncio.run(run_lookup(args.query, args.verbose, args.local, args.staging))
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(1)

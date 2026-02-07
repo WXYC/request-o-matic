@@ -3,6 +3,7 @@
 import logging
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -172,3 +173,41 @@ class RequestTelemetry:
         logger.debug(
             f"Sent telemetry: {len(self.steps)} steps, total {self.get_total_duration_ms():.1f}ms"
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-request cache stats via ContextVar
+# ---------------------------------------------------------------------------
+
+_cache_stats_var: ContextVar[dict] = ContextVar("cache_stats")
+
+
+def init_cache_stats() -> None:
+    """Initialize cache stats for the current request context."""
+    _cache_stats_var.set({"pg_hits": 0, "pg_misses": 0, "api_calls": 0})
+
+
+def record_pg_cache_hit() -> None:
+    """Record a PostgreSQL cache hit in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["pg_hits"] += 1
+
+
+def record_pg_cache_miss() -> None:
+    """Record a PostgreSQL cache miss in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["pg_misses"] += 1
+
+
+def record_discogs_api_call() -> None:
+    """Record a Discogs API call in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["api_calls"] += 1
+
+
+def get_cache_stats() -> dict | None:
+    """Get cache stats for the current request context, or None if not initialized."""
+    return _cache_stats_var.get(None)

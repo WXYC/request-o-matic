@@ -55,7 +55,7 @@ from core.search import (
     execute_search_pipeline,
     get_search_type_from_state,
 )
-from core.telemetry import RequestTelemetry
+from core.telemetry import RequestTelemetry, get_cache_stats, init_cache_stats
 from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
 from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
 from discogs.service import DiscogsService
@@ -108,6 +108,7 @@ class UnifiedResponse(BaseModel):
     song_not_found: bool = False
     found_on_compilation: bool = False
     context_message: str | None = None
+    cache_stats: dict | None = None
 
 
 async def resolve_albums_for_track(
@@ -880,6 +881,7 @@ async def handle_request(
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     # Initialize telemetry
+    init_cache_stats()
     telemetry = RequestTelemetry()
     search_type = "none"
 
@@ -1006,6 +1008,7 @@ async def handle_request(
             song_not_found=song_not_found,
             found_on_compilation=found_on_compilation,
             context_message=context,
+            cache_stats=get_cache_stats(),
         )
 
     except HTTPException:
