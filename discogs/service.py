@@ -10,6 +10,7 @@ import httpx
 
 from config.settings import get_settings
 from core.matching import calculate_confidence, is_compilation_artist
+from core.telemetry import record_discogs_api_call, record_pg_cache_hit, record_pg_cache_miss
 from discogs.memory_cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
 from discogs.models import (
     DiscogsSearchRequest,
@@ -176,6 +177,7 @@ class DiscogsService:
                 )
                 if cached_releases:
                     logger.info(f"Cache hit: found {len(cached_releases)} releases for '{track}'")
+                    record_pg_cache_hit()
                     add_discogs_breadcrumb(
                         "cache_hit", {"track": track, "count": len(cached_releases)}
                     )
@@ -187,6 +189,7 @@ class DiscogsService:
                         cached=True,
                     )
                 logger.debug(f"Cache miss for track '{track}'")
+                record_pg_cache_miss()
                 add_discogs_breadcrumb("cache_miss", {"track": track})
             except Exception as e:
                 logger.warning(f"Cache lookup failed, falling back to API: {e}")
@@ -210,6 +213,7 @@ class DiscogsService:
             response = await self._request_with_retry("GET", "/database/search", params=params)
 
             if response is not None:
+                record_discogs_api_call()
                 response.raise_for_status()
                 data = response.json()
 
@@ -238,6 +242,7 @@ class DiscogsService:
                 )
 
                 if response is not None:
+                    record_discogs_api_call()
                     response.raise_for_status()
                     data = response.json()
 
@@ -318,9 +323,11 @@ class DiscogsService:
                 cached_release = await self.cache_service.get_release(release_id)
                 if cached_release:
                     logger.info(f"Cache hit: release {release_id}")
+                    record_pg_cache_hit()
                     add_discogs_breadcrumb("cache_hit", {"release_id": release_id})
                     return cached_release
                 logger.debug(f"Cache miss for release {release_id}")
+                record_pg_cache_miss()
                 add_discogs_breadcrumb("cache_miss", {"release_id": release_id})
             except Exception as e:
                 logger.warning(f"Cache lookup failed, falling back to API: {e}")
@@ -334,6 +341,7 @@ class DiscogsService:
                 logger.warning(f"Failed to fetch release {release_id} (rate limited or error)")
                 return None
 
+            record_discogs_api_call()
             response.raise_for_status()
             data = response.json()
 
@@ -415,6 +423,7 @@ class DiscogsService:
                 logger.warning("Discogs search failed (rate limited or error)")
                 return DiscogsSearchResponse(cached=False)
 
+            record_discogs_api_call()
             response.raise_for_status()
             data = response.json()
 
@@ -435,6 +444,7 @@ class DiscogsService:
                     "GET", "/database/search", params=fallback_params
                 )
                 if response is not None:
+                    record_discogs_api_call()
                     response.raise_for_status()
                     data = response.json()
 
@@ -534,11 +544,13 @@ class DiscogsService:
                         f"Cache {'validated' if cached_result else 'rejected'}: "
                         f"'{track}' by '{artist}' on release {release_id}"
                     )
+                    record_pg_cache_hit()
                     add_discogs_breadcrumb(
                         "cache_hit", {"release_id": release_id, "validated": cached_result}
                     )
                     return cached_result
                 logger.debug(f"Cache miss for validation on release {release_id}")
+                record_pg_cache_miss()
                 add_discogs_breadcrumb("cache_miss", {"release_id": release_id})
             except Exception as e:
                 logger.warning(f"Cache validation failed, falling back to API: {e}")
