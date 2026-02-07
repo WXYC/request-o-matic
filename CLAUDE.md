@@ -12,8 +12,9 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 3. **Library Search**: Search SQLite database with fuzzy matching
 4. **Artist Filtering**: Filter results to match requested artist (prefix matching)
 5. **Compilation Search**: If no results, search for track on compilations
-6. **Artwork**: Fetch album art from Discogs
-7. **Slack**: Post formatted results with artwork
+6. **Track Validation**: If fallback returned all artist albums, validate each against Discogs tracklists to keep only albums containing the requested track
+7. **Artwork**: Fetch album art from Discogs
+8. **Slack**: Post formatted results with artwork
 
 ### Key Files
 - `routers/request.py` - Main request handling and search orchestration
