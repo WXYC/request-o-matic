@@ -184,7 +184,14 @@ _cache_stats_var: ContextVar[dict] = ContextVar("cache_stats")
 
 def init_cache_stats() -> None:
     """Initialize cache stats for the current request context."""
-    _cache_stats_var.set({"pg_hits": 0, "pg_misses": 0, "api_calls": 0})
+    _cache_stats_var.set({"memory_hits": 0, "pg_hits": 0, "pg_misses": 0, "api_calls": 0})
+
+
+def record_memory_cache_hit() -> None:
+    """Record an in-memory TTL cache hit in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["memory_hits"] += 1
 
 
 def record_pg_cache_hit() -> None:
