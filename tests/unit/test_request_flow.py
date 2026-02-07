@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from discogs.models import DiscogsSearchResponse, DiscogsSearchResult
 from library.models import LibraryItem
 from routers.request import (
     build_context_message,
+    filter_results_by_track_validation,
     search_compilations_for_track,
 )
 from services.parser import MessageType, ParsedRequest
@@ -475,3 +477,219 @@ async def test_compilation_found_replaces_artist_albums():
     assert "Various Artists" in library_results[0].artist
     assert found_on_compilation is True
     assert song_not_found is False
+
+
+class TestFilterResultsByTrackValidation:
+    """Tests for filter_results_by_track_validation.
+
+    When the search pipeline falls back to returning all artist albums
+    (song_not_found=True), this function validates each album against Discogs
+    to determine which ones actually contain the requested track.
+    """
+
+    @pytest.fixture
+    def becoming_x(self):
+        return LibraryItem(
+            id=2725,
+            artist="Sneaker Pimps",
+            title="Becoming X",
+            call_letters="Sn",
+            artist_call_number=5,
+            release_call_number=1,
+            genre="Hiphop",
+            format="cd",
+        )
+
+    @pytest.fixture
+    def kiss_and_swallow(self):
+        return LibraryItem(
+            id=70823,
+            artist="Sneaker Pimps",
+            title="Kiss & Swallow",
+            call_letters="Sn",
+            artist_call_number=5,
+            release_call_number=2,
+            genre="Hiphop",
+            format="cdr",
+        )
+
+    @pytest.mark.asyncio
+    async def test_keeps_only_albums_with_track(self, becoming_x, kiss_and_swallow):
+        """6 Underground is on Becoming X but not Kiss & Swallow.
+
+        Bug: Fallback search returned all Sneaker Pimps albums without filtering
+        by track presence. The validation should keep only Becoming X.
+        """
+        mock_discogs = AsyncMock()
+
+        mock_discogs.search.side_effect = [
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Becoming X",
+                        artist="Sneaker Pimps",
+                        release_id=1273511,
+                        release_url="https://www.discogs.com/release/1273511",
+                    )
+                ],
+                total=1,
+            ),
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Kiss & Swallow",
+                        artist="Sneaker Pimps",
+                        release_id=11181051,
+                        release_url="https://www.discogs.com/release/11181051",
+                    )
+                ],
+                total=1,
+            ),
+        ]
+
+        # Becoming X has "6 Underground", Kiss & Swallow does not
+        mock_discogs.validate_track_on_release.side_effect = [True, False]
+
+        results = await filter_results_by_track_validation(
+            [becoming_x, kiss_and_swallow],
+            "6 Underground",
+            "Sneaker Pimps",
+            mock_discogs,
+        )
+
+        assert results is not None
+        assert len(results) == 1
+        assert results[0].title == "Becoming X"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_albums_validated(self, becoming_x, kiss_and_swallow):
+        """When no albums are validated, return None to keep fallback behavior."""
+        mock_discogs = AsyncMock()
+
+        mock_discogs.search.side_effect = [
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Becoming X",
+                        artist="Sneaker Pimps",
+                        release_id=1273511,
+                        release_url="https://www.discogs.com/release/1273511",
+                    )
+                ],
+                total=1,
+            ),
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Kiss & Swallow",
+                        artist="Sneaker Pimps",
+                        release_id=11181051,
+                        release_url="https://www.discogs.com/release/11181051",
+                    )
+                ],
+                total=1,
+            ),
+        ]
+
+        # Neither album validates (Discogs tracklist data missing or different)
+        mock_discogs.validate_track_on_release.side_effect = [False, False]
+
+        results = await filter_results_by_track_validation(
+            [becoming_x, kiss_and_swallow],
+            "6 Underground",
+            "Sneaker Pimps",
+            mock_discogs,
+        )
+
+        assert results is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_discogs_service(self, becoming_x, kiss_and_swallow):
+        """When Discogs service is unavailable, return None."""
+        results = await filter_results_by_track_validation(
+            [becoming_x, kiss_and_swallow],
+            "6 Underground",
+            "Sneaker Pimps",
+            None,
+        )
+
+        assert results is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_song(self, becoming_x):
+        """When no song is provided, return None."""
+        mock_discogs = AsyncMock()
+
+        results = await filter_results_by_track_validation(
+            [becoming_x], None, "Sneaker Pimps", mock_discogs
+        )
+
+        assert results is None
+
+    @pytest.mark.asyncio
+    async def test_handles_discogs_search_returning_no_results(self, becoming_x, kiss_and_swallow):
+        """When Discogs search returns no results for an album, skip it."""
+        mock_discogs = AsyncMock()
+
+        mock_discogs.search.side_effect = [
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Becoming X",
+                        artist="Sneaker Pimps",
+                        release_id=1273511,
+                        release_url="https://www.discogs.com/release/1273511",
+                    )
+                ],
+                total=1,
+            ),
+            # Kiss & Swallow not found on Discogs
+            DiscogsSearchResponse(results=[], total=0),
+        ]
+
+        mock_discogs.validate_track_on_release.return_value = True
+
+        results = await filter_results_by_track_validation(
+            [becoming_x, kiss_and_swallow],
+            "6 Underground",
+            "Sneaker Pimps",
+            mock_discogs,
+        )
+
+        assert results is not None
+        assert len(results) == 1
+        assert results[0].title == "Becoming X"
+
+    @pytest.mark.asyncio
+    async def test_handles_discogs_exception_gracefully(self, becoming_x, kiss_and_swallow):
+        """When Discogs throws an exception for one album, continue with others."""
+        mock_discogs = AsyncMock()
+
+        mock_discogs.search.side_effect = [
+            Exception("Discogs API error"),
+            DiscogsSearchResponse(
+                results=[
+                    DiscogsSearchResult(
+                        album="Kiss & Swallow",
+                        artist="Sneaker Pimps",
+                        release_id=11181051,
+                        release_url="https://www.discogs.com/release/11181051",
+                    )
+                ],
+                total=1,
+            ),
+        ]
+
+        mock_discogs.validate_track_on_release.return_value = True
+
+        results = await filter_results_by_track_validation(
+            [becoming_x, kiss_and_swallow],
+            "6 Underground",
+            "Sneaker Pimps",
+            mock_discogs,
+        )
+
+        # Kiss & Swallow validated (even though Becoming X errored)
+        assert results is not None
+        assert len(results) == 1
+        assert results[0].title == "Kiss & Swallow"
