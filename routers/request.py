@@ -637,6 +637,68 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
     return results
 
 
+async def filter_results_by_track_validation(
+    results: list[LibraryItem],
+    song: str | None,
+    artist: str | None,
+    discogs_service: DiscogsService | None,
+) -> list[LibraryItem] | None:
+    """Filter fallback results to only albums that contain the requested track.
+
+    When the search pipeline falls back to returning all artist albums
+    (song_not_found=True), this function validates each album against Discogs
+    to determine which ones actually contain the requested track.
+
+    Args:
+        results: Fallback library results (all albums by artist)
+        song: Requested song title
+        artist: Requested artist name
+        discogs_service: Discogs service for API lookups
+
+    Returns:
+        Filtered list of results containing the track, or None if validation
+        isn't possible (no Discogs service, no song/artist, or no albums validated)
+    """
+    if not discogs_service or not song or not artist or not results:
+        return None
+
+    async def validate_one(item: LibraryItem) -> LibraryItem | None:
+        try:
+            response = await discogs_service.search(
+                DiscogsSearchRequest(album=item.title, artist=artist)
+            )
+            if not response.results:
+                return None
+
+            best_result = response.results[0]
+            if best_result.release_id:
+                is_valid = await discogs_service.validate_track_on_release(
+                    best_result.release_id, song, artist
+                )
+                if is_valid:
+                    logger.info(
+                        f"Track validation: '{song}' confirmed on '{item.title}' "
+                        f"(release {best_result.release_id})"
+                    )
+                    return item
+        except Exception as e:
+            logger.warning(f"Track validation failed for '{item.title}': {e}")
+        return None
+
+    validation_results = await asyncio.gather(*[validate_one(item) for item in results])
+    validated = [r for r in validation_results if r is not None]
+
+    if validated:
+        logger.info(
+            f"Track validation filtered {len(results)} albums to {len(validated)} "
+            f"containing '{song}'"
+        )
+        return validated
+
+    logger.info(f"Track validation could not confirm '{song}' on any album")
+    return None
+
+
 async def fetch_artwork_for_items(
     items: list[LibraryItem],
     discogs_service: DiscogsService | None,
@@ -880,6 +942,18 @@ async def handle_request(
             # Record Discogs API call if compilation search was used
             if found_on_compilation:
                 telemetry.record_api_call("discogs")
+
+        # Step 3b: Validate fallback results against Discogs track data
+        # When the pipeline fell back to returning all artist albums, try to
+        # filter to only albums that actually contain the requested track.
+        if song_not_found and library_results and parsed.song and parsed.artist:
+            with telemetry.track_step("track_validation"):
+                validated = await filter_results_by_track_validation(
+                    library_results, parsed.song, parsed.artist, discogs_service
+                )
+                if validated:
+                    library_results = validated
+                    song_not_found = False
 
         # Step 4: Fetch artwork for library items
         with telemetry.track_step("artwork_fetch"):

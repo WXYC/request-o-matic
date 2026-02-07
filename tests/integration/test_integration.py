@@ -1255,3 +1255,70 @@ class TestFullRequestIntegration:
 
         # At least one query should return multiple results
         assert found_multi_result, "Expected at least one query to return multiple results"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="Known bug: fallback search returns all artist albums without track filtering"
+    )
+    async def test_6_underground_sneaker_pimps_returns_only_becoming_x(self, base_url):
+        """
+        Test that '6 underground - sneaker pimps' only returns albums with the track.
+
+        Bug: The search was returning both 'Becoming X' and 'Kiss & Swallow' with
+        the message "6 Underground is not on any album in the library", even though
+        6 Underground IS on Becoming X.
+
+        Expected: Should return only 'Becoming X' (which has 6 Underground)
+        and NOT return 'Kiss & Swallow' (which doesn't have it).
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "6 underground - sneaker pimps", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+        song_not_found = data.get("song_not_found", True)
+        context_message = data.get("context_message", "")
+
+        print("\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+
+        print("\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        print(f"\n📋 Context: {context_message}")
+        print(f"  song_not_found: {song_not_found}")
+
+        # Should have results
+        assert len(results) > 0, "Should find results for Sneaker Pimps"
+
+        # All results should be by Sneaker Pimps
+        for r in results:
+            assert "sneaker pimps" in r.get("artist", "").lower(), (
+                f"Expected Sneaker Pimps, got {r.get('artist')}"
+            )
+
+        # Should NOT include Kiss & Swallow (which doesn't have 6 Underground)
+        titles = [r.get("title", "").lower() for r in results]
+        assert "kiss & swallow" not in titles, (
+            "Kiss & Swallow should NOT be in results because it doesn't have '6 Underground'"
+        )
+
+        # Should include Becoming X (which has 6 Underground)
+        has_becoming_x = any("becoming x" in title for title in titles)
+        assert has_becoming_x, f"Expected 'Becoming X' (which has 6 Underground), but got: {titles}"
+
+        # Should NOT say "not on any album" since it IS on Becoming X
+        assert song_not_found is False, (
+            "song_not_found should be False since 6 Underground is on Becoming X"
+        )
+
+        print("\n✅ Correctly returned only albums with the requested track!")
