@@ -73,15 +73,14 @@ TITLE_SUFFIX_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# All tables that store per-release data
+# All tables that store per-release data.
+# With FK CASCADE on child tables, deleting from release automatically
+# cleans up release_artist, release_track, release_track_artist, and cache_metadata.
 RELEASE_TABLES = [
     ("release", "id"),
     ("release_artist", "release_id"),
     ("release_track", "release_id"),
     ("release_track_artist", "release_id"),
-    ("release_label", "release_id"),
-    ("release_genre", "release_id"),
-    ("release_style", "release_id"),
     ("cache_metadata", "release_id"),
 ]
 
@@ -611,25 +610,26 @@ async def count_rows_to_delete(conn: asyncpg.Connection, release_ids: set[int]) 
 
 
 async def prune_releases(conn: asyncpg.Connection, release_ids: set[int]) -> dict[str, int]:
-    """Delete all data for the given release IDs from all tables.
+    """Delete all data for the given release IDs.
 
-    Returns dict of table_name -> rows_deleted.
+    FK CASCADE constraints on child tables (release_artist, release_track,
+    release_track_artist, cache_metadata) automatically clean up related rows
+    when the parent release is deleted.
+
+    Returns dict with release table deletion count.
     """
     if not release_ids:
-        return {table: 0 for table, _ in RELEASE_TABLES}
+        return {"release": 0}
 
     id_list = list(release_ids)
-    deleted = {}
-    for table, id_col in RELEASE_TABLES:
-        result = await conn.execute(
-            f"DELETE FROM {table} WHERE {id_col} = ANY($1::integer[])",
-            id_list,
-        )
-        # asyncpg returns "DELETE N"
-        count = int(result.split()[-1])
-        deleted[table] = count
-        logger.info(f"  Deleted {count:,} rows from {table}")
-    return deleted
+    result = await conn.execute(
+        "DELETE FROM release WHERE id = ANY($1::integer[])",
+        id_list,
+    )
+    # asyncpg returns "DELETE N"
+    count = int(result.split()[-1])
+    logger.info(f"  Deleted {count:,} releases (CASCADE cleans up child tables)")
+    return {"release": count}
 
 
 # ---------------------------------------------------------------------------
