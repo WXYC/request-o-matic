@@ -38,6 +38,7 @@ import sqlite3
 
 # Add project root to path so we can import core modules
 import sys
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -410,6 +411,40 @@ class MultiIndexMatcher:
         self.high_threshold = high_threshold
         self.moderate_threshold = moderate_threshold
         self.review_threshold = review_threshold
+
+    def classify_known_artist(self, norm_artist: str, norm_title: str) -> MatchResult:
+        """Classify a release when the artist is already known to be in the library.
+
+        Skips the expensive combined-string scorers (token_set, token_sort) and the
+        artist-lookup stage of two-stage. Only does exact pair match + direct title
+        fuzzy match within the artist's known albums.
+        Much faster: O(artist_titles) instead of O(all_library_pairs).
+        """
+        # Fast path: exact pair match
+        if (norm_artist, norm_title) in self.index.exact_pairs:
+            return MatchResult(Decision.KEEP, 1.0, 1.0, 1.0, 1.0)
+
+        # Direct title match within this artist's albums (skip artist lookup)
+        artist_titles = self.index.artist_to_titles.get(norm_artist, set())
+        if not artist_titles:
+            return MatchResult(Decision.PRUNE, 0.0, 0.0, 0.0, 0.0)
+
+        title_result = process.extractOne(
+            norm_title,
+            list(artist_titles),
+            scorer=fuzz.token_set_ratio,
+        )
+        if title_result is None:
+            return MatchResult(Decision.PRUNE, 0.0, 0.0, 0.0, 0.0)
+
+        title_score = float(title_result[1]) / 100.0
+        if title_score >= self.keep_threshold:
+            return MatchResult(Decision.KEEP, 0.0, 0.0, 0.0, title_score)
+
+        if title_score >= self.review_threshold:
+            return MatchResult(Decision.REVIEW, 0.0, 0.0, 0.0, title_score)
+
+        return MatchResult(Decision.PRUNE, 0.0, 0.0, 0.0, title_score)
 
     def classify(self, norm_artist: str, norm_title: str) -> MatchResult:
         """Classify a normalized (artist, title) pair."""
@@ -790,10 +825,128 @@ def classify_all_releases(
         artist_originals.setdefault(norm_artist, raw_artist)
         by_artist.setdefault(norm_artist, []).append((release_id, raw_artist, raw_title))
 
-    total = len(by_artist)
-    for i, (norm_artist, artist_releases) in enumerate(by_artist.items(), 1):
-        # Check if this is a compilation artist
+    total_artists = len(by_artist)
+    total_releases = len(releases)
+    releases_processed = 0
+    artists_exact_matched = 0
+    artists_fuzzy_matched = 0
+    start_time = time.monotonic()
+    last_log_time = start_time
+
+    # Build a set of library artist names for O(1) exact lookup
+    library_artist_set = set(index.all_artists)
+
+    # Phase 1: Exact artist match — O(1) per artist.
+    # Artists that exactly match a library artist (after normalization) get their
+    # releases classified by exact pair lookup only, skipping expensive fuzzy scoring.
+    logger.info(
+        "Phase 1: Exact artist matching (%s Discogs artists vs %s library artists)...",
+        f"{total_artists:,}",
+        f"{len(library_artist_set):,}",
+    )
+    exact_artist_match: set[str] = set()
+    no_artist_match: set[str] = set()
+    fuzzy_needed: list[str] = []
+
+    for norm_artist in by_artist:
+        if norm_artist in library_artist_set:
+            exact_artist_match.add(norm_artist)
+        else:
+            # Check mappings before marking as needing fuzzy
+            if norm_artist in matcher.artist_mappings.get("keep", {}):
+                exact_artist_match.add(norm_artist)
+            elif norm_artist in matcher.artist_mappings.get("prune", {}):
+                no_artist_match.add(norm_artist)
+            else:
+                fuzzy_needed.append(norm_artist)
+
+    exact_releases = sum(len(by_artist[a]) for a in exact_artist_match)
+    no_match_releases = sum(len(by_artist[a]) for a in no_artist_match)
+    fuzzy_releases = sum(len(by_artist[a]) for a in fuzzy_needed)
+    logger.info(
+        f"Phase 1 complete: {len(exact_artist_match):,} exact artist matches "
+        f"({exact_releases:,} releases), "
+        f"{len(no_artist_match):,} mapped prune ({no_match_releases:,} releases), "
+        f"{len(fuzzy_needed):,} need fuzzy matching ({fuzzy_releases:,} releases)"
+    )
+
+    # Phase 2: Process exact-match artists (fast: exact pair + two-stage only)
+    logger.info("Phase 2: Classifying exact-match artists by pair...")
+    for norm_artist in exact_artist_match:
+        artist_releases = by_artist[norm_artist]
+        for release_id, _, raw_title in artist_releases:
+            norm_title = normalize_title(raw_title)
+            result = matcher.classify_known_artist(norm_artist, norm_title)
+            if result.decision == Decision.KEEP:
+                keep_ids.add(release_id)
+            elif result.decision == Decision.PRUNE:
+                prune_ids.add(release_id)
+            else:
+                review_ids.add(release_id)
+                review_by_artist.setdefault(norm_artist, []).append((release_id, raw_title, result))
+        releases_processed += len(artist_releases)
+        artists_exact_matched += 1
+
+    # Process mapped-prune artists
+    for norm_artist in no_artist_match:
+        for release_id, _, _ in by_artist[norm_artist]:
+            prune_ids.add(release_id)
+        releases_processed += len(by_artist[norm_artist])
+
+    phase2_elapsed = time.monotonic() - start_time
+    logger.info(
+        f"Phase 2 complete in {phase2_elapsed:.1f}s: "
+        f"KEEP={len(keep_ids):,}, PRUNE={len(prune_ids):,}, REVIEW={len(review_ids):,}"
+    )
+
+    # Phase 3: Token-overlap pre-screen for fuzzy candidates.
+    # Build a set of all tokens from library artist names. Discard short tokens
+    # (1-2 chars) that cause false positive overlaps ("dj", "mc", "j", etc.)
+    min_token_len = 3
+    library_tokens: set[str] = set()
+    for artist in index.all_artists:
+        library_tokens.update(t for t in artist.split() if len(t) >= min_token_len)
+
+    truly_fuzzy: list[str] = []
+    token_pruned = 0
+    for norm_artist in fuzzy_needed:
+        artist_tokens = {t for t in norm_artist.split() if len(t) >= min_token_len}
+        if artist_tokens & library_tokens:
+            truly_fuzzy.append(norm_artist)
+        else:
+            # No meaningful token overlap — prune all releases
+            for release_id, _, _ in by_artist[norm_artist]:
+                prune_ids.add(release_id)
+            releases_processed += len(by_artist[norm_artist])
+            token_pruned += 1
+
+    token_pruned_releases = (
+        sum(len(by_artist[a]) for a in fuzzy_needed if a not in set(truly_fuzzy))
+        if token_pruned
+        else 0
+    )
+    logger.info(
+        f"Phase 3 pre-screen: {token_pruned:,} artists pruned by token overlap "
+        f"({token_pruned_releases:,} releases), "
+        f"{len(truly_fuzzy):,} artists remain for fuzzy matching"
+    )
+
+    # Phase 4: Artist-level fuzzy matching for remaining artists.
+    # Match each artist ONCE against library artists, then classify their
+    # releases by title only against the matched library artist's albums.
+    # This avoids the O(releases * all_library_pairs) cost of full scoring.
+    logger.info(
+        "Phase 4: Fuzzy artist matching for %s artists...",
+        f"{len(truly_fuzzy):,}",
+    )
+    phase4_start = time.monotonic()
+    last_log_time = phase4_start
+    artist_match_threshold = 60  # minimum artist similarity to consider
+
+    for i, norm_artist in enumerate(truly_fuzzy, 1):
+        artist_releases = by_artist[norm_artist]
         raw_artist = artist_releases[0][1]
+
         if is_compilation_artist(raw_artist):
             for release_id, _, raw_title in artist_releases:
                 norm_title = normalize_title(raw_title)
@@ -802,30 +955,89 @@ def classify_all_releases(
                     keep_ids.add(release_id)
                 else:
                     prune_ids.add(release_id)
+            releases_processed += len(artist_releases)
             continue
+
+        # Single artist-level fuzzy match (one extractOne against 24K artists)
+        artist_result = process.extractOne(
+            norm_artist,
+            index.all_artists,
+            scorer=fuzz.token_set_ratio,
+            score_cutoff=artist_match_threshold,
+        )
+
+        if artist_result is None:
+            # No plausible artist match — prune all releases
+            for release_id, _, _ in artist_releases:
+                prune_ids.add(release_id)
+            releases_processed += len(artist_releases)
+            artists_fuzzy_matched += 1
+            continue
+
+        matched_lib_artist, artist_score, _ = artist_result
+        matched_titles = index.artist_to_titles.get(matched_lib_artist, set())
 
         for release_id, _, raw_title in artist_releases:
             norm_title = normalize_title(raw_title)
-            result = matcher.classify(norm_artist, norm_title)
 
-            if result.decision == Decision.KEEP:
+            # Exact pair check (using matched library artist)
+            if (matched_lib_artist, norm_title) in index.exact_pairs:
                 keep_ids.add(release_id)
-            elif result.decision == Decision.PRUNE:
-                prune_ids.add(release_id)
-            else:  # REVIEW
-                review_ids.add(release_id)
-                review_by_artist.setdefault(norm_artist, []).append((release_id, raw_title, result))
+                continue
 
-        if i % 500 == 0:
-            logger.info(
-                f"  Classified {i:,}/{total:,} artists "
-                f"(KEEP={len(keep_ids):,}, PRUNE={len(prune_ids):,}, "
-                f"REVIEW={len(review_ids):,})"
+            # Title-level fuzzy match within the matched artist's albums
+            if not matched_titles:
+                prune_ids.add(release_id)
+                continue
+
+            title_result = process.extractOne(
+                norm_title,
+                list(matched_titles),
+                scorer=fuzz.token_set_ratio,
             )
 
+            if title_result is None:
+                prune_ids.add(release_id)
+                continue
+
+            # Combine artist and title scores
+            title_score = float(title_result[1])
+            combined = float((float(artist_score) * title_score) ** 0.5) / 100.0
+
+            if combined >= matcher.keep_threshold:
+                keep_ids.add(release_id)
+            elif combined >= matcher.review_threshold:
+                review_ids.add(release_id)
+                result = MatchResult(Decision.REVIEW, 0.0, 0.0, 0.0, combined)
+                review_by_artist.setdefault(norm_artist, []).append((release_id, raw_title, result))
+            else:
+                prune_ids.add(release_id)
+
+        releases_processed += len(artist_releases)
+        artists_fuzzy_matched += 1
+
+        # Log progress every 10 seconds
+        now = time.monotonic()
+        if now - last_log_time >= 10:
+            fuzzy_elapsed = now - phase4_start
+            fuzzy_rate = artists_fuzzy_matched / fuzzy_elapsed if fuzzy_elapsed > 0 else 0
+            remaining_artists = len(truly_fuzzy) - i
+            remaining_sec = remaining_artists / fuzzy_rate if fuzzy_rate > 0 else 0
+            logger.info(
+                f"  {i:,}/{len(truly_fuzzy):,} fuzzy artists "
+                f"({releases_processed:,}/{total_releases:,} total releases) "
+                f"| {fuzzy_rate:,.0f} artists/s "
+                f"| ~{remaining_sec / 60:.1f}m remaining "
+                f"| KEEP={len(keep_ids):,} PRUNE={len(prune_ids):,} "
+                f"REVIEW={len(review_ids):,}"
+            )
+            last_log_time = now
+
+    elapsed = time.monotonic() - start_time
     logger.info(
-        f"Classification complete: KEEP={len(keep_ids):,}, "
-        f"PRUNE={len(prune_ids):,}, REVIEW={len(review_ids):,}"
+        f"Classification complete in {elapsed:.1f}s: KEEP={len(keep_ids):,}, "
+        f"PRUNE={len(prune_ids):,}, REVIEW={len(review_ids):,} "
+        f"({artists_exact_matched:,} exact, {artists_fuzzy_matched:,} fuzzy)"
     )
 
     return ClassificationReport(
