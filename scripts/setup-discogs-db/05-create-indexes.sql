@@ -34,10 +34,6 @@ ON release_track_artist USING GIN (lower(artist_name) gin_trgm_ops);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_release_title_trgm
 ON release USING GIN (lower(title) gin_trgm_ops);
 
--- 5. Artist table name search: "Find artist 'New Order'"
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artist_name_trgm
-ON artist USING GIN (lower(name) gin_trgm_ops);
-
 -- ============================================
 -- Verification queries
 -- ============================================

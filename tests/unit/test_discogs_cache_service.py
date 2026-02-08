@@ -87,8 +87,8 @@ class TestGetRelease:
             return_value={
                 "id": 28138,
                 "title": "Confield",
-                "year": 2001,
-                "country": "UK",
+                "release_year": 2001,
+                "artwork_url": "https://img.discogs.com/abc/cover.jpg",
             }
         )
         # Artists query
@@ -114,6 +114,7 @@ class TestGetRelease:
         assert result.title == "Confield"
         assert result.artist == "Autechre"
         assert result.year == 2001
+        assert result.artwork_url == "https://img.discogs.com/abc/cover.jpg"
         assert len(result.tracklist) == 2
         assert result.tracklist[0].title == "VI Scose Poise"
 
@@ -171,6 +172,10 @@ class TestWriteRelease:
 
         # Verify execute was called (for release upsert)
         assert mock_conn.execute.called
+        # Verify the release upsert uses the new column names
+        first_call_query = mock_conn.execute.call_args_list[0][0][0]
+        assert "release_year" in first_call_query
+        assert "artwork_url" in first_call_query
         # Verify executemany was called (for tracks)
         assert mock_conn.executemany.called
 
@@ -261,7 +266,12 @@ class TestValidateTrackOnRelease:
         mock_pool = MagicMock()
         # Release exists
         mock_pool.fetchrow = AsyncMock(
-            return_value={"id": 28138, "title": "Confield", "year": 2001, "country": "UK"}
+            return_value={
+                "id": 28138,
+                "title": "Confield",
+                "release_year": 2001,
+                "artwork_url": None,
+            }
         )
         # Track query returns match
         mock_pool.fetch = AsyncMock(
@@ -284,7 +294,12 @@ class TestValidateTrackOnRelease:
         """Test returns False when track not on release."""
         mock_pool = MagicMock()
         mock_pool.fetchrow = AsyncMock(
-            return_value={"id": 28138, "title": "Confield", "year": 2001, "country": "UK"}
+            return_value={
+                "id": 28138,
+                "title": "Confield",
+                "release_year": 2001,
+                "artwork_url": None,
+            }
         )
         mock_pool.fetch = AsyncMock(
             side_effect=[
