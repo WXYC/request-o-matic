@@ -93,6 +93,25 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
 
+      - name: Smoke test
+        run: |
+          curl -sf https://request-o-matic-staging.up.railway.app/health | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          services = data['services']
+          errors = []
+          if services['groq'] != 'configured':
+              errors.append(f\"groq: {services['groq']}\")
+          if services['database'] != 'connected':
+              errors.append(f\"database: {services['database']}\")
+          if services['discogs'] != 'available':
+              errors.append(f\"discogs: {services['discogs']}\")
+          if errors:
+              print('Smoke test FAILED:', ', '.join(errors))
+              sys.exit(1)
+          print('Smoke test passed:', json.dumps(services))
+          "
+
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -131,6 +150,25 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Railway
-        run: railway up --service request-o-matic --detach
+        run: railway up --service request-o-matic
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+
+      - name: Smoke test
+        run: |
+          curl -sf https://request-o-matic-production.up.railway.app/health | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          services = data['services']
+          errors = []
+          if services['groq'] != 'configured':
+              errors.append(f\"groq: {services['groq']}\")
+          if services['database'] != 'connected':
+              errors.append(f\"database: {services['database']}\")
+          if services['discogs'] != 'available':
+              errors.append(f\"discogs: {services['discogs']}\")
+          if errors:
+              print('Smoke test FAILED:', ', '.join(errors))
+              sys.exit(1)
+          print('Smoke test passed:', json.dumps(services))
+          "
