@@ -76,7 +76,7 @@ def pytest_configure(config):
 
     try:
         result = subprocess.run(
-            ["railway", "variables", "--json"],
+            ["railway", "variables", "--json", "--service", "request-o-matic"],
             capture_output=True,
             text=True,
             env={**os.environ, "RAILWAY_TOKEN": token},
