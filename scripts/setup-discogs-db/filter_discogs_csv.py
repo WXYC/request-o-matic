@@ -19,20 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# CSV files that need to be filtered by release_id
+# CSV files that need to be filtered by release_id.
+# Only includes files needed by the optimized schema (see 04-create-database.sql).
+# Dropped tables (release_label, release_genre, release_style) are excluded.
 RELEASE_ID_FILES = [
     "release.csv",
     "release_artist.csv",
     "release_track.csv",
     "release_track_artist.csv",
-    "release_company.csv",
-    "release_format.csv",
-    "release_genre.csv",
-    "release_identifier.csv",
-    "release_image.csv",
-    "release_label.csv",
-    "release_style.csv",
-    "release_video.csv",
+    "release_image.csv",  # for artwork_url extraction during import
 ]
 
 
@@ -178,17 +173,6 @@ def main():
         reduction_pct = (1 - output_count / input_count) * 100 if input_count > 0 else 0
         stats[filename] = (input_count, output_count, reduction_pct)
         logger.info(f"  {input_count:,} → {output_count:,} rows ({reduction_pct:.1f}% reduction)")
-
-    # Step 4: Copy artist-related files unchanged (we need full artist data for joins)
-    artist_files = ["artist.csv", "artist_alias.csv", "artist_namevariation.csv", "artist_url.csv"]
-    for filename in artist_files:
-        input_path = csv_input_dir / filename
-        if input_path.exists():
-            output_path = csv_output_dir / filename
-            logger.info(f"Copying {filename} (unchanged)...")
-            import shutil
-
-            shutil.copy(input_path, output_path)
 
     # Summary
     logger.info("\n=== Summary ===")

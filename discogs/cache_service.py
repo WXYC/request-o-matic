@@ -137,7 +137,7 @@ class DiscogsCacheService:
         try:
             # Get release basic info
             release_row = await self.pool.fetchrow(
-                "SELECT id, title, year, country FROM release WHERE id = $1",
+                "SELECT id, title, release_year, artwork_url FROM release WHERE id = $1",
                 release_id,
             )
 
@@ -204,7 +204,8 @@ class DiscogsCacheService:
                 release_id=release_id,
                 title=release_row["title"],
                 artist=primary_artist,
-                year=release_row["year"],
+                year=release_row["release_year"],
+                artwork_url=release_row["artwork_url"],
                 tracklist=tracklist,
                 release_url=f"https://www.discogs.com/release/{release_id}",
                 cached=True,
@@ -230,15 +231,17 @@ class DiscogsCacheService:
                 # Upsert release
                 await conn.execute(
                     """
-                    INSERT INTO release (id, title, year)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO release (id, title, release_year, artwork_url)
+                    VALUES ($1, $2, $3, $4)
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
-                        year = EXCLUDED.year
+                        release_year = EXCLUDED.release_year,
+                        artwork_url = EXCLUDED.artwork_url
                     """,
                     release.release_id,
                     release.title,
                     release.year,
+                    release.artwork_url,
                 )
 
                 # Upsert primary artist
