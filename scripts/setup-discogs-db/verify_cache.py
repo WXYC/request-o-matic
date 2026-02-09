@@ -67,11 +67,18 @@ TITLE_SUFFIX_RE = re.compile(
         \d*"                            # 12", 7" (vinyl inch marks)
         |\(\d+\)                        # (3) Discogs disambiguation
         |\(\d+\s*(?:cd|lp)\s*set\)      # (2 cd set), (3 lp set)
-        |\((?:reissue|deluxe\s+edition|ep|lp)\)  # (reissue), (deluxe edition), (ep)
+        |\((?:reissue|deluxe\s+edition|expanded\s+edition
+             |anniversary\s+edition|special\s+edition
+             |limited\s+edition|bonus\s+tracks
+             |ep|lp)\)
         |\(\d+lp\)                      # (2lp)
     )\s*$""",
     re.IGNORECASE | re.VERBOSE,
 )
+
+# Definite articles used in Discogs comma convention across languages.
+# "Beatles, The" -> "The Beatles", "Fabulosos Cadillacs, Los" -> "Los Fabulosos Cadillacs"
+COMMA_ARTICLES = ("the", "los", "las", "les", "la", "le", "el", "die", "der", "das")
 
 # All tables that store per-release data.
 # With FK CASCADE on child tables, deleting from release automatically
@@ -153,8 +160,12 @@ def normalize_for_comparison(name: str) -> str:
     name = LIBRARY_DISAMBIGUATION_RE.sub("", name)
 
     # Flip Discogs comma convention: "Beatles, The" -> "The Beatles"
-    if ", the" in name:
-        name = "the " + name.replace(", the", "")
+    # Handles definite articles across languages that Discogs uses in comma format.
+    for article in COMMA_ARTICLES:
+        suffix = f", {article}"
+        if name.endswith(suffix):
+            name = f"{article} " + name[: -len(suffix)]
+            break
 
     return name.strip()
 
@@ -169,6 +180,8 @@ class LibraryIndex:
     Attributes:
         exact_pairs: Set of (normalized_artist, normalized_title) tuples for exact lookup.
         artist_to_titles: Dict mapping normalized artist -> set of normalized titles.
+        artist_to_titles_list: Dict mapping normalized artist -> list of normalized titles
+            (pre-computed from artist_to_titles for use with rapidfuzz).
         combined_strings: List of "artist ||| title" strings for fuzzy matching.
         combined_to_original: Dict mapping combined string -> (norm_artist, norm_title).
         all_artists: Deduplicated list of normalized artist names (excludes compilations).
@@ -186,6 +199,9 @@ class LibraryIndex:
     ):
         self.exact_pairs = exact_pairs
         self.artist_to_titles = artist_to_titles
+        self.artist_to_titles_list: dict[str, list[str]] = {
+            artist: list(titles) for artist, titles in artist_to_titles.items()
+        }
         self.combined_strings = combined_strings
         self.combined_to_original = combined_to_original
         self.all_artists = all_artists
@@ -338,13 +354,13 @@ def score_two_stage(
     matched_artist, artist_score, _ = artist_result
 
     # Stage 2: match title within that artist's albums
-    artist_titles = index.artist_to_titles.get(matched_artist, set())
-    if not artist_titles:
+    titles_list = index.artist_to_titles_list.get(matched_artist)
+    if not titles_list:
         return 0.0
 
     title_result = process.extractOne(
         norm_title,
-        list(artist_titles),
+        titles_list,
         scorer=fuzz.token_set_ratio,
     )
     if title_result is None:
@@ -424,13 +440,13 @@ class MultiIndexMatcher:
             return MatchResult(Decision.KEEP, 1.0, 1.0, 1.0, 1.0)
 
         # Direct title match within this artist's albums (skip artist lookup)
-        artist_titles = self.index.artist_to_titles.get(norm_artist, set())
-        if not artist_titles:
+        titles_list = self.index.artist_to_titles_list.get(norm_artist)
+        if not titles_list:
             return MatchResult(Decision.PRUNE, 0.0, 0.0, 0.0, 0.0)
 
         title_result = process.extractOne(
             norm_title,
-            list(artist_titles),
+            titles_list,
             scorer=fuzz.token_set_ratio,
         )
         if title_result is None:
@@ -975,7 +991,7 @@ def classify_all_releases(
             continue
 
         matched_lib_artist, artist_score, _ = artist_result
-        matched_titles = index.artist_to_titles.get(matched_lib_artist, set())
+        matched_titles_list = index.artist_to_titles_list.get(matched_lib_artist)
 
         for release_id, _, raw_title in artist_releases:
             norm_title = normalize_title(raw_title)
@@ -986,13 +1002,13 @@ def classify_all_releases(
                 continue
 
             # Title-level fuzzy match within the matched artist's albums
-            if not matched_titles:
+            if not matched_titles_list:
                 prune_ids.add(release_id)
                 continue
 
             title_result = process.extractOne(
                 norm_title,
-                list(matched_titles),
+                matched_titles_list,
                 scorer=fuzz.token_set_ratio,
             )
 

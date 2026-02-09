@@ -52,6 +52,11 @@ class TestNormalizeTitle:
             ("  Spaced Out  ", "spaced out"),
             ('Raw Power 7"', "raw power"),
             ("Homogenic (2lp)", "homogenic"),
+            ("Loveless (expanded edition)", "loveless"),
+            ("OK Computer (anniversary edition)", "ok computer"),
+            ("In Utero (special edition)", "in utero"),
+            ("Dummy (limited edition)", "dummy"),
+            ("Kid A (bonus tracks)", "kid a"),
         ],
         ids=[
             "vinyl_12_inch",
@@ -64,6 +69,11 @@ class TestNormalizeTitle:
             "whitespace",
             "7_inch",
             "2lp",
+            "expanded_edition",
+            "anniversary_edition",
+            "special_edition",
+            "limited_edition",
+            "bonus_tracks",
         ],
     )
     def test_normalize_title(self, raw, expected):
@@ -101,6 +111,23 @@ class TestNormalizeArtist:
         ],
     )
     def test_normalize_artist(self, raw, expected):
+        assert normalize_artist(raw) == expected
+
+
+class TestNormalizeArtistCommaConventions:
+    """Test comma-article flipping for non-English definite articles."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("Fabulosos Cadillacs, Los", "los fabulosos cadillacs"),
+            ("Ärzte, Die", "die arzte"),
+            ("Planète Sauvage, La", "la planete sauvage"),
+            ("Smiths, The", "the smiths"),  # existing behavior, should still pass
+        ],
+        ids=["spanish_los", "german_die", "french_la", "english_the"],
+    )
+    def test_comma_article_flipping(self, raw, expected):
         assert normalize_artist(raw) == expected
 
 
@@ -369,6 +396,45 @@ class TestMultiIndexMatcher:
         assert hasattr(result, "token_set_score")
         assert hasattr(result, "token_sort_score")
         assert hasattr(result, "two_stage_score")
+
+
+class TestClassifyKnownArtist:
+    """Test classify_known_artist — the primary Phase 2 classification path."""
+
+    @pytest.mark.parametrize(
+        "artist, title, expected_decision",
+        [
+            ("radiohead", "ok computer", Decision.KEEP),  # exact pair
+            ("radiohead", "kid a", Decision.KEEP),  # exact pair
+            ("radiohead", "ok computers", Decision.KEEP),  # fuzzy title >= keep
+            ("radiohead", "nonexistent album", Decision.PRUNE),  # no title match
+            ("aphex twin", "selected ambient works", Decision.KEEP),  # partial title
+        ],
+        ids=[
+            "exact_pair",
+            "exact_pair_2",
+            "fuzzy_title_keep",
+            "no_match_prune",
+            "partial_title",
+        ],
+    )
+    def test_classify_decisions(self, sample_index, artist, title, expected_decision):
+        matcher = MultiIndexMatcher(sample_index)
+        result = matcher.classify_known_artist(artist, title)
+        assert result.decision == expected_decision
+
+    def test_unknown_artist_returns_prune(self, sample_index):
+        """Artist not in index at all -> PRUNE with zero scores."""
+        matcher = MultiIndexMatcher(sample_index)
+        result = matcher.classify_known_artist("zzyzx band", "some album")
+        assert result.decision == Decision.PRUNE
+
+    def test_exact_match_sets_all_scores_to_1(self, sample_index):
+        """Exact pair match short-circuits with all scores at 1.0."""
+        matcher = MultiIndexMatcher(sample_index)
+        result = matcher.classify_known_artist("radiohead", "ok computer")
+        assert result.exact_score == 1.0
+        assert result.two_stage_score == 1.0
 
 
 # ---------------------------------------------------------------------------
