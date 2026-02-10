@@ -12,11 +12,13 @@ Required environment variables:
 
 The script creates a dashboard with insights for:
 - Request duration by step (bar chart)
-- API call distribution (pie chart)
-- Request duration over time (line chart)
+- Total request duration over time (line chart)
 - Search type breakdown (pie chart)
-- Step success rate (table)
-- Slowest requests (table)
+- Request volume (line chart)
+- Results found rate (pie chart)
+- Cache vs API latency (line chart)
+- Cache hit rate (line chart)
+- Cache efficiency: fully cached vs mixed vs API-only (pie chart)
 """
 
 import os
@@ -266,6 +268,132 @@ def build_insights() -> list[dict]:
                                     "operator": "exact",
                                     "type": "event",
                                 }
+                            ],
+                        },
+                    ],
+                    "trendsFilter": {"display": "ActionsPie"},
+                    "dateRange": {"date_from": "-7d"},
+                },
+            },
+        },
+        {
+            "name": "Cache vs API Latency",
+            "description": "Average PG cache time vs Discogs API time per request",
+            "query": {
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "avg",
+                            "math_property": "cache.pg_time_ms",
+                            "name": "Avg PG Cache Time (ms)",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "avg",
+                            "math_property": "cache.api_time_ms",
+                            "name": "Avg API Time (ms)",
+                        },
+                    ],
+                    "trendsFilter": {"display": "ActionsLineGraph"},
+                    "dateRange": {"date_from": "-7d"},
+                    "interval": "day",
+                },
+            },
+        },
+        {
+            "name": "Cache Hit Rate",
+            "description": "PG cache hits vs misses across all requests",
+            "query": {
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "sum",
+                            "math_property": "cache.pg_hits",
+                            "name": "PG Cache Hits",
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "sum",
+                            "math_property": "cache.pg_misses",
+                            "name": "PG Cache Misses",
+                        },
+                    ],
+                    "trendsFilter": {"display": "ActionsLineGraph"},
+                    "dateRange": {"date_from": "-7d"},
+                    "interval": "day",
+                },
+            },
+        },
+        {
+            "name": "Cache Efficiency",
+            "description": "Requests fully served by cache vs mixed vs API-only",
+            "query": {
+                "kind": "InsightVizNode",
+                "source": {
+                    "kind": "TrendsQuery",
+                    "series": [
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "Fully Cached (0 API calls)",
+                            "properties": [
+                                {
+                                    "key": "cache.api_calls",
+                                    "value": 0,
+                                    "operator": "exact",
+                                    "type": "event",
+                                },
+                                {
+                                    "key": "cache.pg_hits",
+                                    "value": 0,
+                                    "operator": "gt",
+                                    "type": "event",
+                                },
+                            ],
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "Mixed (cache + API)",
+                            "properties": [
+                                {
+                                    "key": "cache.api_calls",
+                                    "value": 0,
+                                    "operator": "gt",
+                                    "type": "event",
+                                },
+                                {
+                                    "key": "cache.pg_hits",
+                                    "value": 0,
+                                    "operator": "gt",
+                                    "type": "event",
+                                },
+                            ],
+                        },
+                        {
+                            "kind": "EventsNode",
+                            "event": "request_completed",
+                            "math": "total",
+                            "name": "API Only (0 cache hits)",
+                            "properties": [
+                                {
+                                    "key": "cache.pg_hits",
+                                    "value": 0,
+                                    "operator": "exact",
+                                    "type": "event",
+                                },
                             ],
                         },
                     ],
