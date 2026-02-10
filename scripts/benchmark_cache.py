@@ -37,44 +37,81 @@ from discogs.service import DiscogsService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Representative queries covering all three callers of search()
+# Queries drawn from the test suite, covering every edge case category.
+# Each mirrors a real scenario exercised by integration or unit tests.
 BENCHMARK_QUERIES: list[dict[str, str | None]] = [
-    {
-        "label": "Radiohead / OK Computer",
-        "caller": "artwork",
-        "artist": "Radiohead",
-        "album": "OK Computer",
-    },
-    {
-        "label": "Lush / Split",
-        "caller": "artwork",
-        "artist": "Lush",
-        "album": "Split",
-    },
-    {
-        "label": "Portishead / Dummy",
-        "caller": "track_validation",
-        "artist": "Portishead",
-        "album": "Dummy",
-    },
-    {
-        "label": "Bjork (artist-only)",
-        "caller": "lookup_by_artist",
-        "artist": "Bjork",
-        "album": None,
-    },
-    {
-        "label": "Radiohead (artist-only)",
-        "caller": "lookup_by_artist",
-        "artist": "Radiohead",
-        "album": None,
-    },
+    # --- Artist + album (artwork discovery) ---
     {
         "label": "Autechre / Confield",
-        "caller": "artwork",
+        "edge": "exact match",
         "artist": "Autechre",
         "album": "Confield",
     },
+    {
+        "label": "Aphex Twin / RDJ Album",
+        "edge": "special chars",
+        "artist": "Aphex Twin",
+        "album": "Richard D. James Album",
+    },
+    {
+        "label": "Jr Kimbrough / Meet Me",
+        "edge": "exact match",
+        "artist": "Junior Kimbrough",
+        "album": "Meet Me in the City",
+    },
+    # --- Artist + track-as-album (track validation / album lookup) ---
+    {
+        "label": "Sneaker Pimps / 6 Und.",
+        "edge": "track validation",
+        "artist": "Sneaker Pimps",
+        "album": "6 Underground",
+    },
+    {
+        "label": "Lush / Thoughtforms",
+        "edge": "fallback filter",
+        "artist": "Lush",
+        "album": "Thoughtforms",
+    },
+    {
+        "label": "Biosphere / Things",
+        "edge": "fallback filter",
+        "artist": "Biosphere",
+        "album": "The Things I Tell You",
+    },
+    {
+        "label": "Sugar Plant / Simple",
+        "edge": "compilation fp",
+        "artist": "Sugar Plant",
+        "album": "Simple",
+    },
+    {
+        "label": "Manu Dibango / Abele",
+        "edge": "compilation",
+        "artist": "Manu Dibango",
+        "album": "Abele Dance",
+    },
+    {
+        "label": "NMH / Holland, 1945",
+        "edge": "special chars",
+        "artist": "Neutral Milk Hotel",
+        "album": "Holland, 1945",
+    },
+    {
+        "label": "Living Color / Cult",
+        "edge": "spelling variant",
+        "artist": "Living Color",
+        "album": "Cult of Personality",
+    },
+    # --- Artist-only (artist release lookup) ---
+    {
+        "label": "Echo & the Bunnymen",
+        "edge": "artist-only",
+        "artist": "Echo and the Bunnymen",
+        "album": None,
+    },
+    {"label": "Young Gov", "edge": "prefix match", "artist": "Young Gov", "album": None},
+    {"label": "Toy", "edge": "short name", "artist": "Toy", "album": None},
+    {"label": "Laid Back", "edge": "ambiguous name", "artist": "Laid Back", "album": None},
 ]
 
 
@@ -162,7 +199,7 @@ async def run_benchmark(iterations: int) -> None:
 
     print(f"\n  Running {len(BENCHMARK_QUERIES)} queries x {iterations} iterations\n")
     print(
-        f"  {'Query':<30} {'Caller':<20} "
+        f"  {'Query':<30} {'Edge Case':<20} "
         f"{'Cache (ms)':>12} {'API (ms)':>12} {'Speedup':>10} {'Cache Hit':>10}"
     )
     print("  " + "-" * 96)
@@ -207,7 +244,7 @@ async def run_benchmark(iterations: int) -> None:
         cache_str = f"{avg_cache:.0f}" if cache_times else "N/A"
 
         print(
-            f"  {query['label']:<30} {query['caller']:<20} "
+            f"  {query['label']:<30} {query['edge']:<20} "
             f"{cache_str:>12} {avg_api:>12.0f} {speedup:>10} {hit_str:>10}"
         )
 
