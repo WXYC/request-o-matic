@@ -3,31 +3,37 @@
 
 Runs a set of representative queries through both code paths and compares timing.
 
-Usage:
-    # Requires DATABASE_URL_DISCOGS and DISCOGS_TOKEN env vars
-    venv/bin/python scripts/benchmark_cache.py --iterations 3
+Environment variables are loaded automatically:
+1. From .env file (if present)
+2. From Railway linked project (see `railway status`):
+   - DISCOGS_TOKEN from request-o-matic service
+   - DATABASE_URL_DISCOGS from Postgres-Nard service (public URL for local access)
 
-    # Use Railway staging environment
-    railway run -- venv/bin/python scripts/benchmark_cache.py
+Usage:
+    venv/bin/python scripts/benchmark_cache.py --iterations 3
 """
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+import subprocess
 import sys
 import time
+from typing import Any
 
 import asyncpg
+from dotenv import load_dotenv
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from discogs.cache_service import DiscogsCacheService
-from discogs.memory_cache import clear_all_caches
-from discogs.models import DiscogsSearchRequest
-from discogs.ratelimit import reset_rate_limiting
-from discogs.service import DiscogsService
+from discogs.cache_service import DiscogsCacheService  # noqa: E402
+from discogs.memory_cache import clear_all_caches  # noqa: E402
+from discogs.models import DiscogsSearchRequest  # noqa: E402
+from discogs.ratelimit import reset_rate_limiting  # noqa: E402
+from discogs.service import DiscogsService  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +76,43 @@ BENCHMARK_QUERIES: list[dict[str, str | None]] = [
         "album": "Confield",
     },
 ]
+
+
+def _railway_variables(service: str) -> dict[str, Any]:
+    """Fetch variables from a Railway service using the linked CLI project."""
+    try:
+        result = subprocess.run(
+            ["railway", "variables", "--json", "--service", service],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            variables: dict[str, Any] = json.loads(result.stdout)
+            return variables
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _load_env() -> None:
+    """Load environment variables from .env and Railway.
+
+    Railway values override .env since production config is authoritative.
+    Uses the Railway CLI linked project (see `railway status`) to fetch
+    DISCOGS_TOKEN from the app service and the public DATABASE_URL from
+    the Postgres service (since the internal URL isn't reachable locally).
+    """
+    load_dotenv()
+
+    app_vars = _railway_variables("request-o-matic")
+    if "DISCOGS_TOKEN" in app_vars:
+        os.environ["DISCOGS_TOKEN"] = app_vars["DISCOGS_TOKEN"]
+
+    pg_vars = _railway_variables("Postgres-Nard")
+    public_url = pg_vars.get("DATABASE_PUBLIC_URL")
+    if public_url:
+        os.environ["DATABASE_URL_DISCOGS"] = public_url
 
 
 async def time_search(service: DiscogsService, query: dict[str, str | None]) -> tuple[float, bool]:
@@ -219,6 +262,8 @@ def main():
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    _load_env()
 
     print("\n  Discogs Cache Benchmark: search()")
     print("  " + "=" * 40)
