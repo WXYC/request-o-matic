@@ -165,7 +165,11 @@ def print_cache_stats(cache_stats: dict) -> None:
 
 
 async def run_lookup(
-    query: str, verbose: bool = False, local: bool = False, staging: bool = False
+    query: str,
+    verbose: bool = False,
+    local: bool = False,
+    staging: bool = False,
+    skip_cache: bool = False,
 ) -> dict[str, Any]:
     """Call the /request endpoint with skip_slack=true."""
     set_up_logging(verbose)
@@ -175,10 +179,14 @@ async def run_lookup(
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
+            body: dict[str, Any] = {"message": query, "skip_slack": True}
+            if skip_cache:
+                body["skip_cache"] = True
+                logger.info("Cache bypass enabled (skip_cache=True)")
             logger.info("Calling /request endpoint...")
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": query, "skip_slack": True},
+                json=body,
             )
             response.raise_for_status()
             data = response.json()
@@ -236,6 +244,12 @@ Examples:
         action="store_true",
         help="Enable verbose/debug logging",
     )
+    parser.add_argument(
+        "-C",
+        "--skip-cache",
+        action="store_true",
+        help="Bypass all caches (in-memory and PG) to force API calls",
+    )
     server_group = parser.add_mutually_exclusive_group()
     server_group.add_argument(
         "-l",
@@ -253,7 +267,7 @@ Examples:
     args = parser.parse_args()
 
     try:
-        asyncio.run(run_lookup(args.query, args.verbose, args.local, args.staging))
+        asyncio.run(run_lookup(args.query, args.verbose, args.local, args.staging, args.skip_cache))
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(1)

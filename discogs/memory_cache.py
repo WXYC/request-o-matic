@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any, TypeVar
 
@@ -23,6 +24,20 @@ _release_cache: TTLCache | None = None
 _search_cache: TTLCache | None = None
 
 T = TypeVar("T")
+
+# Per-request flag to bypass all caches (in-memory and PG).
+# Used for benchmarking and A/B cache comparisons.
+_skip_cache_var: ContextVar[bool] = ContextVar("skip_cache", default=False)
+
+
+def set_skip_cache(skip: bool) -> None:
+    """Set the per-request skip_cache flag."""
+    _skip_cache_var.set(skip)
+
+
+def should_skip_cache() -> bool:
+    """Check whether caches should be bypassed for the current request."""
+    return _skip_cache_var.get(False)
 
 
 def make_cache_key(func_name: str, *args, **kwargs) -> str:
@@ -110,6 +125,10 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
+            # Bypass cache entirely when skip_cache flag is set
+            if should_skip_cache():
+                return await func(*args, **kwargs)  # type: ignore[misc, no-any-return]
+
             # Generate cache key from function name and arguments
             # Skip 'self' if present (first arg of instance methods)
             # Check if first arg has this method, indicating it's 'self'
