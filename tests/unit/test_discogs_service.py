@@ -465,6 +465,7 @@ class TestCacheIntegration:
 
         cache = MagicMock(spec=DiscogsCacheService)
         cache.search_releases_by_track = AsyncMock()
+        cache.search_releases = AsyncMock()
         cache.get_release = AsyncMock()
         cache.write_release = AsyncMock()
         cache.validate_track_on_release = AsyncMock()
@@ -688,4 +689,118 @@ class TestCacheIntegration:
 
         assert result is True
         # HTTP request should have been made
+        assert len(httpx_mock.get_requests()) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_cache_hit_skips_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test search() cache hit returns cached results without API call."""
+        mock_cache_service.search_releases.return_value = [
+            {
+                "release_id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artist_name": TEST_ARTIST,
+                "artwork_url": "https://img.discogs.com/thumb.jpg",
+            }
+        ]
+
+        request = DiscogsSearchRequest(artist=TEST_ARTIST, album=TEST_ALBUM)
+        result = await service_with_cache.search(request)
+
+        assert result.total >= 1
+        assert result.results[0].release_id == TEST_RELEASE_ID
+        assert result.results[0].album == TEST_ALBUM
+        assert result.results[0].artist == TEST_ARTIST
+        assert result.results[0].artwork_url == "https://img.discogs.com/thumb.jpg"
+        assert result.cached is True
+        # No HTTP requests should have been made
+        assert len(httpx_mock.get_requests()) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_search_cache_miss_falls_back_to_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test search() cache miss falls back to API."""
+        mock_cache_service.search_releases.return_value = []
+
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                        "thumb": "https://i.discogs.com/thumb.jpg",
+                    }
+                ]
+            },
+        )
+
+        request = DiscogsSearchRequest(artist=TEST_ARTIST, album=TEST_ALBUM)
+        result = await service_with_cache.search(request)
+
+        assert result.total >= 1
+        assert result.results[0].album == TEST_ALBUM
+        assert result.cached is False
+        # HTTP request should have been made
+        assert len(httpx_mock.get_requests()) >= 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_search_cache_error_falls_back_to_api(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test search() falls back to API when cache raises an exception."""
+        from discogs.cache_service import CacheUnavailableError
+
+        mock_cache_service.search_releases.side_effect = CacheUnavailableError("Connection failed")
+
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                        "thumb": "https://i.discogs.com/thumb.jpg",
+                    }
+                ]
+            },
+        )
+
+        request = DiscogsSearchRequest(artist=TEST_ARTIST, album=TEST_ALBUM)
+        result = await service_with_cache.search(request)
+
+        assert result.total >= 1
+        assert result.cached is False
+        assert len(httpx_mock.get_requests()) >= 1
+
+    @pytest.mark.asyncio
+    async def test_search_no_cache_service_goes_to_api(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test search() without cache_service goes straight to API."""
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                        "thumb": "https://i.discogs.com/thumb.jpg",
+                    }
+                ]
+            },
+        )
+
+        request = DiscogsSearchRequest(artist=TEST_ARTIST, album=TEST_ALBUM)
+        result = await service.search(request)
+
+        assert result.total >= 1
+        assert result.cached is False
         assert len(httpx_mock.get_requests()) == 1

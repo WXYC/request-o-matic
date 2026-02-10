@@ -329,3 +329,148 @@ class TestValidateTrackOnRelease:
 
         # Returns None to indicate cache miss (caller should try API)
         assert result is None
+
+
+class TestSearchReleases:
+    """Tests for search_releases method (general release search by artist/album)."""
+
+    @pytest.mark.asyncio
+    async def test_search_by_artist_and_album(self):
+        """Test search with both artist and album returns ranked results."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "release_id": 28138,
+                    "title": "Confield",
+                    "artist_name": "Autechre",
+                    "artwork_url": "https://img.discogs.com/abc/cover.jpg",
+                    "score": 0.85,
+                },
+                {
+                    "release_id": 55555,
+                    "title": "Confield Remixes",
+                    "artist_name": "Autechre",
+                    "artwork_url": None,
+                    "score": 0.6,
+                },
+            ]
+        )
+
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+        results = await cache.search_releases(artist="Autechre", album="Confield")
+
+        assert len(results) == 2
+        assert results[0]["release_id"] == 28138
+        assert results[0]["title"] == "Confield"
+        assert results[0]["artist_name"] == "Autechre"
+        assert results[0]["artwork_url"] == "https://img.discogs.com/abc/cover.jpg"
+
+    @pytest.mark.asyncio
+    async def test_search_by_artist_only(self):
+        """Test search with artist only (no album) returns results."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "release_id": 28138,
+                    "title": "Confield",
+                    "artist_name": "Autechre",
+                    "artwork_url": None,
+                    "score": 0.9,
+                },
+            ]
+        )
+
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+        results = await cache.search_releases(artist="Autechre")
+
+        assert len(results) == 1
+        assert results[0]["artist_name"] == "Autechre"
+
+    @pytest.mark.asyncio
+    async def test_search_by_album_only(self):
+        """Test search with album only (no artist) returns results."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "release_id": 28138,
+                    "title": "Confield",
+                    "artist_name": "Autechre",
+                    "artwork_url": None,
+                    "score": 0.8,
+                },
+            ]
+        )
+
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+        results = await cache.search_releases(album="Confield")
+
+        assert len(results) == 1
+        assert results[0]["title"] == "Confield"
+
+    @pytest.mark.asyncio
+    async def test_search_no_params_returns_empty(self):
+        """Test search with no artist or album returns empty list."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(return_value=[])
+
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+        results = await cache.search_releases()
+
+        assert results == []
+        # Should not even query the database
+        mock_pool.fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_search_deduplicates_results(self):
+        """Test that duplicate albums are deduplicated."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(
+            return_value=[
+                {
+                    "release_id": 28138,
+                    "title": "Confield",
+                    "artist_name": "Autechre",
+                    "artwork_url": None,
+                    "score": 0.9,
+                },
+                {
+                    "release_id": 99999,
+                    "title": "Confield",
+                    "artist_name": "Autechre",
+                    "artwork_url": None,
+                    "score": 0.85,
+                },
+            ]
+        )
+
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+        results = await cache.search_releases(artist="Autechre", album="Confield")
+
+        assert len(results) == 1
+        assert results[0]["release_id"] == 28138
+
+    @pytest.mark.asyncio
+    async def test_search_cache_unavailable_raises(self):
+        """Test that connection errors raise CacheUnavailableError."""
+        mock_pool = MagicMock()
+        mock_pool.fetch = AsyncMock(side_effect=Exception("Connection refused"))
+
+        from discogs.cache_service import CacheUnavailableError, DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=mock_pool)
+
+        with pytest.raises(CacheUnavailableError):
+            await cache.search_releases(artist="Autechre", album="Confield")

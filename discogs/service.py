@@ -414,6 +414,49 @@ class DiscogsService:
             logger.warning("No searchable fields in request")
             return DiscogsSearchResponse(cached=False)
 
+        # Try local cache first
+        if self.cache_service:
+            try:
+                add_discogs_breadcrumb(
+                    "cache_search_releases",
+                    {"artist": request.artist, "album": request.album},
+                )
+                cached = await self.cache_service.search_releases(
+                    artist=request.artist,
+                    album=request.album or request.track,
+                    limit=limit,
+                )
+                if cached:
+                    logger.info(f"Cache hit: found {len(cached)} releases for search")
+                    record_pg_cache_hit()
+                    add_discogs_breadcrumb("cache_hit", {"count": len(cached)})
+                    results = []
+                    for row in cached:
+                        confidence = calculate_confidence(
+                            request.artist,
+                            request.album,
+                            row["artist_name"],
+                            row["title"],
+                        )
+                        results.append(
+                            DiscogsSearchResult(
+                                album=row["title"],
+                                artist=row["artist_name"],
+                                release_id=row["release_id"],
+                                release_url=f"https://www.discogs.com/release/{row['release_id']}",
+                                artwork_url=row.get("artwork_url"),
+                                confidence=confidence,
+                            )
+                        )
+                    results.sort(key=lambda r: r.confidence, reverse=True)
+                    return DiscogsSearchResponse(results=results, total=len(results), cached=True)
+                logger.debug("Cache miss for search")
+                record_pg_cache_miss()
+                add_discogs_breadcrumb("cache_miss", {"artist": request.artist})
+            except Exception as e:
+                logger.warning(f"Cache search failed, falling back to API: {e}")
+                add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
+
         logger.info(f"Searching Discogs with params: {params}")
 
         try:

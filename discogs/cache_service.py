@@ -310,6 +310,108 @@ class DiscogsCacheService:
             logger.error(f"Cache write_release failed: {e}")
             raise CacheUnavailableError(f"Cache write_release failed: {e}") from e
 
+    async def search_releases(
+        self, artist: str | None = None, album: str | None = None, limit: int = 5
+    ) -> list[dict]:
+        """Search for releases by artist and/or album title.
+
+        Uses trigram similarity for fuzzy matching on release title and artist name.
+
+        Args:
+            artist: Artist name to search for
+            album: Album/release title to search for
+            limit: Maximum number of results to return
+
+        Returns:
+            List of dicts with keys: release_id, title, artist_name, artwork_url
+
+        Raises:
+            CacheUnavailableError: If database is unreachable
+        """
+        if not artist and not album:
+            return []
+
+        try:
+            if artist and album:
+                query = """
+                    SELECT DISTINCT ON (r.id)
+                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
+                        GREATEST(
+                            similarity(lower(r.title), lower($1)),
+                            similarity(lower(ra.artist_name), lower($2))
+                        ) as score
+                    FROM release r
+                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
+                    WHERE lower(r.title) % lower($1)
+                       OR lower(ra.artist_name) % lower($2)
+                    ORDER BY r.id, score DESC
+                """
+                # Re-sort by score after DISTINCT ON
+                query = f"""
+                    SELECT * FROM ({query}) sub
+                    ORDER BY score DESC
+                    LIMIT $3
+                """
+                rows = await self.pool.fetch(query, album, artist, limit * 2)
+            elif artist:
+                query = """
+                    SELECT DISTINCT ON (r.id)
+                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
+                        similarity(lower(ra.artist_name), lower($1)) as score
+                    FROM release r
+                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
+                    WHERE lower(ra.artist_name) % lower($1)
+                    ORDER BY r.id, score DESC
+                """
+                query = f"""
+                    SELECT * FROM ({query}) sub
+                    ORDER BY score DESC
+                    LIMIT $2
+                """
+                rows = await self.pool.fetch(query, artist, limit * 2)
+            else:  # album only
+                query = """
+                    SELECT DISTINCT ON (r.id)
+                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
+                        similarity(lower(r.title), lower($1)) as score
+                    FROM release r
+                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
+                    WHERE lower(r.title) % lower($1)
+                    ORDER BY r.id, score DESC
+                """
+                query = f"""
+                    SELECT * FROM ({query}) sub
+                    ORDER BY score DESC
+                    LIMIT $2
+                """
+                rows = await self.pool.fetch(query, album, limit * 2)
+
+            results = []
+            seen_titles = set()
+            for row in rows:
+                title_key = row["title"].lower()
+                if title_key in seen_titles:
+                    continue
+                seen_titles.add(title_key)
+
+                results.append(
+                    {
+                        "release_id": row["release_id"],
+                        "title": row["title"],
+                        "artist_name": row["artist_name"],
+                        "artwork_url": row["artwork_url"],
+                    }
+                )
+
+                if len(results) >= limit:
+                    break
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Cache search_releases failed: {e}")
+            raise CacheUnavailableError(f"Cache search_releases failed: {e}") from e
+
     async def validate_track_on_release(
         self, release_id: int, track: str, artist: str
     ) -> bool | None:
