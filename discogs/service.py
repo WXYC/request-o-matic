@@ -18,7 +18,13 @@ from core.telemetry import (
     record_pg_cache_miss,
     record_pg_time,
 )
-from discogs.memory_cache import RELEASE_CACHE, SEARCH_CACHE, TRACK_CACHE, async_cached
+from discogs.memory_cache import (
+    RELEASE_CACHE,
+    SEARCH_CACHE,
+    TRACK_CACHE,
+    async_cached,
+    should_skip_cache,
+)
 from discogs.models import (
     DiscogsSearchRequest,
     DiscogsSearchResponse,
@@ -182,7 +188,7 @@ class DiscogsService:
             TrackReleasesResponse with list of releases
         """
         # Try local cache first
-        if self.cache_service:
+        if self.cache_service and not should_skip_cache():
             try:
                 add_discogs_breadcrumb(
                     "cache_search_releases_by_track",
@@ -339,7 +345,7 @@ class DiscogsService:
             ReleaseMetadataResponse with full metadata, or None on error
         """
         # Try local cache first
-        if self.cache_service:
+        if self.cache_service and not should_skip_cache():
             try:
                 add_discogs_breadcrumb("cache_get_release", {"release_id": release_id})
                 start = time.perf_counter()
@@ -409,7 +415,7 @@ class DiscogsService:
             )
 
             # Write back to cache for future queries
-            if self.cache_service:
+            if self.cache_service and not should_skip_cache():
                 try:
                     add_discogs_breadcrumb("cache_write_release", {"release_id": release_id})
                     await self.cache_service.write_release(release)
@@ -441,7 +447,7 @@ class DiscogsService:
             return DiscogsSearchResponse(cached=False)
 
         # Try local cache first
-        if self.cache_service:
+        if self.cache_service and not should_skip_cache():
             try:
                 add_discogs_breadcrumb(
                     "cache_search_releases",
@@ -605,7 +611,7 @@ class DiscogsService:
             True if the track by the artist is found on the release
         """
         # Try cache validation first
-        if self.cache_service:
+        if self.cache_service and not should_skip_cache():
             try:
                 add_discogs_breadcrumb(
                     "cache_validate_track",

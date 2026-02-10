@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from pytest_httpx import HTTPXMock
 
-from discogs.memory_cache import clear_all_caches
+from discogs.memory_cache import clear_all_caches, set_skip_cache
 from discogs.models import (
     DiscogsSearchRequest,
     ReleaseInfo,
@@ -41,12 +41,14 @@ async def service():
 
 @pytest.fixture(autouse=True)
 def clear_caches():
-    """Clear all caches and rate limiting state before and after each test."""
+    """Clear all caches, rate limiting, and skip_cache state before and after each test."""
     clear_all_caches()
     reset_rate_limiting()
+    set_skip_cache(False)
     yield
     clear_all_caches()
     reset_rate_limiting()
+    set_skip_cache(False)
 
 
 class TestSearchReleasesByTrack:
@@ -804,3 +806,138 @@ class TestCacheIntegration:
         assert result.total >= 1
         assert result.cached is False
         assert len(httpx_mock.get_requests()) == 1
+
+
+class TestSkipCacheBypassesPgCache:
+    """Tests that the skip_cache ContextVar bypasses PG cache lookups."""
+
+    @pytest.fixture
+    def mock_cache_service(self):
+        """Create a mock cache service."""
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = MagicMock(spec=DiscogsCacheService)
+        cache.search_releases_by_track = AsyncMock()
+        cache.search_releases = AsyncMock()
+        cache.get_release = AsyncMock()
+        cache.write_release = AsyncMock()
+        cache.validate_track_on_release = AsyncMock()
+        cache.is_available = AsyncMock(return_value=True)
+        return cache
+
+    @pytest_asyncio.fixture
+    async def service_with_cache(self, mock_cache_service):
+        """Create a DiscogsService with cache service."""
+        svc = DiscogsService(token="test-token", cache_service=mock_cache_service)
+        yield svc
+        await svc.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_search_skips_pg_cache_when_flag_set(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test search() skips PG cache when skip_cache flag is set."""
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                        "thumb": "https://i.discogs.com/thumb.jpg",
+                    }
+                ]
+            },
+        )
+
+        set_skip_cache(True)
+        request = DiscogsSearchRequest(artist=TEST_ARTIST, album=TEST_ALBUM)
+        result = await service_with_cache.search(request)
+
+        # PG cache should NOT have been consulted
+        mock_cache_service.search_releases.assert_not_called()
+        # API should have been called
+        assert len(httpx_mock.get_requests()) >= 1
+        assert result.total >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_release_skips_pg_cache_when_flag_set(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test get_release() skips PG cache when skip_cache flag is set."""
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "tracklist": [],
+            },
+        )
+
+        set_skip_cache(True)
+        result = await service_with_cache.get_release(TEST_RELEASE_ID)
+
+        # PG cache should NOT have been consulted
+        mock_cache_service.get_release.assert_not_called()
+        # Write-back should also be skipped
+        mock_cache_service.write_release.assert_not_called()
+        # API should have been called
+        assert len(httpx_mock.get_requests()) == 1
+        assert result is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_search_releases_by_track_skips_pg_cache_when_flag_set(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test search_releases_by_track() skips PG cache when skip_cache flag is set."""
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={
+                "results": [
+                    {
+                        "id": TEST_RELEASE_ID,
+                        "title": f"{TEST_ARTIST} - {TEST_ALBUM}",
+                        "type": "release",
+                    }
+                ]
+            },
+        )
+
+        set_skip_cache(True)
+        await service_with_cache.search_releases_by_track(TEST_TRACK, TEST_ARTIST)
+
+        # PG cache should NOT have been consulted
+        mock_cache_service.search_releases_by_track.assert_not_called()
+        # API should have been called
+        assert len(httpx_mock.get_requests()) >= 1
+
+    @pytest.mark.asyncio
+    async def test_validate_track_skips_pg_cache_when_flag_set(
+        self, service_with_cache: DiscogsService, mock_cache_service, httpx_mock: HTTPXMock
+    ):
+        """Test validate_track_on_release() skips PG cache when skip_cache flag is set."""
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],
+                "tracklist": [
+                    {"position": "1", "title": TEST_TRACK, "artists": [{"name": TEST_ARTIST}]}
+                ],
+            },
+        )
+
+        set_skip_cache(True)
+        result = await service_with_cache.validate_track_on_release(
+            TEST_RELEASE_ID, TEST_TRACK, TEST_ARTIST
+        )
+
+        # PG cache should NOT have been consulted
+        mock_cache_service.validate_track_on_release.assert_not_called()
+        # Should have fallen through to API
+        assert result is True

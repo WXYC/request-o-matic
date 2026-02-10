@@ -1322,3 +1322,45 @@ class TestFullRequestIntegration:
         )
 
         print("\n✅ Correctly returned only albums with the requested track!")
+
+    @pytest.mark.asyncio
+    async def test_skip_cache_bypasses_all_caches(self, base_url):
+        """
+        Test that skip_cache=True bypasses both in-memory and PG caches.
+
+        Sends the same query twice: once normally (which populates caches),
+        then with skip_cache=True. The second request should show 0 memory
+        hits and 0 PG hits.
+        """
+        import httpx
+
+        query = "Autechre Confield"
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # First request: populates caches
+            response1 = await client.post(
+                f"{base_url}/request",
+                json={"message": query, "skip_slack": True},
+            )
+            response1.raise_for_status()
+
+            # Second request: skip_cache should bypass all caches
+            response2 = await client.post(
+                f"{base_url}/request",
+                json={"message": query, "skip_slack": True, "skip_cache": True},
+            )
+            response2.raise_for_status()
+            data = response2.json()
+
+        cache_stats = data.get("cache_stats", {})
+        memory_hits = cache_stats.get("memory_hits", 0)
+        pg_hits = cache_stats.get("pg_hits", 0)
+
+        print(f"\n📊 Cache stats with skip_cache=True: {cache_stats}")
+
+        assert memory_hits == 0, (
+            f"Expected 0 memory cache hits with skip_cache=True, got {memory_hits}"
+        )
+        assert pg_hits == 0, f"Expected 0 PG cache hits with skip_cache=True, got {pg_hits}"
+
+        print("✅ skip_cache=True correctly bypassed all caches")

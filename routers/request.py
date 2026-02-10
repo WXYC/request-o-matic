@@ -58,6 +58,7 @@ from core.search import (
 )
 from core.telemetry import RequestTelemetry, get_cache_stats, init_cache_stats
 from discogs.lookup import lookup_releases_by_artist, lookup_releases_by_track
+from discogs.memory_cache import set_skip_cache
 from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
 from discogs.service import DiscogsService
 from library.db import LibraryDB
@@ -96,6 +97,7 @@ class RequestBody(BaseModel):
 
     message: str
     skip_slack: bool = False
+    skip_cache: bool = False
 
 
 class UnifiedResponse(BaseModel):
@@ -892,6 +894,8 @@ async def handle_request(
 
     # Initialize telemetry
     init_cache_stats()
+    if request.skip_cache:
+        set_skip_cache(True)
     telemetry = RequestTelemetry()
     search_type = "none"
 

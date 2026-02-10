@@ -2,7 +2,14 @@
 
 import pytest
 
-from discogs.memory_cache import async_cached, clear_all_caches, create_ttl_cache, make_cache_key
+from discogs.memory_cache import (
+    async_cached,
+    clear_all_caches,
+    create_ttl_cache,
+    make_cache_key,
+    set_skip_cache,
+    should_skip_cache,
+)
 
 # Default test data
 TEST_TRACK = "VI Scose Poise"
@@ -269,3 +276,61 @@ class TestClearAllCaches:
         await func1(TEST_TRACK)
         await func2(TEST_TRACK)
         assert call_count == 4
+
+
+class TestSkipCache:
+    """Tests for the skip_cache ContextVar flag."""
+
+    @pytest.fixture(autouse=True)
+    def reset_skip_cache(self):
+        """Reset the skip_cache flag before and after each test."""
+        set_skip_cache(False)
+        clear_all_caches()
+        yield
+        set_skip_cache(False)
+        clear_all_caches()
+
+    def test_should_skip_cache_defaults_false(self):
+        """Test that should_skip_cache() returns False by default."""
+        assert should_skip_cache() is False
+
+    @pytest.mark.asyncio
+    async def test_async_cached_skipped_when_flag_set(self):
+        """Test that the cache is bypassed when skip_cache flag is set."""
+        cache = create_ttl_cache(maxsize=100, ttl=3600)
+        call_count = 0
+
+        @async_cached(cache)
+        async def my_func(track: str) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return {"track": track, "cached": False}
+
+        set_skip_cache(True)
+
+        # Both calls should invoke the function (no caching)
+        result1 = await my_func(TEST_TRACK)
+        result2 = await my_func(TEST_TRACK)
+
+        assert result1["track"] == TEST_TRACK
+        assert result2["track"] == TEST_TRACK
+        assert call_count == 2  # Function called both times
+
+    @pytest.mark.asyncio
+    async def test_async_cached_normal_when_flag_not_set(self):
+        """Test that caching still works normally when skip_cache flag is False."""
+        cache = create_ttl_cache(maxsize=100, ttl=3600)
+        call_count = 0
+
+        @async_cached(cache)
+        async def my_func(track: str) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return {"track": track, "cached": False}
+
+        set_skip_cache(False)
+
+        await my_func(TEST_TRACK)
+        await my_func(TEST_TRACK)
+
+        assert call_count == 1  # Function called only once (second was cache hit)
