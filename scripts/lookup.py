@@ -157,6 +157,11 @@ def print_cache_stats(cache_stats: dict) -> None:
     print(f"  In-memory cache:   {memory_hits} hits")
     print(f"  PostgreSQL cache:  {pg_hits} hits, {pg_misses} misses")
     print(f"  Discogs API calls: {api_calls}")
+    pg_time = cache_stats.get("pg_time_ms", 0)
+    api_time = cache_stats.get("api_time_ms", 0)
+    if pg_time > 0 or api_time > 0:
+        print(f"  PG cache time:     {pg_time:.0f} ms")
+        print(f"  API time:          {api_time:.0f} ms")
 
 
 async def run_lookup(

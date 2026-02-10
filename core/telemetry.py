@@ -24,34 +24,11 @@ class StepResult:
 
 
 @dataclass
-class CacheStats:
-    """Statistics for cache operations."""
-
-    hits: int = 0
-    misses: int = 0
-    writes: int = 0
-    errors: int = 0
-
-    @property
-    def total_queries(self) -> int:
-        """Total number of cache queries (hits + misses)."""
-        return self.hits + self.misses
-
-    @property
-    def hit_rate(self) -> float:
-        """Cache hit rate as a percentage (0.0 to 1.0)."""
-        if self.total_queries == 0:
-            return 0.0
-        return self.hits / self.total_queries
-
-
-@dataclass
 class RequestTelemetry:
     """Tracks performance metrics for a single request."""
 
     steps: dict[str, StepResult] = field(default_factory=dict)
     api_calls: dict[str, int] = field(default_factory=lambda: {"groq": 0, "discogs": 0, "slack": 0})
-    cache_stats: CacheStats = field(default_factory=CacheStats)
     start_time: float = field(default_factory=time.perf_counter)
     _current_step: str | None = field(default=None, repr=False)
     _step_start: float = field(default=0.0, repr=False)
@@ -99,22 +76,6 @@ class RequestTelemetry:
         else:
             logger.warning(f"Unknown service for API call tracking: {service}")
 
-    def record_cache_hit(self) -> None:
-        """Record a cache hit."""
-        self.cache_stats.hits += 1
-
-    def record_cache_miss(self) -> None:
-        """Record a cache miss."""
-        self.cache_stats.misses += 1
-
-    def record_cache_write(self) -> None:
-        """Record a cache write operation."""
-        self.cache_stats.writes += 1
-
-    def record_cache_error(self) -> None:
-        """Record a cache error (connection failure, etc.)."""
-        self.cache_stats.errors += 1
-
     def get_total_duration_ms(self) -> float:
         """Get total elapsed time since telemetry was created."""
         return (time.perf_counter() - self.start_time) * 1000
@@ -131,6 +92,8 @@ class RequestTelemetry:
         """Send all telemetry events to PostHog.
 
         Sends individual step events and a final summary event.
+        Cache stats are read from the per-request ContextVar (populated by
+        discogs/service.py during the request lifecycle).
 
         Args:
             posthog_client: PostHog client instance
@@ -151,6 +114,20 @@ class RequestTelemetry:
                 },
             )
 
+        # Read cache stats from ContextVar (populated during request lifecycle)
+        cache_data = get_cache_stats()
+        if cache_data:
+            cache_props = cache_data.copy()
+        else:
+            cache_props = {
+                "memory_hits": 0,
+                "pg_hits": 0,
+                "pg_misses": 0,
+                "api_calls": 0,
+                "pg_time_ms": 0.0,
+                "api_time_ms": 0.0,
+            }
+
         # Send summary event
         posthog_client.capture(
             distinct_id=DISTINCT_ID,
@@ -159,13 +136,7 @@ class RequestTelemetry:
                 "total_duration_ms": round(self.get_total_duration_ms(), 2),
                 "steps": self.get_step_timings(),
                 "api_calls": self.api_calls.copy(),
-                "cache": {
-                    "hits": self.cache_stats.hits,
-                    "misses": self.cache_stats.misses,
-                    "writes": self.cache_stats.writes,
-                    "errors": self.cache_stats.errors,
-                    "hit_rate": round(self.cache_stats.hit_rate, 2),
-                },
+                "cache": cache_props,
                 **extra_properties,
             },
         )
@@ -184,7 +155,16 @@ _cache_stats_var: ContextVar[dict] = ContextVar("cache_stats")
 
 def init_cache_stats() -> None:
     """Initialize cache stats for the current request context."""
-    _cache_stats_var.set({"memory_hits": 0, "pg_hits": 0, "pg_misses": 0, "api_calls": 0})
+    _cache_stats_var.set(
+        {
+            "memory_hits": 0,
+            "pg_hits": 0,
+            "pg_misses": 0,
+            "api_calls": 0,
+            "pg_time_ms": 0.0,
+            "api_time_ms": 0.0,
+        }
+    )
 
 
 def record_memory_cache_hit() -> None:
@@ -213,6 +193,20 @@ def record_discogs_api_call() -> None:
     stats = _cache_stats_var.get(None)
     if stats is not None:
         stats["api_calls"] += 1
+
+
+def record_pg_time(ms: float) -> None:
+    """Accumulate PostgreSQL cache query time in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["pg_time_ms"] += ms
+
+
+def record_api_time(ms: float) -> None:
+    """Accumulate Discogs API call time in the current request context."""
+    stats = _cache_stats_var.get(None)
+    if stats is not None:
+        stats["api_time_ms"] += ms
 
 
 def get_cache_stats() -> dict | None:

@@ -5,7 +5,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.telemetry import CacheStats, RequestTelemetry, StepResult
+from core.telemetry import (
+    RequestTelemetry,
+    StepResult,
+    _cache_stats_var,
+    get_cache_stats,
+    init_cache_stats,
+    record_api_time,
+    record_discogs_api_call,
+    record_memory_cache_hit,
+    record_pg_cache_hit,
+    record_pg_cache_miss,
+    record_pg_time,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_cache_stats_contextvar():
+    """Reset the ContextVar before each test to prevent leakage between tests."""
+    token = _cache_stats_var.set(None)  # type: ignore[arg-type]
+    yield
+    _cache_stats_var.reset(token)
 
 
 class TestRequestTelemetry:
@@ -216,91 +236,120 @@ class TestStepResult:
         assert result.error_type == "ValueError"
 
 
-class TestCacheStats:
-    """Tests for CacheStats dataclass."""
+class TestContextVarCacheStats:
+    """Tests for per-request cache stats via ContextVar."""
 
-    def test_default_values(self):
-        """Verify default values are zero."""
-        stats = CacheStats()
+    def test_init_includes_all_keys(self):
+        """Verify init_cache_stats sets all expected keys including timing."""
+        init_cache_stats()
+        stats = get_cache_stats()
 
-        assert stats.hits == 0
-        assert stats.misses == 0
-        assert stats.writes == 0
-        assert stats.errors == 0
+        assert stats is not None
+        assert stats["memory_hits"] == 0
+        assert stats["pg_hits"] == 0
+        assert stats["pg_misses"] == 0
+        assert stats["api_calls"] == 0
+        assert stats["pg_time_ms"] == 0.0
+        assert stats["api_time_ms"] == 0.0
 
-    def test_total_queries(self):
-        """Verify total_queries calculation."""
-        stats = CacheStats(hits=10, misses=5)
+    def test_record_pg_cache_hit(self):
+        """Verify PG cache hits are recorded."""
+        init_cache_stats()
 
-        assert stats.total_queries == 15
+        record_pg_cache_hit()
+        record_pg_cache_hit()
 
-    def test_hit_rate_with_data(self):
-        """Verify hit_rate calculation."""
-        stats = CacheStats(hits=8, misses=2)
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["pg_hits"] == 2
 
-        assert stats.hit_rate == 0.8
+    def test_record_pg_cache_miss(self):
+        """Verify PG cache misses are recorded."""
+        init_cache_stats()
 
-    def test_hit_rate_no_queries(self):
-        """Verify hit_rate is 0 when no queries made."""
-        stats = CacheStats()
+        record_pg_cache_miss()
 
-        assert stats.hit_rate == 0.0
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["pg_misses"] == 1
+
+    def test_record_memory_cache_hit(self):
+        """Verify memory cache hits are recorded."""
+        init_cache_stats()
+
+        record_memory_cache_hit()
+        record_memory_cache_hit()
+        record_memory_cache_hit()
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["memory_hits"] == 3
+
+    def test_record_discogs_api_call(self):
+        """Verify Discogs API calls are recorded."""
+        init_cache_stats()
+
+        record_discogs_api_call()
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["api_calls"] == 1
+
+    def test_record_pg_time_accumulates(self):
+        """Verify multiple PG timing calls sum up."""
+        init_cache_stats()
+
+        record_pg_time(10.5)
+        record_pg_time(20.3)
+        record_pg_time(5.0)
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["pg_time_ms"] == pytest.approx(35.8)
+
+    def test_record_api_time_accumulates(self):
+        """Verify multiple API timing calls sum up."""
+        init_cache_stats()
+
+        record_api_time(100.0)
+        record_api_time(250.5)
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["api_time_ms"] == pytest.approx(350.5)
+
+    def test_timing_no_context_is_noop(self):
+        """Verify timing functions don't crash when ContextVar not initialized."""
+        # These should silently do nothing, not raise
+        record_pg_time(10.0)
+        record_api_time(20.0)
+        record_pg_cache_hit()
+        record_pg_cache_miss()
+        record_memory_cache_hit()
+        record_discogs_api_call()
 
 
-class TestCacheTracking:
-    """Tests for cache tracking in RequestTelemetry."""
+class TestPostHogContextVarIntegration:
+    """Tests for PostHog using ContextVar cache stats."""
 
-    def test_record_cache_hit(self):
-        """Verify cache hit is recorded."""
-        telemetry = RequestTelemetry()
+    def test_send_to_posthog_uses_contextvar_cache_stats(self):
+        """Verify request_completed event uses ContextVar data when available."""
+        init_cache_stats()
+        record_pg_cache_hit()
+        record_pg_cache_hit()
+        record_pg_cache_miss()
+        record_discogs_api_call()
+        record_pg_time(15.0)
+        record_api_time(200.0)
 
-        telemetry.record_cache_hit()
-        telemetry.record_cache_hit()
-
-        assert telemetry.cache_stats.hits == 2
-
-    def test_record_cache_miss(self):
-        """Verify cache miss is recorded."""
-        telemetry = RequestTelemetry()
-
-        telemetry.record_cache_miss()
-
-        assert telemetry.cache_stats.misses == 1
-
-    def test_record_cache_write(self):
-        """Verify cache write is recorded."""
-        telemetry = RequestTelemetry()
-
-        telemetry.record_cache_write()
-        telemetry.record_cache_write()
-        telemetry.record_cache_write()
-
-        assert telemetry.cache_stats.writes == 3
-
-    def test_record_cache_error(self):
-        """Verify cache error is recorded."""
-        telemetry = RequestTelemetry()
-
-        telemetry.record_cache_error()
-
-        assert telemetry.cache_stats.errors == 1
-
-    def test_cache_stats_in_posthog(self):
-        """Verify cache stats are included in PostHog completed event."""
         telemetry = RequestTelemetry()
         mock_posthog = MagicMock()
-
-        telemetry.record_cache_hit()
-        telemetry.record_cache_hit()
-        telemetry.record_cache_miss()
-        telemetry.record_cache_write()
 
         with telemetry.track_step("test"):
             pass
 
         telemetry.send_to_posthog(mock_posthog, {})
 
-        # Find the completed event
         completed_call = next(
             call
             for call in mock_posthog.capture.call_args_list
@@ -309,8 +358,32 @@ class TestCacheTracking:
 
         props = completed_call.kwargs["properties"]
         assert "cache" in props
-        assert props["cache"]["hits"] == 2
-        assert props["cache"]["misses"] == 1
-        assert props["cache"]["writes"] == 1
-        assert props["cache"]["errors"] == 0
-        assert props["cache"]["hit_rate"] == 0.67  # 2/3 rounded to 2 decimals
+        cache = props["cache"]
+        assert cache["pg_hits"] == 2
+        assert cache["pg_misses"] == 1
+        assert cache["api_calls"] == 1
+        assert cache["pg_time_ms"] == 15.0
+        assert cache["api_time_ms"] == 200.0
+
+    def test_send_to_posthog_without_contextvar_sends_empty_cache(self):
+        """Verify request_completed event sends zeros when ContextVar not initialized."""
+        telemetry = RequestTelemetry()
+        mock_posthog = MagicMock()
+
+        with telemetry.track_step("test"):
+            pass
+
+        telemetry.send_to_posthog(mock_posthog, {})
+
+        completed_call = next(
+            call
+            for call in mock_posthog.capture.call_args_list
+            if call.kwargs["event"] == "request_completed"
+        )
+
+        props = completed_call.kwargs["properties"]
+        assert "cache" in props
+        cache = props["cache"]
+        assert cache["pg_hits"] == 0
+        assert cache["pg_misses"] == 0
+        assert cache["api_calls"] == 0
