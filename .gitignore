@@ -14,5 +14,4 @@ logs/
 .coverage
 htmlcov/
 library/*.db
-.railtail/
 discogs-xml2db/
