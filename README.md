@@ -324,49 +324,13 @@ If Slack integration fails:
 
 The service supports an optional PostgreSQL cache for Discogs data to reduce API calls. When enabled, the service queries the local cache first and falls back to the Discogs API on cache misses.
 
-### Prerequisites
+The cache ETL pipeline (building the database from Discogs data dumps) lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for full setup instructions.
 
-- PostgreSQL with the `pg_trgm` extension
-- Discogs monthly data dump (XML format) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
-- [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) to convert XML to CSV
+To enable the cache, set the environment variable:
 
-### Setup Steps
-
-1. **Convert XML to CSV** using discogs-xml2db:
-   ```bash
-   python -m discogs_xml2db releases.xml --output csv
-   ```
-
-2. **Filter to library artists** to reduce data volume (~70% reduction):
-   ```bash
-   python scripts/setup-discogs-db/filter_discogs_csv.py \
-     --library-db library.db \
-     --input-dir /path/to/csv \
-     --output-dir /path/to/filtered
-   ```
-
-3. **Create database and schema:**
-   ```bash
-   createdb discogs
-   psql -d discogs -f scripts/setup-discogs-db/04-create-database.sql
-   ```
-
-4. **Import filtered CSVs:**
-   ```bash
-   python scripts/setup-discogs-db/import_csv.py \
-     --csv-dir /path/to/filtered \
-     --database discogs
-   ```
-
-5. **Create indexes** (including trigram indexes for fuzzy search):
-   ```bash
-   psql -d discogs -f scripts/setup-discogs-db/05-create-indexes.sql
-   ```
-
-6. **Set the environment variable:**
-   ```bash
-   DATABASE_URL_DISCOGS=postgresql://user:pass@host:5432/discogs
-   ```
+```bash
+DATABASE_URL_DISCOGS=postgresql://user:pass@host:5432/discogs
+```
 
 If `DATABASE_URL_DISCOGS` is not set, the service uses the Discogs API directly (existing behavior).
 

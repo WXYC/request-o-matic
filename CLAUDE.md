@@ -25,8 +25,6 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `discogs/memory_cache.py` - In-memory TTL cache for API responses
 - `core/sentry.py` - Sentry error tracking integration
 - `core/telemetry.py` - PostHog telemetry with cache stats tracking
-- `scripts/setup-discogs-db/` - Scripts to build the Discogs PostgreSQL cache from data dumps
-
 ### Discogs Cache (Optional)
 The service supports an optional PostgreSQL cache for Discogs data to reduce API calls:
 
@@ -45,15 +43,7 @@ The service supports an optional PostgreSQL cache for Discogs data to reduce API
 Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. If not set, the service uses Discogs API directly (existing behavior).
 
 **Setting Up the Cache Database:**
-The `scripts/setup-discogs-db/` directory contains scripts to populate a PostgreSQL database from Discogs data dumps:
-
-1. Download Discogs monthly data dumps from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
-2. Use [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) to convert XML to CSV
-3. Run `filter_discogs_csv.py` to filter to library-matching artists only (~70% data reduction)
-4. Apply schema with `04-create-database.sql` and indexes with `05-create-indexes.sql`
-5. Import filtered CSVs with `import_csv.py`
-
-The filtering step reduces storage and query times by only keeping releases from artists in the library catalog.
+The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
 
 ### Library ETL
 The `library.db` SQLite database is synced daily from the WXYC MySQL database:
