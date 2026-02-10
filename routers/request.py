@@ -31,6 +31,7 @@ Each step is tracked via telemetry for observability.
 import asyncio
 import logging
 import re
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException
 from groq import Groq
@@ -113,6 +114,7 @@ class UnifiedResponse(BaseModel):
 
 async def resolve_albums_for_track(
     parsed: ParsedRequest,
+    discogs_service: DiscogsService | None = None,
 ) -> tuple[list[str], bool]:
     """Resolve album names for a track if not provided.
 
@@ -122,6 +124,7 @@ async def resolve_albums_for_track(
 
     Args:
         parsed: Parsed request with song/artist info
+        discogs_service: Optional Discogs service with cache
 
     Returns:
         Tuple of (list of album names, song_not_found_flag)
@@ -142,7 +145,9 @@ async def resolve_albums_for_track(
             logger.info(f"Album '{parsed.album}' appears to be artist name, looking up albums")
         try:
             # Get ALL releases containing this track, not just the first one
-            releases = await lookup_releases_by_track(parsed.song, parsed.artist, limit=10)
+            releases = await lookup_releases_by_track(
+                parsed.song, parsed.artist, limit=10, service=discogs_service
+            )
             if releases:
                 # Extract unique album names, filtering to releases by this artist
                 albums = []
@@ -252,7 +257,7 @@ async def search_with_alternative_interpretation(
 
 
 async def search_song_as_artist(
-    db: LibraryDB, song_as_artist: str
+    db: LibraryDB, song_as_artist: str, discogs_service: DiscogsService | None = None
 ) -> tuple[list[LibraryItem], None]:
     """Try searching using the parsed song title as an artist name.
 
@@ -282,7 +287,9 @@ async def search_song_as_artist(
 
     # Step 2: Search Discogs for releases by this artist
     logger.info(f"No direct matches, searching Discogs for releases by '{song_as_artist}'")
-    discogs_releases = await lookup_releases_by_artist(song_as_artist, limit=10)
+    discogs_releases = await lookup_releases_by_artist(
+        song_as_artist, limit=10, service=discogs_service
+    )
 
     if not discogs_releases:
         logger.info(f"No Discogs releases found for '{song_as_artist}'")
@@ -431,6 +438,7 @@ async def search_library_with_fallback(
 async def search_compilations_for_track(
     db: LibraryDB,
     parsed: ParsedRequest,
+    discogs_service: DiscogsService | None = None,
 ) -> tuple[list[LibraryItem], dict[int, str]]:
     """Search for track on compilation albums using Discogs and library keyword search.
 
@@ -503,7 +511,9 @@ async def search_compilations_for_track(
             song_search = f"{parsed.song} ({remix_match.group(1)})"
             logger.info(f"Using full track name with version info: '{song_search}'")
 
-        releases = await lookup_releases_by_track(song_search, parsed.artist)
+        releases = await lookup_releases_by_track(
+            song_search, parsed.artist, service=discogs_service
+        )
         logger.info(f"Found {len(releases)} releases with '{song_search}' on Discogs")
 
         # Check each release against our library
@@ -910,7 +920,9 @@ async def handle_request(
         with telemetry.track_step("album_lookup"):
             if parsed.song and not parsed.album:
                 telemetry.record_api_call("discogs")
-            albums_for_search, song_not_found = await resolve_albums_for_track(parsed)
+            albums_for_search, song_not_found = await resolve_albums_for_track(
+                parsed, discogs_service
+            )
 
         # Step 3: Execute search strategy pipeline
         # The pipeline tries strategies in order until results are found:
@@ -922,8 +934,12 @@ async def handle_request(
             strategies = build_strategies(
                 search_library_func=search_library_with_fallback,
                 search_alternative_func=search_with_alternative_interpretation,
-                search_compilations_func=search_compilations_for_track,
-                search_song_as_artist_func=search_song_as_artist,
+                search_compilations_func=partial(
+                    search_compilations_for_track, discogs_service=discogs_service
+                ),
+                search_song_as_artist_func=partial(
+                    search_song_as_artist, discogs_service=discogs_service
+                ),
             )
 
             search_state = await execute_search_pipeline(

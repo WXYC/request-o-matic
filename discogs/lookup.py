@@ -1,7 +1,8 @@
 """Helper functions for Discogs lookups.
 
-These functions create their own service instances for use internally
-by the request handler, bypassing FastAPI dependency injection.
+These functions accept an optional DiscogsService instance. When provided
+(e.g., from FastAPI dependency injection), the service's cache is used.
+When omitted, a cacheless service is created as a fallback.
 """
 
 import logging
@@ -13,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_service() -> DiscogsService | None:
-    """Get a DiscogsService instance if token is configured."""
+    """Get a cacheless DiscogsService instance if token is configured.
+
+    Prefer passing a service instance from dependency injection to benefit
+    from the PostgreSQL cache.
+    """
     from config.settings import get_settings
 
     settings = get_settings()
@@ -26,6 +31,7 @@ async def lookup_releases_by_track(
     track: str,
     artist: str | None = None,
     limit: int = 20,
+    service: DiscogsService | None = None,
 ) -> list[tuple[str, str]]:
     """Look up all releases containing a track using Discogs.
 
@@ -36,12 +42,15 @@ async def lookup_releases_by_track(
         track: Track title
         artist: Optional artist name
         limit: Maximum number of results
+        service: Optional DiscogsService instance (with cache). If not provided,
+            creates a cacheless fallback service.
 
     Returns:
         List of (artist, album) tuples for releases containing the track.
         Useful for finding compilations and alternate releases.
     """
-    service = _get_service()
+    if service is None:
+        service = _get_service()
     if not service:
         return []
 
@@ -68,6 +77,7 @@ async def lookup_releases_by_track(
 async def lookup_releases_by_artist(
     artist: str,
     limit: int = 10,
+    service: DiscogsService | None = None,
 ) -> list[tuple[str, str]]:
     """Look up releases by an artist using Discogs.
 
@@ -76,11 +86,14 @@ async def lookup_releases_by_artist(
     Args:
         artist: Artist name to search for
         limit: Maximum number of results
+        service: Optional DiscogsService instance (with cache). If not provided,
+            creates a cacheless fallback service.
 
     Returns:
         List of (artist, album) tuples for releases by or featuring the artist.
     """
-    service = _get_service()
+    if service is None:
+        service = _get_service()
     if not service:
         return []
 
