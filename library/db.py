@@ -33,6 +33,17 @@ class LibraryDB:
         self._conn.row_factory = aiosqlite.Row
         logger.info(f"Connected to SQLite database: {self.db_path}")
 
+    async def is_available(self) -> bool:
+        """Check if the database connection is alive."""
+        try:
+            if self._conn is None:
+                return False
+            async with self._conn.execute("SELECT 1") as cursor:
+                row = await cursor.fetchone()
+                return row is not None
+        except Exception:
+            return False
+
     async def close(self):
         """Close database connection."""
         if self._conn:

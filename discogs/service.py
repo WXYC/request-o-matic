@@ -87,6 +87,15 @@ class DiscogsService:
             await self._client.aclose()
             self._client = None
 
+    async def check_api(self) -> bool:
+        """Check Discogs API connectivity."""
+        try:
+            client = await self._get_client()
+            resp = await client.get("/oauth/identity")
+            return bool(resp.status_code == 200)
+        except Exception:
+            return False
+
     async def _request_with_retry(
         self,
         method: str,
