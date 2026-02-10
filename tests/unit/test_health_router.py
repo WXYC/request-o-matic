@@ -1,7 +1,8 @@
 """Unit tests for routers/health.py."""
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -11,240 +12,317 @@ from config.settings import Settings
 from routers.health import router
 
 
+def _make_settings(**overrides):
+    return Settings(
+        groq_api_key=overrides.pop("groq_api_key", "test_groq_key"),
+        discogs_token=overrides.pop("discogs_token", "test_discogs_token"),
+        slack_webhook_url=overrides.pop("slack_webhook_url", "https://hooks.slack.com/test"),
+        library_db_path=overrides.pop("library_db_path", Path("test_library.db")),
+        log_level=overrides.pop("log_level", "DEBUG"),
+        enable_slack_integration=overrides.pop("enable_slack_integration", True),
+        enable_artwork_lookup=overrides.pop("enable_artwork_lookup", True),
+        app_version=overrides.pop("app_version", "1.0.0-test"),
+        **overrides,
+    )
+
+
+def _make_app(settings, db, discogs_service, http_client=None):
+    """Build a FastAPI test app with dependency overrides."""
+    from config.settings import get_settings
+    from core.dependencies import get_discogs_service, get_http_client, get_library_db
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_library_db] = lambda: db
+    app.dependency_overrides[get_discogs_service] = lambda: discogs_service
+    app.dependency_overrides[get_http_client] = lambda: http_client or AsyncMock()
+    return app
+
+
 @pytest.fixture
 def mock_settings():
-    """Create mock settings."""
-    return Settings(
-        groq_api_key="test_groq_key",
-        discogs_token="test_discogs_token",
-        slack_webhook_url="https://hooks.slack.com/test",
-        library_db_path=Path("test_library.db"),
-        log_level="DEBUG",
-        enable_slack_integration=True,
-        enable_artwork_lookup=True,
-        app_version="1.0.0-test",
-    )
+    return _make_settings()
 
 
 @pytest.fixture
 def mock_library_db():
-    """Create a mock library database."""
     db = AsyncMock()
-    db._conn = Mock()  # Connected state
+    db.is_available = AsyncMock(return_value=True)
     return db
 
 
 @pytest.fixture
 def mock_discogs_service():
-    """Create a mock Discogs service."""
-    return Mock()
+    svc = AsyncMock()
+    svc.check_api = AsyncMock(return_value=True)
+    svc.cache_service = AsyncMock()
+    svc.cache_service.is_available = AsyncMock(return_value=True)
+    return svc
 
 
 @pytest.fixture
-def app(mock_settings, mock_library_db, mock_discogs_service):
-    """Create a test app with the health router."""
-    app = FastAPI()
-    app.include_router(router)
+def mock_http_client():
+    """HTTP client that returns 200 for Groq and 400 for Slack."""
+    client = AsyncMock()
 
-    # Override dependencies
-    from config.settings import get_settings
-    from core.dependencies import get_discogs_service, get_library_db
+    async def _get(url, **kwargs):
+        resp = Mock()
+        resp.status_code = 200
+        return resp
 
-    app.dependency_overrides[get_settings] = lambda: mock_settings
-    app.dependency_overrides[get_library_db] = lambda: mock_library_db
-    app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
+    async def _post(url, **kwargs):
+        resp = Mock()
+        resp.status_code = 400  # Slack returns 400 for empty body
+        return resp
 
-    return app
+    client.get = _get
+    client.post = _post
+    return client
 
 
 class TestHealthCheck:
     """Tests for the health check endpoint."""
 
     @pytest.mark.asyncio
-    async def test_health_check_all_services_healthy(
-        self, app, mock_settings, mock_library_db, mock_discogs_service
+    async def test_all_services_healthy(
+        self, mock_settings, mock_library_db, mock_discogs_service, mock_http_client
     ):
-        """Test health check when all services are healthy."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
+        """All services ok -> 200 healthy."""
+        app = _make_app(mock_settings, mock_library_db, mock_discogs_service, mock_http_client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
 
         assert response.status_code == 200
         data = response.json()
-
         assert data["status"] == "healthy"
         assert data["version"] == "1.0.0-test"
-        assert data["services"]["groq"] == "configured"
-        assert data["services"]["database"] == "connected"
-        assert data["services"]["discogs"] == "available"
-        assert data["services"]["slack"] == "enabled"
+        assert data["services"]["groq"] == "ok"
+        assert data["services"]["database"] == "ok"
+        assert data["services"]["discogs_api"] == "ok"
+        assert data["services"]["discogs_cache"] == "ok"
+        assert data["services"]["slack"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_health_check_groq_not_configured(self, mock_library_db, mock_discogs_service):
-        """Test health check when Groq API key is not configured."""
-        settings = Settings(
-            groq_api_key="",  # Empty = not configured
-            discogs_token="test_token",
-            enable_slack_integration=True,
-            enable_artwork_lookup=True,
-        )
+    async def test_core_service_down_database(
+        self, mock_settings, mock_discogs_service, mock_http_client
+    ):
+        """Database down -> 503 unhealthy."""
+        db = AsyncMock()
+        db.is_available = AsyncMock(return_value=False)
+        app = _make_app(mock_settings, db, mock_discogs_service, mock_http_client)
 
-        app = FastAPI()
-        app.include_router(router)
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
 
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
-
-        app.dependency_overrides[get_settings] = lambda: settings
-        app.dependency_overrides[get_library_db] = lambda: mock_library_db
-        app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
-
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
-        assert data["services"]["groq"] == "not_configured"
+        assert data["status"] == "unhealthy"
+        assert data["services"]["database"] == "error"
 
     @pytest.mark.asyncio
-    async def test_health_check_database_disconnected(self, mock_settings, mock_discogs_service):
-        """Test health check when database is disconnected."""
-        mock_db = AsyncMock()
-        mock_db._conn = None  # Disconnected state
-
-        app = FastAPI()
-        app.include_router(router)
-
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
-
-        app.dependency_overrides[get_settings] = lambda: mock_settings
-        app.dependency_overrides[get_library_db] = lambda: mock_db
-        app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["services"]["database"] == "disconnected"
-
-    @pytest.mark.asyncio
-    async def test_health_check_discogs_unavailable(self, mock_settings, mock_library_db):
-        """Test health check when Discogs service is unavailable."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token=None,  # No token
-            enable_artwork_lookup=True,
-        )
-
-        app = FastAPI()
-        app.include_router(router)
-
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
-
-        app.dependency_overrides[get_settings] = lambda: settings
-        app.dependency_overrides[get_library_db] = lambda: mock_library_db
-        app.dependency_overrides[get_discogs_service] = lambda: None
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["services"]["discogs"] == "unavailable"
-
-    @pytest.mark.asyncio
-    async def test_health_check_discogs_disabled(self, mock_settings, mock_library_db):
-        """Test health check when artwork lookup is disabled."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_token",
-            enable_artwork_lookup=False,  # Disabled
-        )
-
-        app = FastAPI()
-        app.include_router(router)
-
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
-
-        app.dependency_overrides[get_settings] = lambda: settings
-        app.dependency_overrides[get_library_db] = lambda: mock_library_db
-        app.dependency_overrides[get_discogs_service] = lambda: Mock()
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["services"]["discogs"] == "disabled"
-
-    @pytest.mark.asyncio
-    async def test_health_check_slack_disabled(
+    async def test_core_service_down_groq(
         self, mock_settings, mock_library_db, mock_discogs_service
     ):
-        """Test health check when Slack integration is disabled."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_token",
-            enable_slack_integration=False,  # Disabled
-            enable_artwork_lookup=True,
-        )
+        """Groq returning non-200 -> 503 unhealthy."""
+        client = AsyncMock()
 
-        app = FastAPI()
-        app.include_router(router)
+        async def _get(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 401  # Bad API key
+            return resp
 
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
+        async def _post(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 400
+            return resp
 
-        app.dependency_overrides[get_settings] = lambda: settings
-        app.dependency_overrides[get_library_db] = lambda: mock_library_db
-        app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
+        client.get = _get
+        client.post = _post
+        app = _make_app(mock_settings, mock_library_db, mock_discogs_service, client)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
 
-        assert response.status_code == 200
+        assert response.status_code == 503
         data = response.json()
-        assert data["services"]["slack"] == "disabled"
+        assert data["status"] == "unhealthy"
+        assert data["services"]["groq"] == "error"
 
     @pytest.mark.asyncio
-    async def test_health_check_features_enabled(self, app, mock_settings):
-        """Test that features are correctly reported."""
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
+    async def test_optional_service_down_degraded(
+        self, mock_settings, mock_library_db, mock_http_client
+    ):
+        """Discogs API down, core ok -> 200 degraded."""
+        discogs = AsyncMock()
+        discogs.check_api = AsyncMock(return_value=False)
+        discogs.cache_service = AsyncMock()
+        discogs.cache_service.is_available = AsyncMock(return_value=True)
+
+        app = _make_app(mock_settings, mock_library_db, discogs, mock_http_client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
 
         assert response.status_code == 200
         data = response.json()
-
-        assert data["features"]["artwork_lookup"] is True
-        assert data["features"]["slack_integration"] is True
+        assert data["status"] == "degraded"
+        assert data["services"]["discogs_api"] == "error"
+        # Core services still ok
+        assert data["services"]["groq"] == "ok"
+        assert data["services"]["database"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_health_check_features_disabled(self, mock_library_db, mock_discogs_service):
-        """Test features when disabled."""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_artwork_lookup=False,
-            enable_slack_integration=False,
-        )
+    async def test_discogs_not_configured_unavailable(
+        self, mock_settings, mock_library_db, mock_http_client
+    ):
+        """No Discogs service -> both discogs_api and discogs_cache are 'unavailable'."""
+        app = _make_app(mock_settings, mock_library_db, None, mock_http_client)
 
-        app = FastAPI()
-        app.include_router(router)
-
-        from config.settings import get_settings
-        from core.dependencies import get_discogs_service, get_library_db
-
-        app.dependency_overrides[get_settings] = lambda: settings
-        app.dependency_overrides[get_library_db] = lambda: mock_library_db
-        app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/health")
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
 
         assert response.status_code == 200
         data = response.json()
+        assert data["status"] == "healthy"
+        assert data["services"]["discogs_api"] == "unavailable"
+        assert data["services"]["discogs_cache"] == "unavailable"
 
-        assert data["features"]["artwork_lookup"] is False
-        assert data["features"]["slack_integration"] is False
+    @pytest.mark.asyncio
+    async def test_slack_not_configured_unavailable(
+        self, mock_settings, mock_library_db, mock_discogs_service, mock_http_client
+    ):
+        """No cached Slack webhook URL -> 'unavailable', still healthy."""
+        app = _make_app(mock_settings, mock_library_db, mock_discogs_service, mock_http_client)
+
+        with patch("routers.health.get_cached_slack_webhook_url", return_value=None):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert data["services"]["slack"] == "unavailable"
+
+    @pytest.mark.asyncio
+    async def test_discogs_cache_unavailable_when_no_cache_service(
+        self, mock_settings, mock_library_db, mock_http_client
+    ):
+        """Discogs configured but no cache service -> discogs_cache 'unavailable'."""
+        discogs = AsyncMock()
+        discogs.check_api = AsyncMock(return_value=True)
+        discogs.cache_service = None
+
+        app = _make_app(mock_settings, mock_library_db, discogs, mock_http_client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["services"]["discogs_api"] == "ok"
+        assert data["services"]["discogs_cache"] == "unavailable"
+
+    @pytest.mark.asyncio
+    async def test_timeout_reported(self, mock_settings, mock_discogs_service, mock_http_client):
+        """A check that exceeds the timeout is reported as 'timeout'."""
+        db = AsyncMock()
+
+        async def _slow_check():
+            await asyncio.sleep(10)
+            return True
+
+        db.is_available = _slow_check
+
+        app = _make_app(mock_settings, db, mock_discogs_service, mock_http_client)
+
+        with (
+            patch(
+                "routers.health.get_cached_slack_webhook_url",
+                return_value="https://hooks.slack.com/test",
+            ),
+            patch("routers.health.CHECK_TIMEOUT", 0.05),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
+
+        assert response.status_code == 503
+        data = response.json()
+        assert data["services"]["database"] == "timeout"
+        assert data["status"] == "unhealthy"
+
+    @pytest.mark.asyncio
+    async def test_no_features_block(
+        self, mock_settings, mock_library_db, mock_discogs_service, mock_http_client
+    ):
+        """The response should not contain a 'features' block."""
+        app = _make_app(mock_settings, mock_library_db, mock_discogs_service, mock_http_client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
+
+        data = response.json()
+        assert "features" not in data
+
+    @pytest.mark.asyncio
+    async def test_multiple_optional_services_down(
+        self, mock_settings, mock_library_db, mock_http_client
+    ):
+        """Multiple optional services failing -> degraded, not unhealthy."""
+        discogs = AsyncMock()
+        discogs.check_api = AsyncMock(return_value=False)
+        discogs.cache_service = AsyncMock()
+        discogs.cache_service.is_available = AsyncMock(return_value=False)
+
+        app = _make_app(mock_settings, mock_library_db, discogs, mock_http_client)
+
+        # Slack also down (webhook returns 500)
+        async def _post(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 500
+            return resp
+
+        mock_http_client.post = _post
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["services"]["discogs_api"] == "error"
+        assert data["services"]["discogs_cache"] == "error"
+        assert data["services"]["slack"] == "error"

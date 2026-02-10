@@ -52,6 +52,7 @@ def reset_module_state():
     original_discogs_service = deps._discogs_service
     original_posthog_client = deps._posthog_client
     original_discogs_pool = deps._discogs_pool
+    original_slack_webhook_url = deps._slack_webhook_url
 
     # Reset state
     deps._http_client = None
@@ -59,6 +60,7 @@ def reset_module_state():
     deps._discogs_service = None
     deps._posthog_client = None
     deps._discogs_pool = None
+    deps._slack_webhook_url = None
 
     yield
 
@@ -68,6 +70,7 @@ def reset_module_state():
     deps._discogs_service = original_discogs_service
     deps._posthog_client = original_posthog_client
     deps._discogs_pool = original_discogs_pool
+    deps._slack_webhook_url = original_slack_webhook_url
 
 
 class TestGetHttpClient:

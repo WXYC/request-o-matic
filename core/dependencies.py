@@ -22,6 +22,7 @@ _library_db: LibraryDB | None = None
 _discogs_service: DiscogsService | None = None
 _discogs_pool: asyncpg.Pool | None = None
 _posthog_client: Posthog | None = None
+_slack_webhook_url: str | None = None
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -204,6 +205,9 @@ async def get_slack_webhook_url(
 ) -> str | None:
     """Get Slack webhook URL from settings or Railway endpoint.
 
+    Caches the resolved URL in a module-level variable so that
+    ``get_cached_slack_webhook_url()`` can return it without re-fetching.
+
     Args:
         settings: Application settings
         http_client: HTTP client for fetching from Railway
@@ -214,14 +218,21 @@ async def get_slack_webhook_url(
     Raises:
         ServiceInitializationError: If fetching webhook URL fails
     """
+    global _slack_webhook_url
+
     if not settings.enable_slack_integration:
         logger.info("Slack integration disabled")
         return None
 
+    # Return cached value if already resolved
+    if _slack_webhook_url is not None:
+        return _slack_webhook_url
+
     # Check for webhook URL in settings
     if settings.slack_webhook_url:
         logger.info("Using Slack webhook URL from environment")
-        return settings.slack_webhook_url
+        _slack_webhook_url = settings.slack_webhook_url
+        return _slack_webhook_url
 
     # Fetch from Railway endpoint
     try:
@@ -230,10 +241,20 @@ async def get_slack_webhook_url(
         webhook_key = response.text.strip()
         webhook_url = f"https://hooks.slack.com/services/{webhook_key}"
         logger.info("Slack webhook URL configured from Railway")
-        return webhook_url
+        _slack_webhook_url = webhook_url
+        return _slack_webhook_url
     except Exception as e:
         logger.error(f"Failed to fetch Slack webhook key: {e}")
         raise ServiceInitializationError(f"Failed to fetch Slack webhook key: {e}") from e
+
+
+def get_cached_slack_webhook_url() -> str | None:
+    """Return the already-resolved Slack webhook URL, or None.
+
+    This avoids re-fetching from Railway on every health check.
+    The URL is set the first time ``get_slack_webhook_url()`` resolves it.
+    """
+    return _slack_webhook_url
 
 
 class SlackService:
