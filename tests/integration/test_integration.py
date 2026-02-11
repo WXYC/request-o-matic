@@ -683,9 +683,6 @@ class TestFullRequestIntegration:
         print("\n✅ Correctly returned 'Meet Me in the City' album!")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known bug: fallback search returns all artist albums without track filtering"
-    )
     async def test_thoughtforms_by_lush_excludes_albums_without_song(self, base_url):
         """
         Test that 'Thoughtforms by Lush' only returns albums that have the song.
@@ -741,9 +738,6 @@ class TestFullRequestIntegration:
         print("\n✅ Correctly excluded albums without the requested song!")
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known bug: fallback search returns all artist albums without track filtering"
-    )
     async def test_biosphere_excludes_albums_without_track(self, base_url):
         """
         Test that 'The Things I Tell You by Biosphere' excludes albums without the track.
@@ -1257,9 +1251,6 @@ class TestFullRequestIntegration:
         assert found_multi_result, "Expected at least one query to return multiple results"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known bug: fallback search returns all artist albums without track filtering"
-    )
     async def test_6_underground_sneaker_pimps_returns_only_becoming_x(self, base_url):
         """
         Test that '6 underground - sneaker pimps' only returns albums with the track.
