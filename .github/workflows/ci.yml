@@ -100,12 +100,12 @@ jobs:
           data = json.load(sys.stdin)
           services = data['services']
           errors = []
-          if services['groq'] != 'configured':
+          if services['groq'] != 'ok':
               errors.append(f\"groq: {services['groq']}\")
-          if services['database'] != 'connected':
+          if services['database'] != 'ok':
               errors.append(f\"database: {services['database']}\")
-          if services['discogs'] != 'available':
-              errors.append(f\"discogs: {services['discogs']}\")
+          if services['discogs_api'] != 'ok':
+              errors.append(f\"discogs_api: {services['discogs_api']}\")
           if errors:
               print('Smoke test FAILED:', ', '.join(errors))
               sys.exit(1)
@@ -161,12 +161,12 @@ jobs:
           data = json.load(sys.stdin)
           services = data['services']
           errors = []
-          if services['groq'] != 'configured':
+          if services['groq'] != 'ok':
               errors.append(f\"groq: {services['groq']}\")
-          if services['database'] != 'connected':
+          if services['database'] != 'ok':
               errors.append(f\"database: {services['database']}\")
-          if services['discogs'] != 'available':
-              errors.append(f\"discogs: {services['discogs']}\")
+          if services['discogs_api'] != 'ok':
+              errors.append(f\"discogs_api: {services['discogs_api']}\")
           if errors:
               print('Smoke test FAILED:', ', '.join(errors))
               sys.exit(1)
