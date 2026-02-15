@@ -23,6 +23,7 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `discogs/service.py` - Discogs API service with optional PostgreSQL cache
 - `discogs/cache_service.py` - PostgreSQL cache for Discogs data (reduces API calls)
 - `discogs/memory_cache.py` - In-memory TTL cache for API responses
+- `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
 - `core/sentry.py` - Sentry error tracking integration
 - `core/telemetry.py` - PostHog telemetry with cache stats tracking
 ### Discogs Cache (Optional)
@@ -186,6 +187,7 @@ Optional:
 - `SLACK_WEBHOOK_URL` - For posting results
 - `SENTRY_DSN` - For error tracking (Sentry)
 - `DATABASE_URL_DISCOGS` - PostgreSQL URL for Discogs cache (e.g., `postgresql://user:pass@host:5432/discogs`)
+- `LOOKUP_SERVICE_URL` - Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). When set, delegates all search operations to this service. If unset, uses inline search pipeline. Errors propagate as 502.
 
 Library ETL (for `scripts/sync-library.sh`):
 - `LIBRARY_SSH_HOST` - SSH host to connect to
