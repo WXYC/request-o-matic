@@ -584,6 +584,42 @@ class TestParserIntegration:
 
         print("  ✅ Correctly parsed comma-separated format!")
 
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_parses_song_with_common_words_in_comma_format(self):
+        """Test that 'I love acid, luke vibert' is a request, not feedback.
+
+        Bug: The parser classified this as feedback because "I love" looks like
+        an emotional expression, but "I Love Acid" is a song by Luke Vibert.
+        The comma-separated format should take priority.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+
+        result = parse_request("I love acid, luke vibert", client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, (
+            f"Should recognize as a request, got message_type={result.message_type}"
+        )
+        assert result.song is not None, "Should extract 'I Love Acid' as song title"
+        assert result.artist is not None, "Should extract 'Luke Vibert' as artist"
+        assert "love" in result.song.lower() and "acid" in result.song.lower(), (
+            f"Expected song containing 'Love' and 'Acid', got: {result.song}"
+        )
+        assert "vibert" in result.artist.lower(), (
+            f"Expected artist containing 'Vibert', got: {result.artist}"
+        )
+
+        print("  ✅ Correctly parsed song with common words in comma format!")
+
 
 class TestFullRequestIntegration:
     """Test the full /request endpoint.

@@ -97,6 +97,34 @@ async def lookup_discogs_urls(
     return discogs_urls
 
 
+def print_search_summary(data: dict) -> None:
+    """Print search summary showing what kind of results we got."""
+    parsed = data.get("parsed", {})
+    is_request = parsed.get("is_request", False)
+
+    if not is_request:
+        label = parsed.get("message_type", "other")
+        print_section("Search")
+        print(f"  Not a song request ({label}). No library search performed.")
+        return
+
+    song_not_found = data.get("song_not_found", False)
+    found_on_compilation = data.get("found_on_compilation", False)
+    search_type = data.get("search_type", "none")
+    results = data.get("library_results", [])
+
+    print_section("Search")
+    print(f"  Strategy:  {search_type}")
+    if found_on_compilation:
+        print(f"  Match:     found on compilation ({len(results)} result(s))")
+    elif song_not_found and results:
+        print(f"  Match:     song not found -- showing other albums by artist ({len(results)})")
+    elif results:
+        print(f"  Match:     direct ({len(results)} result(s))")
+    else:
+        print("  Match:     no results")
+
+
 def print_library_results(
     results: list[dict],
     artwork: dict | None,
@@ -192,7 +220,15 @@ async def run_lookup(
             data = response.json()
 
             # Display parsed request
-            print_parsed_request(data.get("parsed", {}))
+            parsed = data.get("parsed", {})
+            print_parsed_request(parsed)
+
+            # Display search summary
+            print_search_summary(data)
+
+            # Skip library results for non-requests
+            if not parsed.get("is_request", False):
+                return cast(dict[str, Any], data)
 
             # Look up Discogs URLs for each library result
             library_results = data.get("library_results", [])
