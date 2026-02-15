@@ -42,9 +42,7 @@ class LookupServiceClient:
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
 
-    async def lookup(
-        self, request: LookupRequest, skip_cache: bool = False
-    ) -> LookupResponse:
+    async def lookup(self, request: LookupRequest, skip_cache: bool = False) -> LookupResponse:
         """Call the lookup service and return parsed response.
 
         Args:
