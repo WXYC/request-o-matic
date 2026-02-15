@@ -13,6 +13,7 @@ from core.exceptions import ServiceInitializationError
 from discogs.cache_service import DiscogsCacheService
 from discogs.service import DiscogsService
 from library.db import LibraryDB
+from services.lookup_client import LookupServiceClient
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,24 @@ async def close_discogs_service() -> None:
     if _discogs_pool:
         await _discogs_pool.close()
         _discogs_pool = None
+
+
+async def get_lookup_client(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> LookupServiceClient | None:
+    """Get lookup service client if delegation is enabled.
+
+    Args:
+        settings: Application settings
+        http_client: Shared HTTP client
+
+    Returns:
+        LookupServiceClient if LOOKUP_SERVICE_URL is set, None otherwise
+    """
+    if not settings.lookup_service_url:
+        return None
+    return LookupServiceClient(settings.lookup_service_url, http_client)
 
 
 def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | None:
