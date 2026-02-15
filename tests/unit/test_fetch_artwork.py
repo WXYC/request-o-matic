@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from discogs.models import (
-    DiscogsSearchRequest,
     DiscogsSearchResponse,
     DiscogsSearchResult,
     ReleaseMetadataResponse,
