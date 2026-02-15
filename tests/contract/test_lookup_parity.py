@@ -36,25 +36,25 @@ async def test_parity_basic(
     http = await http_lookup(artist=artist, song=song, album=album)
 
     # Both should return at least min_results
-    assert (
-        len(inline["item_ids"]) >= min_results
-    ), f"Inline: expected >= {min_results} results, got {len(inline['item_ids'])}"
-    assert (
-        len(http["item_ids"]) >= min_results
-    ), f"HTTP: expected >= {min_results} results, got {len(http['item_ids'])}"
+    assert len(inline["item_ids"]) >= min_results, (
+        f"Inline: expected >= {min_results} results, got {len(inline['item_ids'])}"
+    )
+    assert len(http["item_ids"]) >= min_results, (
+        f"HTTP: expected >= {min_results} results, got {len(http['item_ids'])}"
+    )
 
     # Item IDs should match
-    assert (
-        inline["item_ids"] == http["item_ids"]
-    ), f"Item ID mismatch:\n  Inline: {inline['item_ids']}\n  HTTP: {http['item_ids']}"
+    assert inline["item_ids"] == http["item_ids"], (
+        f"Item ID mismatch:\n  Inline: {inline['item_ids']}\n  HTTP: {http['item_ids']}"
+    )
 
     # Search metadata should match
-    assert (
-        inline["search_type"] == http["search_type"]
-    ), f"search_type mismatch: inline={inline['search_type']}, http={http['search_type']}"
-    assert (
-        inline["song_not_found"] == http["song_not_found"]
-    ), f"song_not_found mismatch: inline={inline['song_not_found']}, http={http['song_not_found']}"
+    assert inline["search_type"] == http["search_type"], (
+        f"search_type mismatch: inline={inline['search_type']}, http={http['search_type']}"
+    )
+    assert inline["song_not_found"] == http["song_not_found"], (
+        f"song_not_found mismatch: inline={inline['song_not_found']}, http={http['song_not_found']}"
+    )
     assert inline["found_on_compilation"] == http["found_on_compilation"], (
         f"found_on_compilation mismatch: inline={inline['found_on_compilation']}, "
         f"http={http['found_on_compilation']}"
