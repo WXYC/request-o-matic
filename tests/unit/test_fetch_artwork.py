@@ -101,9 +101,7 @@ class TestFetchArtworkFallback:
         # Artist image not found
         mock_discogs_service.get_artist_image.return_value = None
         # Label image found
-        mock_discogs_service.get_label_image.return_value = (
-            "https://i.discogs.com/label-logo.jpg"
-        )
+        mock_discogs_service.get_label_image.return_value = "https://i.discogs.com/label-logo.jpg"
 
         results = await fetch_artwork_for_items(items, mock_discogs_service)
 
@@ -129,6 +127,7 @@ class TestFetchArtworkFallback:
         results = await fetch_artwork_for_items(items, mock_discogs_service)
 
         assert len(results) == 1
+        assert results[0][1] is not None
         assert results[0][1].artwork_url == "https://i.discogs.com/cover.jpg"
         # No fallback calls should have been made
         mock_discogs_service.get_release.assert_not_called()
