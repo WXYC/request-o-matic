@@ -997,9 +997,7 @@ class TestGetArtistImage:
 
     @pytest.mark.asyncio
     @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
-    async def test_returns_none_on_rate_limit(
-        self, service: DiscogsService, httpx_mock: HTTPXMock
-    ):
+    async def test_returns_none_on_rate_limit(self, service: DiscogsService, httpx_mock: HTTPXMock):
         """Test returns None when rate limited."""
         httpx_mock.add_response(url=ARTIST_URL_PATTERN, status_code=429)
 
