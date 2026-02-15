@@ -24,11 +24,16 @@ TEST_ALBUM = "Confield"
 TEST_ARTIST = "Autechre"
 TEST_RELEASE_ID = 28138
 
+TEST_ARTIST_ID = 77
+TEST_LABEL_ID = 233
+
 DISCOGS_API_BASE = "https://api.discogs.com"
 
 # URL patterns for mocking (match with any query params)
 SEARCH_URL_PATTERN = re.compile(r"https://api\.discogs\.com/database/search.*")
 RELEASE_URL_PATTERN = re.compile(rf"https://api\.discogs\.com/releases/{TEST_RELEASE_ID}")
+ARTIST_URL_PATTERN = re.compile(rf"https://api\.discogs\.com/artists/{TEST_ARTIST_ID}")
+LABEL_URL_PATTERN = re.compile(rf"https://api\.discogs\.com/labels/{TEST_LABEL_ID}")
 
 
 @pytest_asyncio.fixture
@@ -941,3 +946,156 @@ class TestSkipCacheBypassesPgCache:
         mock_cache_service.validate_track_on_release.assert_not_called()
         # Should have fallen through to API
         assert result is True
+
+
+class TestGetArtistImage:
+    """Tests for get_artist_image method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_uri(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test returns first image URI from artist response."""
+        httpx_mock.add_response(
+            url=ARTIST_URL_PATTERN,
+            json={
+                "id": TEST_ARTIST_ID,
+                "name": TEST_ARTIST,
+                "images": [
+                    {"uri": "https://i.discogs.com/artist-primary.jpg", "type": "primary"},
+                    {"uri": "https://i.discogs.com/artist-secondary.jpg", "type": "secondary"},
+                ],
+            },
+        )
+
+        result = await service.get_artist_image(TEST_ARTIST_ID)
+
+        assert result == "https://i.discogs.com/artist-primary.jpg"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_images(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None when artist has no images."""
+        httpx_mock.add_response(
+            url=ARTIST_URL_PATTERN,
+            json={"id": TEST_ARTIST_ID, "name": TEST_ARTIST, "images": []},
+        )
+
+        result = await service.get_artist_image(TEST_ARTIST_ID)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_api_failure(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None on API error."""
+        httpx_mock.add_response(url=ARTIST_URL_PATTERN, status_code=404)
+
+        result = await service.get_artist_image(TEST_ARTIST_ID)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.httpx_mock(can_send_already_matched_responses=True)
+    async def test_returns_none_on_rate_limit(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None when rate limited."""
+        httpx_mock.add_response(url=ARTIST_URL_PATTERN, status_code=429)
+
+        result = await service.get_artist_image(TEST_ARTIST_ID)
+
+        assert result is None
+
+
+class TestGetLabelImage:
+    """Tests for get_label_image method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_uri(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test returns first image URI from label response."""
+        httpx_mock.add_response(
+            url=LABEL_URL_PATTERN,
+            json={
+                "id": TEST_LABEL_ID,
+                "name": "Warp Records",
+                "images": [
+                    {"uri": "https://i.discogs.com/label-logo.jpg", "type": "primary"},
+                ],
+            },
+        )
+
+        result = await service.get_label_image(TEST_LABEL_ID)
+
+        assert result == "https://i.discogs.com/label-logo.jpg"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_images(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None when label has no images."""
+        httpx_mock.add_response(
+            url=LABEL_URL_PATTERN,
+            json={"id": TEST_LABEL_ID, "name": "Warp Records", "images": []},
+        )
+
+        result = await service.get_label_image(TEST_LABEL_ID)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_api_failure(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test returns None on API error."""
+        httpx_mock.add_response(url=LABEL_URL_PATTERN, status_code=404)
+
+        result = await service.get_label_image(TEST_LABEL_ID)
+
+        assert result is None
+
+
+class TestGetReleaseExtractsIds:
+    """Tests that get_release extracts artist_id and label_id."""
+
+    @pytest.mark.asyncio
+    async def test_extracts_artist_and_label_ids(
+        self, service: DiscogsService, httpx_mock: HTTPXMock
+    ):
+        """Test get_release extracts artist_id and label_id from response."""
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"id": TEST_ARTIST_ID, "name": TEST_ARTIST}],
+                "labels": [{"id": TEST_LABEL_ID, "name": "Warp Records"}],
+                "tracklist": [],
+            },
+        )
+
+        result = await service.get_release(TEST_RELEASE_ID)
+
+        assert result is not None
+        assert result.artist_id == TEST_ARTIST_ID
+        assert result.label_id == TEST_LABEL_ID
+
+    @pytest.mark.asyncio
+    async def test_handles_missing_ids(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test get_release handles missing artist/label IDs gracefully."""
+        httpx_mock.add_response(
+            url=RELEASE_URL_PATTERN,
+            json={
+                "id": TEST_RELEASE_ID,
+                "title": TEST_ALBUM,
+                "artists": [{"name": TEST_ARTIST}],  # no id
+                "labels": [],  # no labels
+                "tracklist": [],
+            },
+        )
+
+        result = await service.get_release(TEST_RELEASE_ID)
+
+        assert result is not None
+        assert result.artist_id is None
+        assert result.label_id is None
