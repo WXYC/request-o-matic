@@ -908,6 +908,18 @@ async def handle_request(
                 f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}"
             )
 
+        # Early return for non-requests (feedback, DJ messages, etc.)
+        # No point running the search pipeline for messages that aren't song requests.
+        if not parsed.is_request:
+            if not request.skip_slack:
+                await post_results_to_slack(
+                    slack_service, request.message, parsed, [], context=None
+                )
+            return UnifiedResponse(
+                parsed=parsed,
+                cache_stats=get_cache_stats(),
+            )
+
         library_results: list[LibraryItem] = []
         items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]] = []
         song_not_found = False
