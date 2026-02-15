@@ -33,6 +33,7 @@ import logging
 import re
 from functools import partial
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from groq import Groq
 from posthog import Posthog
@@ -43,6 +44,7 @@ from core.dependencies import (
     get_discogs_service,
     get_groq_client,
     get_library_db,
+    get_lookup_client,
     get_posthog_client,
     get_slack_service,
 )
@@ -63,6 +65,7 @@ from discogs.models import DiscogsSearchRequest, DiscogsSearchResult
 from discogs.service import DiscogsService
 from library.db import LibraryDB
 from library.models import LibraryItem
+from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks
 
@@ -879,6 +882,7 @@ async def handle_request(
     discogs_service: DiscogsService | None = Depends(get_discogs_service),
     slack_service: SlackService | None = Depends(get_slack_service),
     posthog_client: Posthog | None = Depends(get_posthog_client),
+    lookup_client: LookupServiceClient | None = Depends(get_lookup_client),
 ):
     """
     Unified endpoint: parse a song request, find artwork, search the library, and post to Slack.
@@ -924,85 +928,119 @@ async def handle_request(
         items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]] = []
         song_not_found = False
         found_on_compilation = False
-        discogs_titles: dict[int, str] = {}
+        context: str | None = None
 
-        # Step 1b: Correct artist spelling (e.g., "Living Color" -> "Living Colour")
-        if parsed.artist:
-            corrected_artist = await db.find_similar_artist(parsed.artist)
-            if corrected_artist:
-                parsed.artist = corrected_artist
-
-        # Step 2: If we have a song but no album, look up albums from Discogs
-        with telemetry.track_step("album_lookup"):
-            if parsed.song and not parsed.album:
-                telemetry.record_api_call("discogs")
-            albums_for_search, song_not_found = await resolve_albums_for_track(
-                parsed, discogs_service
-            )
-
-        # Step 3: Execute search strategy pipeline
-        # The pipeline tries strategies in order until results are found:
-        # 1. ARTIST_PLUS_ALBUM - search by artist + album/song
-        # 2. SWAPPED_INTERPRETATION - try "X - Y" as both orderings
-        # 3. TRACK_ON_COMPILATION - find song on compilations via Discogs
-        # 4. SONG_AS_ARTIST - try parsed song as artist (parser misidentification)
-        with telemetry.track_step("library_search"):
-            strategies = build_strategies(
-                search_library_func=search_library_with_fallback,
-                search_alternative_func=search_with_alternative_interpretation,
-                search_compilations_func=partial(
-                    search_compilations_for_track, discogs_service=discogs_service
-                ),
-                search_song_as_artist_func=partial(
-                    search_song_as_artist, discogs_service=discogs_service
-                ),
-            )
-
-            search_state = await execute_search_pipeline(
-                parsed=parsed,
-                db=db,
-                raw_message=request.message,
-                strategies=strategies,
-                albums_for_search=albums_for_search,
-            )
-
-            # Extract results from state
-            library_results = limit_results(search_state.results)
-            song_not_found = search_state.song_not_found
-            found_on_compilation = search_state.found_on_compilation
-            discogs_titles = search_state.discogs_titles
-            search_type = get_search_type_from_state(search_state)
-
-            # Record Discogs API call if compilation search was used
-            if found_on_compilation:
-                telemetry.record_api_call("discogs")
-
-        # Step 3b: Validate fallback results against Discogs track data
-        # When the pipeline fell back to returning all artist albums, try to
-        # filter to only albums that actually contain the requested track.
-        if song_not_found and library_results and parsed.song and parsed.artist:
-            with telemetry.track_step("track_validation"):
-                validated = await filter_results_by_track_validation(
-                    library_results, parsed.song, parsed.artist, discogs_service
+        if lookup_client:
+            # Delegated mode: call library-metadata-lookup service
+            with telemetry.track_step("lookup_service"):
+                lookup_request = LookupRequest(
+                    artist=parsed.artist,
+                    song=parsed.song,
+                    album=parsed.album,
+                    raw_message=request.message,
                 )
-                if validated:
-                    library_results = validated
-                    song_not_found = False
+                try:
+                    lookup_response = await lookup_client.lookup(lookup_request)
+                except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                    logger.error(f"Lookup service error: {e}")
+                    raise HTTPException(status_code=502, detail="Lookup service unavailable") from e
 
-        # Step 4: Fetch artwork for library items
-        with telemetry.track_step("artwork_fetch"):
-            if library_results:
-                # Count Discogs API calls for artwork (one per item)
-                for _ in library_results:
+            # Apply corrected artist for Slack display
+            if lookup_response.corrected_artist:
+                parsed.artist = lookup_response.corrected_artist
+
+            # Extract results for Slack posting
+            library_results = [item.library_item for item in lookup_response.results]
+            items_with_artwork = [
+                (item.library_item, item.artwork) for item in lookup_response.results
+            ]
+            search_type = lookup_response.search_type
+            song_not_found = lookup_response.song_not_found
+            found_on_compilation = lookup_response.found_on_compilation
+            context = lookup_response.context_message
+
+        else:
+            # Inline mode: existing pipeline
+            discogs_titles: dict[int, str] = {}
+
+            # Step 1b: Correct artist spelling (e.g., "Living Color" -> "Living Colour")
+            if parsed.artist:
+                corrected_artist = await db.find_similar_artist(parsed.artist)
+                if corrected_artist:
+                    parsed.artist = corrected_artist
+
+            # Step 2: If we have a song but no album, look up albums from Discogs
+            with telemetry.track_step("album_lookup"):
+                if parsed.song and not parsed.album:
                     telemetry.record_api_call("discogs")
-                items_with_artwork = await fetch_artwork_for_items(
-                    library_results, discogs_service, discogs_titles
+                albums_for_search, song_not_found = await resolve_albums_for_track(
+                    parsed, discogs_service
                 )
 
-        # Step 5: Build context and post to Slack (unless skip_slack is set)
-        context = build_context_message(
-            parsed, found_on_compilation, song_not_found, has_results=bool(library_results)
-        )
+            # Step 3: Execute search strategy pipeline
+            # The pipeline tries strategies in order until results are found:
+            # 1. ARTIST_PLUS_ALBUM - search by artist + album/song
+            # 2. SWAPPED_INTERPRETATION - try "X - Y" as both orderings
+            # 3. TRACK_ON_COMPILATION - find song on compilations via Discogs
+            # 4. SONG_AS_ARTIST - try parsed song as artist (parser misidentification)
+            with telemetry.track_step("library_search"):
+                strategies = build_strategies(
+                    search_library_func=search_library_with_fallback,
+                    search_alternative_func=search_with_alternative_interpretation,
+                    search_compilations_func=partial(
+                        search_compilations_for_track, discogs_service=discogs_service
+                    ),
+                    search_song_as_artist_func=partial(
+                        search_song_as_artist, discogs_service=discogs_service
+                    ),
+                )
+
+                search_state = await execute_search_pipeline(
+                    parsed=parsed,
+                    db=db,
+                    raw_message=request.message,
+                    strategies=strategies,
+                    albums_for_search=albums_for_search,
+                )
+
+                # Extract results from state
+                library_results = limit_results(search_state.results)
+                song_not_found = search_state.song_not_found
+                found_on_compilation = search_state.found_on_compilation
+                discogs_titles = search_state.discogs_titles
+                search_type = get_search_type_from_state(search_state)
+
+                # Record Discogs API call if compilation search was used
+                if found_on_compilation:
+                    telemetry.record_api_call("discogs")
+
+            # Step 3b: Validate fallback results against Discogs track data
+            # When the pipeline fell back to returning all artist albums, try to
+            # filter to only albums that actually contain the requested track.
+            if song_not_found and library_results and parsed.song and parsed.artist:
+                with telemetry.track_step("track_validation"):
+                    validated = await filter_results_by_track_validation(
+                        library_results, parsed.song, parsed.artist, discogs_service
+                    )
+                    if validated:
+                        library_results = validated
+                        song_not_found = False
+
+            # Step 4: Fetch artwork for library items
+            with telemetry.track_step("artwork_fetch"):
+                if library_results:
+                    # Count Discogs API calls for artwork (one per item)
+                    for _ in library_results:
+                        telemetry.record_api_call("discogs")
+                    items_with_artwork = await fetch_artwork_for_items(
+                        library_results, discogs_service, discogs_titles
+                    )
+
+            context = build_context_message(
+                parsed, found_on_compilation, song_not_found, has_results=bool(library_results)
+            )
+
+        # Step 5: Post to Slack (unless skip_slack is set)
         with telemetry.track_step("slack_post"):
             if not request.skip_slack:
                 telemetry.record_api_call("slack")

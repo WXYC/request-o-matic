@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Sentry Configuration
     sentry_dsn: str | None = Field(None, description="Sentry DSN for error tracking")
 
+    # Lookup Service Delegation
+    lookup_service_url: str | None = Field(
+        None,
+        description="Base URL of library-metadata-lookup service. When set, delegates search to this service.",
+    )
+
     # Discogs Cache Database Configuration
     database_url_discogs: str | None = Field(
         None,

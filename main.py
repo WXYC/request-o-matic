@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"Artwork lookup: {'enabled' if settings.enable_artwork_lookup else 'disabled'}")
     logger.info(f"Discogs cache: {'configured' if settings.database_url_discogs else 'disabled'}")
+    logger.info(f"Lookup delegation: {'enabled' if settings.lookup_service_url else 'disabled'}")
 
     yield
 
