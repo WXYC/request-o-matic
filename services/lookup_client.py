@@ -42,11 +42,14 @@ class LookupServiceClient:
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
 
-    async def lookup(self, request: LookupRequest) -> LookupResponse:
+    async def lookup(
+        self, request: LookupRequest, skip_cache: bool = False
+    ) -> LookupResponse:
         """Call the lookup service and return parsed response.
 
         Args:
             request: Lookup request with artist/song/album/raw_message
+            skip_cache: If True, bypass the lookup service's caches
 
         Returns:
             LookupResponse with results and metadata
@@ -54,11 +57,13 @@ class LookupServiceClient:
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx responses
             httpx.ConnectError: If the service is unreachable
-            httpx.ReadTimeout: If the request times out
+            httpx.TimeoutException: If the request times out
         """
+        params = {"skip_cache": "true"} if skip_cache else {}
         response = await self.http_client.post(
             f"{self.base_url}/lookup",
             json=request.model_dump(exclude_none=True),
+            params=params,
         )
         response.raise_for_status()
         return LookupResponse.model_validate(response.json())

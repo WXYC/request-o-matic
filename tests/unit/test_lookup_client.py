@@ -208,6 +208,31 @@ class TestLookupServiceClient:
 
         await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
 
+    @pytest.mark.asyncio
+    async def test_skip_cache_sends_query_param(self):
+        """skip_cache=True sends skip_cache query parameter."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.params["skip_cache"] == "true"
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        await client.lookup(
+            LookupRequest(artist="Queen", raw_message="play queen"),
+            skip_cache=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_skip_cache_omits_query_param(self):
+        """skip_cache=False (default) sends no query parameter."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert "skip_cache" not in request.url.params
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
+
 
 class TestLookupModels:
     """Tests for lookup models."""
