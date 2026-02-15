@@ -928,8 +928,10 @@ async def handle_request(
                     raw_message=request.message,
                 )
                 try:
-                    lookup_response = await lookup_client.lookup(lookup_request)
-                except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                    lookup_response = await lookup_client.lookup(
+                        lookup_request, skip_cache=request.skip_cache
+                    )
+                except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
                     logger.error(f"Lookup service error: {e}")
                     raise HTTPException(status_code=502, detail="Lookup service unavailable") from e
 

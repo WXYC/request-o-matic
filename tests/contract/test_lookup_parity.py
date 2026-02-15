@@ -15,40 +15,12 @@ import pytest
 @pytest.mark.contract
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "artist, song, album, min_results, description",
+    "artist, song, album, min_results",
     [
-        pytest.param(
-            "Queen",
-            None,
-            "The Game",
-            1,
-            "Direct match: artist + album",
-            id="direct_match",
-        ),
-        pytest.param(
-            "Echo and the Bunnymen",
-            None,
-            None,
-            1,
-            "Artist-only fallback",
-            id="artist_only",
-        ),
-        pytest.param(
-            "Junior Kimbrough",
-            "Meet Me in the City",
-            None,
-            1,
-            "Album resolution via Discogs track lookup",
-            id="album_resolution",
-        ),
-        pytest.param(
-            "ZZZNONEXISTENT",
-            None,
-            None,
-            0,
-            "Nonexistent artist returns no results",
-            id="nonexistent_artist",
-        ),
+        pytest.param("Queen", None, "The Game", 1, id="direct_match"),
+        pytest.param("Echo and the Bunnymen", None, None, 1, id="artist_only"),
+        pytest.param("Junior Kimbrough", "Meet Me in the City", None, 1, id="album_resolution"),
+        pytest.param("ZZZNONEXISTENT", None, None, 0, id="nonexistent_artist"),
     ],
 )
 async def test_parity_basic(
@@ -58,7 +30,6 @@ async def test_parity_basic(
     song,
     album,
     min_results,
-    description,
 ):
     """Both pipelines agree on basic search results."""
     inline = await inline_lookup(artist=artist, song=song, album=album)
