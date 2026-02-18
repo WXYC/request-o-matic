@@ -1355,3 +1355,49 @@ class TestFullRequestIntegration:
         assert pg_hits == 0, f"Expected 0 PG cache hits with skip_cache=True, got {pg_hits}"
 
         print("✅ skip_cache=True correctly bypassed all caches")
+
+    @pytest.mark.asyncio
+    async def test_plug_not_corrected_to_plugz(self, base_url):
+        """
+        Test that 'me and mr. jones by plug from drum n bass for papa' does NOT
+        falsely correct artist "Plug" to "Plugz".
+
+        Bug: find_similar_artist("Plug") fuzzy-matched to "Plugz" at 89% similarity,
+        exceeding the flat 85% threshold. This overwrote the parsed artist before
+        library search, so FTS5 never saw "Plug" and missed Luke Vibert's album.
+
+        Note: The library catalogs Plug's albums under "Luke Vibert", so we don't
+        expect library results here -- just that the artist isn't falsely corrected.
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={
+                    "message": "me and mr. jones by plug from drum n bass for papa",
+                    "skip_slack": True,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print("\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+        print(f"  Album: {parsed.get('album')}")
+
+        print("\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        # Artist should NOT be corrected to Plugz
+        for r in results:
+            assert "plugz" not in r.get("artist", "").lower(), (
+                f"Should not return Plugz albums, got '{r.get('artist')}'"
+            )
+
+        print("\n✅ Correctly avoided false correction of 'Plug' to 'Plugz'!")
