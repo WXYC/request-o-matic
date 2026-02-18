@@ -377,6 +377,7 @@ async def spelling_db(tmp_path):
             (3, "Theatre of Pain", "Mötley Crüe", "MO", 5, 1, "Rock", "vinyl"),
             (4, "Favourite Worst Nightmare", "Arctic Monkeys", "AR", 3, 2, "Rock", "cd"),
             (5, "Led Zeppelin IV", "Led Zeppelin", "LE", 1, 4, "Rock", "vinyl"),
+            (6, "Better Luck", "Plugz", "PL", 20, 1, "Rock", "vinyl"),
         ]
 
         await conn.executemany("INSERT INTO library VALUES (?, ?, ?, ?, ?, ?, ?, ?)", test_albums)
@@ -441,3 +442,32 @@ class TestFindSimilarArtist:
         result = await spelling_db.find_similar_artist("Arctic Monkies")
 
         assert result == "Arctic Monkeys"
+
+    @pytest.mark.asyncio
+    async def test_short_name_not_corrected_to_similar(self, spelling_db: LibraryDB):
+        """Test that short name 'Plug' is NOT corrected to 'Plugz'.
+
+        For short names, a single character difference is proportionally large,
+        so the threshold should be raised to prevent false corrections.
+        """
+        result = await spelling_db.find_similar_artist("Plug")
+
+        assert result is None, (
+            f"Expected None (no correction), got '{result}'. "
+            "Short names should not be corrected to similar-but-different artists."
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "misspelled, expected",
+        [
+            ("Living Color", "Living Colour"),
+            ("Led Zepplin", "Led Zeppelin"),
+            ("Arctic Monkies", "Arctic Monkeys"),
+        ],
+    )
+    async def test_long_name_still_corrected(self, spelling_db: LibraryDB, misspelled, expected):
+        """Regression guard: long names with typos are still corrected."""
+        result = await spelling_db.find_similar_artist(misspelled)
+
+        assert result == expected
