@@ -72,13 +72,13 @@ def inline_lookup():
     from discogs.service import DiscogsService
     from library.db import LibraryDB
     from routers.request import (
+        _compilation_search_strategy,
+        _search_library_strategy,
+        _song_as_artist_strategy,
+        _swapped_interpretation_strategy,
         filter_results_by_track_validation,
         limit_results,
         resolve_albums_for_track,
-        search_compilations_for_track,
-        search_library_with_fallback,
-        search_song_as_artist,
-        search_with_alternative_interpretation,
     )
     from services.parser import MessageType, ParsedRequest
 
@@ -115,13 +115,13 @@ def inline_lookup():
 
             # Step 3: Execute search pipeline
             strategies = build_strategies(
-                search_library_func=search_library_with_fallback,
-                search_alternative_func=search_with_alternative_interpretation,
+                search_library_func=_search_library_strategy,
+                search_alternative_func=_swapped_interpretation_strategy,
                 search_compilations_func=partial(
-                    search_compilations_for_track, discogs_service=discogs_service
+                    _compilation_search_strategy, discogs_service=discogs_service
                 ),
                 search_song_as_artist_func=partial(
-                    search_song_as_artist, discogs_service=discogs_service
+                    _song_as_artist_strategy, discogs_service=discogs_service
                 ),
             )
 

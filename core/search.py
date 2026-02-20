@@ -9,7 +9,6 @@ Strategies are executed in array order until results are found.
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
 
 from core.matching import detect_ambiguous_format
 from library.db import LibraryDB
@@ -79,14 +78,11 @@ Args:
     raw_message: Original request message
 """
 
-ExecuteFunc = Callable[..., Awaitable[tuple[list[LibraryItem], Any]]]
+ExecuteFunc = Callable[[LibraryDB, ParsedRequest, SearchState], Awaitable[None]]
 """Async function that executes the search strategy.
 
-Returns:
-    Tuple of (results, metadata). Metadata varies by strategy:
-    - ARTIST_PLUS_ALBUM: bool (fallback_used)
-    - SWAPPED_INTERPRETATION: None
-    - TRACK_ON_COMPILATION: dict (discogs_titles)
+Takes (db, parsed, state) and mutates state directly.
+All strategies share this uniform signature.
 """
 
 
@@ -105,13 +101,7 @@ class SearchStrategy:
     """Function that returns True if this strategy should run."""
 
     execute: ExecuteFunc
-    """Async function that performs the search."""
-
-    updates_song_not_found: bool = False
-    """If True, the strategy's metadata (second return value) updates song_not_found."""
-
-    updates_discogs_titles: bool = False
-    """If True, the strategy's metadata contains discogs_titles to merge."""
+    """Async function that performs the search and mutates state."""
 
 
 # =============================================================================
@@ -183,7 +173,6 @@ def build_strategies(
             name=SearchStrategyType.ARTIST_PLUS_ALBUM,
             condition=has_artist_or_album_or_song,
             execute=search_library_func,
-            updates_song_not_found=True,
         ),
         SearchStrategy(
             name=SearchStrategyType.SWAPPED_INTERPRETATION,
@@ -194,7 +183,6 @@ def build_strategies(
             name=SearchStrategyType.TRACK_ON_COMPILATION,
             condition=song_not_found_with_artist_and_song,
             execute=search_compilations_func,
-            updates_discogs_titles=True,
         ),
     ]
 
@@ -220,6 +208,10 @@ async def execute_search_pipeline(
 ) -> SearchState:
     """Execute strategies in array order until results found.
 
+    Each strategy's execute function takes (db, parsed, state) and mutates
+    state directly. The pipeline stops when a strategy produces results and
+    song_not_found is False (meaning a definitive match was found).
+
     Args:
         parsed: The parsed request with artist/song/album
         db: Library database for searches
@@ -237,54 +229,14 @@ async def execute_search_pipeline(
     )
 
     for strategy in strategies:
-        # Check if strategy should run
         if not strategy.condition(parsed, state, raw_message):
             continue
 
         state.strategies_tried.append(strategy.name)
+        await strategy.execute(db, parsed, state)
 
-        # Execute the strategy
-        if strategy.name == SearchStrategyType.ARTIST_PLUS_ALBUM:
-            results, fallback_used = await strategy.execute(db, parsed, state.albums_for_search)
-            if results:
-                state.results = results
-            if strategy.updates_song_not_found and fallback_used:
-                state.song_not_found = True
-
-        elif strategy.name == SearchStrategyType.SWAPPED_INTERPRETATION:
-            # Parse the ambiguous format
-            parts = detect_ambiguous_format(raw_message)
-            if parts:
-                part1, part2 = parts
-                results, _ = await strategy.execute(db, part1, part2)
-            else:
-                results = []
-            if results:
-                state.results = results
-                state.song_not_found = False
-
-        elif strategy.name == SearchStrategyType.TRACK_ON_COMPILATION:
-            results, discogs_titles = await strategy.execute(db, parsed)
-            if results:
-                state.results = results
-                state.found_on_compilation = True
-                state.song_not_found = False
-                if strategy.updates_discogs_titles:
-                    state.discogs_titles = discogs_titles
-
-        elif strategy.name == SearchStrategyType.SONG_AS_ARTIST:
-            # Try using the parsed song as an artist name
-            results, _ = await strategy.execute(db, parsed.song)
-            if results:
-                state.results = results
-                state.song_not_found = False
-
-        # Stop if we found results (unless we're doing compilation search which can replace results)
-        if state.results and strategy.name != SearchStrategyType.TRACK_ON_COMPILATION:
-            # For compilation search, we continue even if we have artist-only results
-            # because finding the actual song is better than just artist albums
-            if not state.song_not_found:
-                break
+        if state.results and not state.song_not_found:
+            break
 
     return state
 
