@@ -231,6 +231,34 @@ class DiscogsService:
             add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
             return CacheResult(hit=False)
 
+    async def _timed_api_call(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+    ) -> dict | None:
+        """Make a timed Discogs API call with telemetry recording.
+
+        Handles the common pattern: start timer, send request, record API time
+        and call count, raise for status, parse JSON.
+
+        Args:
+            method: HTTP method (e.g., "GET")
+            path: API path (e.g., "/database/search")
+            params: Optional query parameters
+
+        Returns:
+            Parsed JSON dict, or None if rate limited/request failed
+        """
+        start = time.perf_counter()
+        response = await self._request_with_retry(method, path, params=params)
+        if response is None:
+            return None
+        record_api_time((time.perf_counter() - start) * 1000)
+        record_discogs_api_call()
+        response.raise_for_status()
+        return response.json()  # type: ignore[no-any-return]
+
     @async_cached(TRACK_CACHE)
     async def search_releases_by_track(
         self, track: str, artist: str | None = None, limit: int = 20
@@ -282,15 +310,8 @@ class DiscogsService:
         logger.info(f"Searching Discogs for releases with track: '{track}', artist: {artist}")
 
         try:
-            start = time.perf_counter()
-            response = await self._request_with_retry("GET", "/database/search", params=params)
-
-            if response is not None:
-                record_api_time((time.perf_counter() - start) * 1000)
-                record_discogs_api_call()
-                response.raise_for_status()
-                data = response.json()
-
+            data = await self._timed_api_call("GET", "/database/search", params=params)
+            if data is not None:
                 for result in data.get("results", []):
                     release_info = self._process_search_result(result, seen_albums)
                     if release_info:
@@ -311,17 +332,8 @@ class DiscogsService:
                 }
 
                 logger.info(f"Supplementing with keyword search: '{query_params['q']}'")
-                start = time.perf_counter()
-                response = await self._request_with_retry(
-                    "GET", "/database/search", params=query_params
-                )
-
-                if response is not None:
-                    record_api_time((time.perf_counter() - start) * 1000)
-                    record_discogs_api_call()
-                    response.raise_for_status()
-                    data = response.json()
-
+                data = await self._timed_api_call("GET", "/database/search", params=query_params)
+                if data is not None:
                     for result in data.get("results", []):
                         release_info = self._process_search_result(result, seen_albums)
                         if release_info:
@@ -403,17 +415,10 @@ class DiscogsService:
 
         # Fall back to Discogs API
         try:
-            start = time.perf_counter()
-            response = await self._request_with_retry("GET", f"/releases/{release_id}")
-
-            if response is None:
+            data = await self._timed_api_call("GET", f"/releases/{release_id}")
+            if data is None:
                 logger.warning(f"Failed to fetch release {release_id} (rate limited or error)")
                 return None
-
-            record_api_time((time.perf_counter() - start) * 1000)
-            record_discogs_api_call()
-            response.raise_for_status()
-            data = response.json()
 
             # Extract artists
             artists = data.get("artists", [])
@@ -483,15 +488,10 @@ class DiscogsService:
             Image URI string, or None if unavailable
         """
         try:
-            start = time.perf_counter()
-            response = await self._request_with_retry("GET", f"/{entity_type}s/{entity_id}")
-            if response is None:
+            data = await self._timed_api_call("GET", f"/{entity_type}s/{entity_id}")
+            if data is None:
                 return None
-            record_api_time((time.perf_counter() - start) * 1000)
-            record_discogs_api_call()
             add_discogs_breadcrumb(f"get_{entity_type}_image", {f"{entity_type}_id": entity_id})
-            response.raise_for_status()
-            data = response.json()
             images = data.get("images", [])
             return images[0].get("uri") if images else None
         except Exception as e:
@@ -574,17 +574,10 @@ class DiscogsService:
         logger.info(f"Searching Discogs with params: {params}")
 
         try:
-            start = time.perf_counter()
-            response = await self._request_with_retry("GET", "/database/search", params=params)
-
-            if response is None:
+            data = await self._timed_api_call("GET", "/database/search", params=params)
+            if data is None:
                 logger.warning("Discogs search failed (rate limited or error)")
                 return DiscogsSearchResponse(cached=False)
-
-            record_api_time((time.perf_counter() - start) * 1000)
-            record_discogs_api_call()
-            response.raise_for_status()
-            data = response.json()
 
             # If strict search returned nothing, try fuzzy query
             if not data.get("results") and (request.artist or request.album):
@@ -599,15 +592,11 @@ class DiscogsService:
                     "q": " ".join(query_parts),
                 }
                 logger.info(f"Strict search empty, trying fuzzy query: {fallback_params}")
-                start = time.perf_counter()
-                response = await self._request_with_retry(
+                fallback_data = await self._timed_api_call(
                     "GET", "/database/search", params=fallback_params
                 )
-                if response is not None:
-                    record_api_time((time.perf_counter() - start) * 1000)
-                    record_discogs_api_call()
-                    response.raise_for_status()
-                    data = response.json()
+                if fallback_data is not None:
+                    data = fallback_data
 
             results = []
             for item in data.get("results", []):
