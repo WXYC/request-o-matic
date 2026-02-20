@@ -47,7 +47,8 @@ SELECT
     lc.CALL_NUMBERS as artist_call_number,
     r.CALL_NUMBERS as release_call_number,
     g.REFERENCE_NAME as genre,
-    f.REFERENCE_NAME as format
+    f.REFERENCE_NAME as format,
+    r.ALTERNATE_ARTIST_NAME as alternate_artist_name
 FROM LIBRARY_RELEASE r
 JOIN LIBRARY_CODE lc ON r.LIBRARY_CODE_ID = lc.ID
 JOIN FORMAT f ON r.FORMAT_ID = f.ID
@@ -124,6 +125,7 @@ def fetch_from_remote() -> list[dict]:
         "release_call_number",
         "genre",
         "format",
+        "alternate_artist_name",
     ]
 
     for line in output.strip().split("\n"):
@@ -131,7 +133,9 @@ def fetch_from_remote() -> list[dict]:
             continue
         values = line.split("\t")
         if len(values) == len(columns):
-            rows.append(dict(zip(columns, values, strict=True)))
+            # MySQL batch mode renders NULL as \N
+            cleaned = [None if v == "\\N" else v for v in values]
+            rows.append(dict(zip(columns, cleaned, strict=True)))
 
     print(f"\rFetched {len(rows):,} rows ({format_size(size)}) in {elapsed:.1f}s" + " " * 10)
     return rows
@@ -198,7 +202,8 @@ def _do_export(rows: list[dict]):
             artist_call_number INTEGER,
             release_call_number INTEGER,
             genre TEXT,
-            format TEXT
+            format TEXT,
+            alternate_artist_name TEXT
         )
     """)
 
@@ -207,6 +212,7 @@ def _do_export(rows: list[dict]):
         CREATE VIRTUAL TABLE library_fts USING fts5(
             title,
             artist,
+            alternate_artist_name,
             content='library',
             content_rowid='id'
         )
@@ -218,8 +224,8 @@ def _do_export(rows: list[dict]):
     for row in rows:
         sqlite_cur.execute(
             """
-            INSERT INTO library (id, title, artist, call_letters, artist_call_number, release_call_number, genre, format)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO library (id, title, artist, call_letters, artist_call_number, release_call_number, genre, format, alternate_artist_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
@@ -230,19 +236,21 @@ def _do_export(rows: list[dict]):
                 row["release_call_number"],
                 row["genre"],
                 row["format"],
+                row.get("alternate_artist_name"),
             ),
         )
 
     # Populate FTS index
     print("Building full-text search index...")
     sqlite_cur.execute("""
-        INSERT INTO library_fts(rowid, title, artist)
-        SELECT id, title, artist FROM library
+        INSERT INTO library_fts(rowid, title, artist, alternate_artist_name)
+        SELECT id, title, artist, alternate_artist_name FROM library
     """)
 
     # Create additional indexes for filtered searches
     sqlite_cur.execute("CREATE INDEX idx_artist ON library(artist)")
     sqlite_cur.execute("CREATE INDEX idx_title ON library(title)")
+    sqlite_cur.execute("CREATE INDEX idx_alternate_artist ON library(alternate_artist_name)")
 
     sqlite_conn.commit()
 
