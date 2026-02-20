@@ -462,6 +462,135 @@ class TestRequestWithRetry:
         assert response is None
 
 
+class TestTryCache:
+    """Tests for _try_cache helper method."""
+
+    @pytest.fixture
+    def mock_cache_service(self):
+        """Create a mock cache service."""
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = MagicMock(spec=DiscogsCacheService)
+        cache.search_releases_by_track = AsyncMock()
+        cache.get_release = AsyncMock()
+        cache.validate_track_on_release = AsyncMock()
+        cache.is_available = AsyncMock(return_value=True)
+        return cache
+
+    @pytest_asyncio.fixture
+    async def service_with_cache(self, mock_cache_service):
+        """Create a DiscogsService with cache service."""
+        svc = DiscogsService(token="test-token", cache_service=mock_cache_service)
+        yield svc
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_returns_miss_when_no_cache_service(self, service: DiscogsService):
+        """Test returns miss when no cache service is configured."""
+        from discogs.service import CacheResult
+
+        result = await service._try_cache("test_op", lambda: AsyncMock(return_value="data")(), {})
+        assert result == CacheResult(hit=False)
+
+    @pytest.mark.asyncio
+    async def test_returns_miss_when_skip_cache(self, service_with_cache: DiscogsService):
+        """Test returns miss when skip_cache flag is set."""
+        from discogs.service import CacheResult
+
+        set_skip_cache(True)
+        result = await service_with_cache._try_cache(
+            "test_op", lambda: AsyncMock(return_value="data")(), {}
+        )
+        assert result == CacheResult(hit=False)
+
+    @pytest.mark.asyncio
+    async def test_returns_hit_on_cache_result(
+        self, service_with_cache: DiscogsService, mock_cache_service
+    ):
+        """Test returns hit when cache returns a result."""
+        result = await service_with_cache._try_cache(
+            "test_op", lambda: mock_cache_service.get_release(123), {"release_id": 123}
+        )
+        # get_release returns MagicMock (not None), so it's a hit
+        assert result.hit is True
+        assert result.value is not None
+
+    @pytest.mark.asyncio
+    async def test_returns_miss_on_none_result(
+        self, service_with_cache: DiscogsService, mock_cache_service
+    ):
+        """Test returns miss when cache returns None (cache miss semantics)."""
+        from discogs.service import CacheResult
+
+        mock_cache_service.get_release.return_value = None
+        result = await service_with_cache._try_cache(
+            "test_op", lambda: mock_cache_service.get_release(123), {"release_id": 123}
+        )
+        assert result == CacheResult(hit=False)
+
+    @pytest.mark.asyncio
+    async def test_returns_miss_on_exception(
+        self, service_with_cache: DiscogsService, mock_cache_service
+    ):
+        """Test returns miss on exception (graceful degradation)."""
+        from discogs.service import CacheResult
+
+        mock_cache_service.get_release.side_effect = Exception("DB connection lost")
+        result = await service_with_cache._try_cache(
+            "test_op", lambda: mock_cache_service.get_release(123), {"release_id": 123}
+        )
+        assert result == CacheResult(hit=False)
+
+    @pytest.mark.asyncio
+    async def test_records_pg_time(self, service_with_cache: DiscogsService, mock_cache_service):
+        """Test records pg_time on both hit and miss."""
+        from core.telemetry import get_cache_stats, init_cache_stats
+
+        init_cache_stats()
+
+        # Hit case
+        mock_cache_service.get_release.return_value = MagicMock()
+        await service_with_cache._try_cache(
+            "test_op", lambda: mock_cache_service.get_release(123), {}
+        )
+        stats = get_cache_stats()
+        assert stats["pg_time_ms"] > 0
+
+        # Reset and test miss case
+        init_cache_stats()
+        mock_cache_service.get_release.return_value = None
+        await service_with_cache._try_cache(
+            "test_op", lambda: mock_cache_service.get_release(123), {}
+        )
+        stats = get_cache_stats()
+        assert stats["pg_time_ms"] > 0
+
+    @pytest.mark.asyncio
+    async def test_false_is_valid_hit(self, service_with_cache: DiscogsService, mock_cache_service):
+        """Test that False is a valid cache hit (for validate_track_on_release)."""
+        mock_cache_service.validate_track_on_release.return_value = False
+        result = await service_with_cache._try_cache(
+            "validate_track",
+            lambda: mock_cache_service.validate_track_on_release(123, "track", "artist"),
+            {"release_id": 123},
+        )
+        assert result.hit is True
+        assert result.value is False
+
+    @pytest.mark.asyncio
+    async def test_none_is_miss_for_validation(
+        self, service_with_cache: DiscogsService, mock_cache_service
+    ):
+        """Test that None is a miss for validation (caller should try API)."""
+        mock_cache_service.validate_track_on_release.return_value = None
+        result = await service_with_cache._try_cache(
+            "validate_track",
+            lambda: mock_cache_service.validate_track_on_release(123, "track", "artist"),
+            {"release_id": 123},
+        )
+        assert result.hit is False
+
+
 class TestCacheIntegration:
     """Tests for PostgreSQL cache integration in DiscogsService."""
 
