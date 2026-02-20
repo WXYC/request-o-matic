@@ -1,5 +1,7 @@
 """Tests for core.matching module."""
 
+import pytest
+
 from core.matching import (
     COMPILATION_KEYWORDS,
     MAX_SEARCH_RESULTS,
@@ -7,7 +9,9 @@ from core.matching import (
     calculate_confidence,
     detect_ambiguous_format,
     is_compilation_artist,
+    validate_track_on_tracklist,
 )
+from discogs.models import TrackItem
 
 
 class TestConstants:
@@ -203,3 +207,106 @@ class TestDetectAmbiguousFormat:
         # "Puzzle pop -cootie catcher" should detect ambiguous format
         result = detect_ambiguous_format("Puzzle pop -cootie catcher")
         assert result == ("Puzzle pop", "cootie catcher")
+
+
+class TestValidateTrackOnTracklist:
+    """Test validate_track_on_tracklist function."""
+
+    @pytest.mark.parametrize(
+        "description,tracklist,release_artist,track,artist,expected",
+        [
+            (
+                "finds track by per-track artist (compilation)",
+                [TrackItem(position="1", title="My Song", artists=["The Artist"])],
+                "Various Artists",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+            (
+                "finds track by release artist (single-artist release)",
+                [TrackItem(position="1", title="My Song", artists=[])],
+                "The Artist",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+            (
+                "returns False when track not found",
+                [TrackItem(position="1", title="Different Song", artists=["The Artist"])],
+                "The Artist",
+                "My Song",
+                "The Artist",
+                False,
+            ),
+            (
+                "returns False when artist not found",
+                [TrackItem(position="1", title="My Song", artists=["Other Artist"])],
+                "Other Artist",
+                "My Song",
+                "The Artist",
+                False,
+            ),
+            (
+                "handles Discogs numbering like (2) in artist names",
+                [TrackItem(position="1", title="My Song", artists=[])],
+                "The Artist (2)",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+            (
+                "case-insensitive matching",
+                [TrackItem(position="1", title="MY SONG", artists=["THE ARTIST"])],
+                "Various Artists",
+                "my song",
+                "the artist",
+                True,
+            ),
+            (
+                "partial title match - track_lower in item_title",
+                [TrackItem(position="1", title="My Song (Extended Mix)", artists=["The Artist"])],
+                "Various Artists",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+            (
+                "partial title match - item_title in track_lower",
+                [TrackItem(position="1", title="My Song", artists=["The Artist"])],
+                "Various Artists",
+                "My Song (Extended Mix)",
+                "The Artist",
+                True,
+            ),
+            (
+                "empty tracklist returns False",
+                [],
+                "The Artist",
+                "My Song",
+                "The Artist",
+                False,
+            ),
+            (
+                "partial artist match - artist_lower in track_artist",
+                [TrackItem(position="1", title="My Song", artists=["The Artist Feat. Someone"])],
+                "Various Artists",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+            (
+                "partial artist match - track_artist in artist_lower",
+                [TrackItem(position="1", title="My Song", artists=["Artist"])],
+                "Various Artists",
+                "My Song",
+                "The Artist",
+                True,
+            ),
+        ],
+        ids=lambda x: x if isinstance(x, str) else "",
+    )
+    def test_validate_track_on_tracklist(
+        self, description, tracklist, release_artist, track, artist, expected
+    ):
+        assert validate_track_on_tracklist(tracklist, release_artist, track, artist) is expected

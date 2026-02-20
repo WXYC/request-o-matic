@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from config.settings import get_settings
-from core.matching import calculate_confidence, is_compilation_artist
+from core.matching import calculate_confidence, is_compilation_artist, validate_track_on_tracklist
 from core.telemetry import (
     record_api_time,
     record_discogs_api_call,
@@ -702,33 +702,9 @@ class DiscogsService:
         if release is None:
             return False
 
-        track_lower = track.lower()
-        artist_lower = artist.lower()
-
-        for item in release.tracklist:
-            item_title = item.title.lower()
-            # Check if track title matches
-            if track_lower not in item_title and item_title not in track_lower:
-                continue
-
-            # Check per-track artists first (for compilations)
-            if item.artists:
-                for track_artist in item.artists:
-                    track_artist_lower = track_artist.lower().split("(")[0].strip()
-                    if artist_lower in track_artist_lower or track_artist_lower in artist_lower:
-                        logger.info(
-                            f"Validated: '{track}' by '{artist}' found on release {release_id}"
-                        )
-                        return True
-            else:
-                # For single-artist releases, check release artist
-                release_artist = release.artist.lower()
-                # Remove Discogs numbering like "(2)"
-                release_artist = release_artist.split("(")[0].strip()
-
-                if artist_lower in release_artist or release_artist in artist_lower:
-                    logger.info(f"Validated: '{track}' by '{artist}' found on release {release_id}")
-                    return True
-
-        logger.info(f"Track '{track}' by '{artist}' NOT found on release {release_id}")
-        return False
+        found = validate_track_on_tracklist(release.tracklist, release.artist, track, artist)
+        if found:
+            logger.info(f"Validated: '{track}' by '{artist}' found on release {release_id}")
+        else:
+            logger.info(f"Track '{track}' by '{artist}' NOT found on release {release_id}")
+        return found
