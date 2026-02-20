@@ -554,6 +554,7 @@ class TestTryCache:
             "test_op", lambda: mock_cache_service.get_release(123), {}
         )
         stats = get_cache_stats()
+        assert stats is not None
         assert stats["pg_time_ms"] > 0
 
         # Reset and test miss case
@@ -563,6 +564,7 @@ class TestTryCache:
             "test_op", lambda: mock_cache_service.get_release(123), {}
         )
         stats = get_cache_stats()
+        assert stats is not None
         assert stats["pg_time_ms"] > 0
 
     @pytest.mark.asyncio
