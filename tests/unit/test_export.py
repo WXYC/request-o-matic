@@ -129,7 +129,7 @@ class TestDoExport:
 
     def test_mixed_rows_with_and_without_alternate(self):
         """Mix of rows with and without alternate_artist_name should export correctly."""
-        rows = [
+        rows: list[dict] = [
             {
                 "id": "1",
                 "title": "Drum n Bass for Papa",
