@@ -593,6 +593,49 @@ class TestTryCache:
         assert result.hit is False
 
 
+class TestTimedApiCall:
+    """Tests for _timed_api_call helper method."""
+
+    @pytest_asyncio.fixture
+    async def service(self):
+        svc = DiscogsService(token="test-token")
+        yield svc
+        await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_returns_parsed_json(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test returns parsed JSON dict on successful response."""
+        httpx_mock.add_response(
+            url=SEARCH_URL_PATTERN,
+            json={"results": [{"id": 1, "title": "Test"}]},
+        )
+        data = await service._timed_api_call("GET", "/database/search", params={"q": "test"})
+        assert data is not None
+        assert data["results"][0]["id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_rate_limit(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test returns None when request_with_retry returns None (rate limited)."""
+        # _request_with_retry does 3 attempts (initial + 2 retries) before giving up
+        for _ in range(3):
+            httpx_mock.add_response(url=SEARCH_URL_PATTERN, status_code=429)
+        data = await service._timed_api_call("GET", "/database/search", params={"q": "test"})
+        assert data is None
+
+    @pytest.mark.asyncio
+    async def test_records_telemetry(self, service: DiscogsService, httpx_mock: HTTPXMock):
+        """Test records API time and call count."""
+        from core.telemetry import get_cache_stats, init_cache_stats
+
+        init_cache_stats()
+        httpx_mock.add_response(url=SEARCH_URL_PATTERN, json={"results": []})
+        await service._timed_api_call("GET", "/database/search", params={"q": "test"})
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["api_time_ms"] > 0
+        assert stats["api_calls"] >= 1
+
+
 class TestCacheIntegration:
     """Tests for PostgreSQL cache integration in DiscogsService."""
 

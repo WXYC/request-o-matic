@@ -7,11 +7,13 @@ from core.matching import (
     MAX_SEARCH_RESULTS,
     STOPWORDS,
     calculate_confidence,
+    deduplicate,
     detect_ambiguous_format,
     extract_significant_words,
     is_compilation_artist,
     matches_artist_or_compilation,
     normalize_text,
+    sort_by_title_relevance,
     validate_track_on_tracklist,
 )
 from discogs.models import TrackItem
@@ -442,3 +444,143 @@ class TestValidateTrackOnTracklist:
         self, description, tracklist, release_artist, track, artist, expected
     ):
         assert validate_track_on_tracklist(tracklist, release_artist, track, artist) is expected
+
+
+class TestDeduplicate:
+    """Test deduplicate function."""
+
+    def test_removes_duplicates_by_default_key(self):
+        """Default key uses item.id."""
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Album A"),
+            LibraryItem(id=2, title="Album B"),
+            LibraryItem(id=1, title="Album A"),
+        ]
+        result = deduplicate(items)
+        assert len(result) == 2
+        assert result[0].id == 1
+        assert result[1].id == 2
+
+    def test_preserves_first_occurrence_order(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=3, title="Third"),
+            LibraryItem(id=1, title="First"),
+            LibraryItem(id=2, title="Second"),
+            LibraryItem(id=1, title="First Duplicate"),
+        ]
+        result = deduplicate(items)
+        assert [r.id for r in result] == [3, 1, 2]
+
+    def test_custom_key_function(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Abbey Road"),
+            LibraryItem(id=2, title="abbey road"),
+            LibraryItem(id=3, title="Let It Be"),
+        ]
+        result = deduplicate(items, key=lambda x: (x.title or "").lower())
+        assert len(result) == 2
+        assert result[0].id == 1
+        assert result[1].id == 3
+
+    def test_empty_list(self):
+        assert deduplicate([]) == []
+
+    def test_no_duplicates(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="A"),
+            LibraryItem(id=2, title="B"),
+        ]
+        result = deduplicate(items)
+        assert len(result) == 2
+
+    def test_all_duplicates(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="A"),
+            LibraryItem(id=1, title="A copy"),
+            LibraryItem(id=1, title="A another"),
+        ]
+        result = deduplicate(items)
+        assert len(result) == 1
+        assert result[0].title == "A"
+
+
+class TestSortByTitleRelevance:
+    """Test sort_by_title_relevance function."""
+
+    def test_matching_title_sorted_first(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Other Album"),
+            LibraryItem(id=2, title="Abbey Road"),
+            LibraryItem(id=3, title="Something Else"),
+        ]
+        sort_by_title_relevance(items, "Abbey Road")
+        assert items[0].id == 2
+
+    def test_substring_match(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Other Album"),
+            LibraryItem(id=2, title="Abbey Road (Remastered)"),
+        ]
+        sort_by_title_relevance(items, "Abbey Road")
+        assert items[0].id == 2
+
+    def test_case_insensitive(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Other Album"),
+            LibraryItem(id=2, title="ABBEY ROAD"),
+        ]
+        sort_by_title_relevance(items, "abbey road")
+        assert items[0].id == 2
+
+    def test_no_matches_preserves_order(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Alpha"),
+            LibraryItem(id=2, title="Beta"),
+        ]
+        sort_by_title_relevance(items, "Gamma")
+        assert items[0].id == 1
+        assert items[1].id == 2
+
+    def test_empty_list(self):
+        items: list = []
+        sort_by_title_relevance(items, "anything")
+        assert items == []
+
+    def test_none_title_handled(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title=None),
+            LibraryItem(id=2, title="Abbey Road"),
+        ]
+        sort_by_title_relevance(items, "Abbey Road")
+        assert items[0].id == 2
+
+    def test_sorts_in_place(self):
+        from library.models import LibraryItem
+
+        items = [
+            LibraryItem(id=1, title="Other"),
+            LibraryItem(id=2, title="Match"),
+        ]
+        original = items
+        sort_by_title_relevance(items, "Match")
+        assert items is original
