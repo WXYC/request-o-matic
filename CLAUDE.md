@@ -24,6 +24,7 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `discogs/cache_service.py` - PostgreSQL cache for Discogs data (reduces API calls)
 - `discogs/memory_cache.py` - In-memory TTL cache for API responses
 - `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
+- `core/matching.py` - Shared text normalization, artist matching, deduplication, and track validation utilities
 - `core/sentry.py` - Sentry error tracking integration
 - `core/telemetry.py` - PostHog telemetry with cache stats tracking
 ### Discogs Cache (Optional)
