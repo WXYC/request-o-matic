@@ -252,7 +252,7 @@ class DiscogsService:
         """
         cache_result = await self._try_cache(
             "search_releases_by_track",
-            lambda: self.cache_service.search_releases_by_track(
+            lambda: self.cache_service.search_releases_by_track(  # type: ignore[union-attr]
                 track=track, artist=artist, limit=limit
             ),
             {"track": track, "artist": artist},
@@ -394,12 +394,12 @@ class DiscogsService:
         """
         cache_result = await self._try_cache(
             "get_release",
-            lambda: self.cache_service.get_release(release_id),
+            lambda: self.cache_service.get_release(release_id),  # type: ignore[union-attr]
             {"release_id": release_id},
         )
         if cache_result.hit:
             logger.info(f"Cache hit: release {release_id}")
-            return cache_result.value
+            return cache_result.value  # type: ignore[no-any-return]
 
         # Fall back to Discogs API
         try:
@@ -541,7 +541,7 @@ class DiscogsService:
         # Try local cache first
         cache_result = await self._try_cache(
             "search_releases",
-            lambda: self.cache_service.search_releases(
+            lambda: self.cache_service.search_releases(  # type: ignore[union-attr]
                 artist=request.artist,
                 album=request.album or request.track,
                 limit=limit,
@@ -693,7 +693,9 @@ class DiscogsService:
         # Try cache validation first
         cache_result = await self._try_cache(
             "validate_track",
-            lambda: self.cache_service.validate_track_on_release(release_id, track, artist),
+            lambda: self.cache_service.validate_track_on_release(  # type: ignore[union-attr]
+                release_id, track, artist
+            ),
             {"release_id": release_id, "track": track, "artist": artist},
         )
         if cache_result.hit:
@@ -701,7 +703,7 @@ class DiscogsService:
                 f"Cache {'validated' if cache_result.value else 'rejected'}: "
                 f"'{track}' by '{artist}' on release {release_id}"
             )
-            return cache_result.value
+            return cache_result.value  # type: ignore[no-any-return]
 
         # Fall back to API via get_release
         release = await self.get_release(release_id)
