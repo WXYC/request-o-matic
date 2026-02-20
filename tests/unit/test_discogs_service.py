@@ -1,6 +1,7 @@
 """Tests for DiscogsService."""
 
 import re
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
