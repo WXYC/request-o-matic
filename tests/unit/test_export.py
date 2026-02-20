@@ -1,16 +1,14 @@
 """Unit tests for scripts/export_to_sqlite.py."""
 
 import sqlite3
-
-import pytest
-
-# The export script is not a proper module, so we need to import it from the scripts directory
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path so we can import the script
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from scripts.export_to_sqlite import _do_export, OUTPUT_PATH
+from scripts.export_to_sqlite import _do_export
 
 
 class TestDoExport:
