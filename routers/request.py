@@ -50,10 +50,12 @@ from core.dependencies import (
 )
 from core.matching import (
     MAX_SEARCH_RESULTS,
+    deduplicate,
     extract_significant_words,
     is_compilation_artist,
     matches_artist_or_compilation,
     normalize_text,
+    sort_by_title_relevance,
 )
 from core.search import (
     build_strategies,
@@ -252,13 +254,7 @@ async def search_with_alternative_interpretation(
     elif results1 and results2:
         # Both have results - combine and dedupe by id
         logger.info("Alternative search matched both interpretations, combining results")
-        seen_ids = set()
-        combined = []
-        for item in results1 + results2:
-            if item.id not in seen_ids:
-                combined.append(item)
-                seen_ids.add(item.id)
-        return limit_results(combined), None
+        return limit_results(deduplicate(results1 + results2)), None
 
     return [], None
 
@@ -398,11 +394,7 @@ async def search_library_with_fallback(
 
         if all_results:
             # Sort to prioritize results matching the first (primary) album
-            primary_album_lower = albums[0].lower()
-            all_results.sort(
-                key=lambda r: primary_album_lower in (r.title or "").lower(),
-                reverse=True,
-            )
+            sort_by_title_relevance(all_results, albums[0])
             return all_results, False
 
     # If no albums from Discogs, try artist + song
@@ -414,11 +406,7 @@ async def search_library_with_fallback(
 
         if results:
             # Prioritize results where album title matches song title
-            song_lower = parsed.song.lower()
-            results.sort(
-                key=lambda r: song_lower in (r.title or "").lower(),
-                reverse=True,
-            )
+            sort_by_title_relevance(results, parsed.song)
             # We had a song but couldn't find/confirm albums from Discogs
             # Set song_not_found=True so context message indicates uncertainty
             return results, True
@@ -571,11 +559,7 @@ async def search_compilations_for_track(
     # Prioritize albums whose title matches the song title
     # (e.g., "Meet Me in the City" album for song "Meet Me in the City")
     if results and parsed.song:
-        song_lower = parsed.song.lower()
-        results.sort(
-            key=lambda r: song_lower in (r.title or "").lower(),
-            reverse=True,
-        )
+        sort_by_title_relevance(results, parsed.song)
 
     return limit_results(results), discogs_titles
 

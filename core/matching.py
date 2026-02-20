@@ -7,6 +7,7 @@ Constants were consolidated from multiple locations to ensure consistency.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Hashable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -237,6 +238,53 @@ def detect_ambiguous_format(raw_message: str) -> tuple[str, str] | None:
             return (parts[0].strip(), parts[1].strip())
 
     return None
+
+
+# =============================================================================
+# Deduplication
+# =============================================================================
+
+
+def deduplicate[T](
+    items: list[T],
+    key: Callable[[T], Hashable] = lambda x: x.id,  # type: ignore[attr-defined]
+) -> list[T]:
+    """Remove duplicates from a list, preserving first-occurrence order.
+
+    Args:
+        items: List of items to deduplicate
+        key: Function to extract a hashable key from each item (default: item.id)
+
+    Returns:
+        New list with duplicates removed
+    """
+    seen: set[Hashable] = set()
+    result: list[T] = []
+    for item in items:
+        k = key(item)
+        if k not in seen:
+            seen.add(k)
+            result.append(item)
+    return result
+
+
+# =============================================================================
+# Sort by Title Relevance
+# =============================================================================
+
+
+def sort_by_title_relevance(items: list, target: str) -> None:
+    """Sort items in-place so items whose title contains the target come first.
+
+    Args:
+        items: List of items with a ``title`` attribute (may be None)
+        target: Target string to match against item titles (case-insensitive)
+    """
+    target_lower = target.lower()
+    items.sort(
+        key=lambda r: target_lower in (r.title or "").lower(),
+        reverse=True,
+    )
 
 
 # =============================================================================

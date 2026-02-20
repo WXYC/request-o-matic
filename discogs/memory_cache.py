@@ -18,12 +18,17 @@ logger = logging.getLogger(__name__)
 # Registry of all caches for bulk operations
 _cache_registry: list[TTLCache] = []
 
-# Lazily-initialized caches (using settings when accessed)
-_track_cache: TTLCache | None = None
-_release_cache: TTLCache | None = None
-_search_cache: TTLCache | None = None
-_artist_cache: TTLCache | None = None
-_label_cache: TTLCache | None = None
+# Table-driven cache configuration: name -> (maxsize_divisor, ttl_setting_attr)
+_CACHE_CONFIGS: dict[str, tuple[int, str]] = {
+    "track": (1, "discogs_track_cache_ttl"),
+    "release": (2, "discogs_release_cache_ttl"),
+    "search": (1, "discogs_search_cache_ttl"),
+    "artist": (2, "discogs_artist_cache_ttl"),
+    "label": (2, "discogs_label_cache_ttl"),
+}
+
+# Lazily-initialized cache instances (keyed by name from _CACHE_CONFIGS)
+_caches: dict[str, TTLCache] = {}
 
 T = TypeVar("T")
 
@@ -82,15 +87,10 @@ def create_ttl_cache(maxsize: int, ttl: int) -> TTLCache:
 
 def clear_all_caches() -> None:
     """Clear all registered caches and reset lazy caches."""
-    global _track_cache, _release_cache, _search_cache, _artist_cache, _label_cache
     for cache in _cache_registry:
         cache.clear()
     # Reset lazy caches so they get recreated with fresh settings
-    _track_cache = None
-    _release_cache = None
-    _search_cache = None
-    _artist_cache = None
-    _label_cache = None
+    _caches.clear()
 
 
 def _set_cached_flag(result: Any, cached: bool) -> Any:
@@ -164,76 +164,52 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
     return decorator
 
 
-def get_track_cache() -> TTLCache:
-    """Get or create the track search cache using settings."""
-    global _track_cache
-    if _track_cache is None:
-        # Import settings lazily to avoid circular imports at module load time
+def _get_cache(name: str) -> TTLCache:
+    """Get or create a named cache using settings from _CACHE_CONFIGS.
+
+    Imports settings lazily to avoid circular imports at module load time.
+
+    Args:
+        name: Cache name (must be a key in _CACHE_CONFIGS)
+
+    Returns:
+        TTLCache instance (created on first access, reused thereafter)
+    """
+    if name not in _caches:
         from config.settings import get_settings
 
+        maxsize_divisor, ttl_attr = _CACHE_CONFIGS[name]
         settings = get_settings()
-        _track_cache = create_ttl_cache(
-            maxsize=settings.discogs_cache_maxsize,
-            ttl=settings.discogs_track_cache_ttl,
+        _caches[name] = create_ttl_cache(
+            maxsize=settings.discogs_cache_maxsize // maxsize_divisor,
+            ttl=getattr(settings, ttl_attr),
         )
-    return _track_cache
+    return _caches[name]
+
+
+def get_track_cache() -> TTLCache:
+    """Get or create the track search cache using settings."""
+    return _get_cache("track")
 
 
 def get_release_cache() -> TTLCache:
     """Get or create the release metadata cache using settings."""
-    global _release_cache
-    if _release_cache is None:
-        from config.settings import get_settings
-
-        settings = get_settings()
-        # Release cache uses half the maxsize since entries are larger
-        _release_cache = create_ttl_cache(
-            maxsize=settings.discogs_cache_maxsize // 2,
-            ttl=settings.discogs_release_cache_ttl,
-        )
-    return _release_cache
+    return _get_cache("release")
 
 
 def get_search_cache() -> TTLCache:
     """Get or create the general search cache using settings."""
-    global _search_cache
-    if _search_cache is None:
-        from config.settings import get_settings
-
-        settings = get_settings()
-        _search_cache = create_ttl_cache(
-            maxsize=settings.discogs_cache_maxsize,
-            ttl=settings.discogs_search_cache_ttl,
-        )
-    return _search_cache
+    return _get_cache("search")
 
 
 def get_artist_cache() -> TTLCache:
     """Get or create the artist image cache using settings."""
-    global _artist_cache
-    if _artist_cache is None:
-        from config.settings import get_settings
-
-        settings = get_settings()
-        _artist_cache = create_ttl_cache(
-            maxsize=settings.discogs_cache_maxsize // 2,
-            ttl=settings.discogs_artist_cache_ttl,
-        )
-    return _artist_cache
+    return _get_cache("artist")
 
 
 def get_label_cache() -> TTLCache:
     """Get or create the label image cache using settings."""
-    global _label_cache
-    if _label_cache is None:
-        from config.settings import get_settings
-
-        settings = get_settings()
-        _label_cache = create_ttl_cache(
-            maxsize=settings.discogs_cache_maxsize // 2,
-            ttl=settings.discogs_label_cache_ttl,
-        )
-    return _label_cache
+    return _get_cache("label")
 
 
 # Convenience constants for backwards compatibility

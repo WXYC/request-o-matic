@@ -167,46 +167,48 @@ def init_cache_stats() -> None:
     )
 
 
-def record_memory_cache_hit() -> None:
-    """Record an in-memory TTL cache hit in the current request context."""
+def _update_cache_stat(key: str, value: float = 1) -> None:
+    """Update a cache stat in the current request context.
+
+    No-op if cache stats have not been initialized for this request.
+
+    Args:
+        key: Stat key to update (must exist in the stats dict)
+        value: Value to add to the stat (default: 1 for counters)
+    """
     stats = _cache_stats_var.get(None)
     if stats is not None:
-        stats["memory_hits"] += 1
+        stats[key] += value
+
+
+def record_memory_cache_hit() -> None:
+    """Record an in-memory TTL cache hit in the current request context."""
+    _update_cache_stat("memory_hits")
 
 
 def record_pg_cache_hit() -> None:
     """Record a PostgreSQL cache hit in the current request context."""
-    stats = _cache_stats_var.get(None)
-    if stats is not None:
-        stats["pg_hits"] += 1
+    _update_cache_stat("pg_hits")
 
 
 def record_pg_cache_miss() -> None:
     """Record a PostgreSQL cache miss in the current request context."""
-    stats = _cache_stats_var.get(None)
-    if stats is not None:
-        stats["pg_misses"] += 1
+    _update_cache_stat("pg_misses")
 
 
 def record_discogs_api_call() -> None:
     """Record a Discogs API call in the current request context."""
-    stats = _cache_stats_var.get(None)
-    if stats is not None:
-        stats["api_calls"] += 1
+    _update_cache_stat("api_calls")
 
 
 def record_pg_time(ms: float) -> None:
     """Accumulate PostgreSQL cache query time in the current request context."""
-    stats = _cache_stats_var.get(None)
-    if stats is not None:
-        stats["pg_time_ms"] += ms
+    _update_cache_stat("pg_time_ms", ms)
 
 
 def record_api_time(ms: float) -> None:
     """Accumulate Discogs API call time in the current request context."""
-    stats = _cache_stats_var.get(None)
-    if stats is not None:
-        stats["api_time_ms"] += ms
+    _update_cache_stat("api_time_ms", ms)
 
 
 def get_cache_stats() -> dict | None:
