@@ -51,6 +51,7 @@ from core.dependencies import (
 from core.matching import (
     MAX_SEARCH_RESULTS,
     deduplicate,
+    detect_ambiguous_format,
     extract_significant_words,
     is_compilation_artist,
     matches_artist_or_compilation,
@@ -58,6 +59,7 @@ from core.matching import (
     sort_by_title_relevance,
 )
 from core.search import (
+    SearchState,
     build_strategies,
     execute_search_pipeline,
     get_search_type_from_state,
@@ -328,6 +330,71 @@ async def search_song_as_artist(
         )
 
     return limit_results(results), None
+
+
+# =============================================================================
+# Strategy Adapters
+# =============================================================================
+# These thin adapters wrap the existing helper functions to conform to the
+# uniform strategy signature: (db, parsed, state) -> None, mutating state.
+
+
+async def _search_library_strategy(
+    db: LibraryDB, parsed: ParsedRequest, state: SearchState
+) -> None:
+    """Adapter: search library with fallback, updating state."""
+    results, fallback_used = await search_library_with_fallback(db, parsed, state.albums_for_search)
+    if results:
+        state.results = results
+    if fallback_used:
+        state.song_not_found = True
+
+
+async def _swapped_interpretation_strategy(
+    db: LibraryDB, parsed: ParsedRequest, state: SearchState
+) -> None:
+    """Adapter: try both interpretations of 'X - Y' format, updating state."""
+    parts = detect_ambiguous_format(parsed.raw_message)
+    if parts:
+        part1, part2 = parts
+        results, _ = await search_with_alternative_interpretation(db, part1, part2)
+    else:
+        results = []
+    if results:
+        state.results = results
+        state.song_not_found = False
+
+
+async def _compilation_search_strategy(
+    db: LibraryDB,
+    parsed: ParsedRequest,
+    state: SearchState,
+    discogs_service: DiscogsService | None = None,
+) -> None:
+    """Adapter: search compilations for track, updating state."""
+    results, discogs_titles = await search_compilations_for_track(
+        db, parsed, discogs_service=discogs_service
+    )
+    if results:
+        state.results = results
+        state.found_on_compilation = True
+        state.song_not_found = False
+        state.discogs_titles = discogs_titles
+
+
+async def _song_as_artist_strategy(
+    db: LibraryDB,
+    parsed: ParsedRequest,
+    state: SearchState,
+    discogs_service: DiscogsService | None = None,
+) -> None:
+    """Adapter: try parsed song as artist, updating state."""
+    if not parsed.song:
+        return
+    results, _ = await search_song_as_artist(db, parsed.song, discogs_service=discogs_service)
+    if results:
+        state.results = results
+        state.song_not_found = False
 
 
 async def search_library_with_fallback(
@@ -982,13 +1049,13 @@ async def handle_request(
             # 4. SONG_AS_ARTIST - try parsed song as artist (parser misidentification)
             with telemetry.track_step("library_search"):
                 strategies = build_strategies(
-                    search_library_func=search_library_with_fallback,
-                    search_alternative_func=search_with_alternative_interpretation,
+                    search_library_func=_search_library_strategy,
+                    search_alternative_func=_swapped_interpretation_strategy,
                     search_compilations_func=partial(
-                        search_compilations_for_track, discogs_service=discogs_service
+                        _compilation_search_strategy, discogs_service=discogs_service
                     ),
                     search_song_as_artist_func=partial(
-                        search_song_as_artist, discogs_service=discogs_service
+                        _song_as_artist_strategy, discogs_service=discogs_service
                     ),
                 )
 
