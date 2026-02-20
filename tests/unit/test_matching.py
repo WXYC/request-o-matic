@@ -8,7 +8,10 @@ from core.matching import (
     STOPWORDS,
     calculate_confidence,
     detect_ambiguous_format,
+    extract_significant_words,
     is_compilation_artist,
+    matches_artist_or_compilation,
+    normalize_text,
     validate_track_on_tracklist,
 )
 from discogs.models import TrackItem
@@ -207,6 +210,135 @@ class TestDetectAmbiguousFormat:
         # "Puzzle pop -cootie catcher" should detect ambiguous format
         result = detect_ambiguous_format("Puzzle pop -cootie catcher")
         assert result == ("Puzzle pop", "cootie catcher")
+
+
+class TestNormalizeText:
+    """Test normalize_text function."""
+
+    def test_removes_punctuation(self):
+        assert normalize_text("hello, world!") == "hello world"
+
+    def test_lowercases(self):
+        assert normalize_text("HELLO World") == "hello world"
+
+    def test_normalizes_whitespace(self):
+        assert normalize_text("hello   world") == "hello world"
+
+    def test_empty_string(self):
+        assert normalize_text("") == ""
+
+    def test_preserves_underscores(self):
+        # \w includes underscores, so they are preserved
+        assert normalize_text("hello_world") == "hello_world"
+
+    def test_preserves_digits(self):
+        assert normalize_text("Vol. 2 (2001)") == "vol 2 2001"
+
+    def test_strips_surrounding_whitespace(self):
+        assert normalize_text("  hello  ") == "hello"
+
+    def test_strips_non_latin_characters(self):
+        # Non-Latin scripts are stripped (ASCII-only word characters)
+        assert normalize_text("Aphex Twin リチャード") == "aphex twin"
+
+    @pytest.mark.parametrize(
+        "input_text, expected",
+        [
+            ("Dr. Dre", "dr dre"),
+            ("AC/DC", "ac dc"),
+            ("Guns N' Roses", "guns n roses"),
+            ("Sigur Rós", "sigur r s"),
+        ],
+    )
+    def test_music_metadata_examples(self, input_text, expected):
+        assert normalize_text(input_text) == expected
+
+
+class TestExtractSignificantWords:
+    """Test extract_significant_words function."""
+
+    def test_basic_extraction(self):
+        result = extract_significant_words("The Beatles Abbey Road")
+        assert "beatles" in result
+        assert "abbey" in result
+        assert "road" in result
+        assert "the" not in result  # stopword
+
+    def test_default_min_length_excludes_short_words(self):
+        # Default min_length=3, so len(w) > 3 means only words of 4+ chars
+        result = extract_significant_words("a big cat dogs")
+        assert "dogs" in result  # length 4 > 3
+        assert "big" not in result  # length 3, not > 3
+        assert "cat" not in result  # length 3, not > 3
+        assert "a" not in result  # too short + stopword
+
+    def test_min_length_2(self):
+        result = extract_significant_words("my big cat", min_length=2)
+        assert "big" in result  # length 3 > 2
+        assert "cat" in result  # length 3 > 2
+        assert "my" not in result  # length 2, not > 2
+
+    def test_min_length_0_only_filters_stopwords(self):
+        result = extract_significant_words("I am an artist", min_length=0)
+        assert "artist" in result
+        assert "an" not in result  # stopword
+        assert "a" not in result  # stopword
+        assert "i" in result  # not a stopword, length 1 > 0
+
+    def test_removes_stopwords(self):
+        result = extract_significant_words("play the song from that artist", min_length=0)
+        assert "play" not in result  # stopword
+        assert "the" not in result  # stopword
+        assert "song" not in result  # stopword
+        assert "from" not in result  # stopword
+        assert "that" not in result  # stopword
+        assert "artist" in result  # not a stopword
+
+    def test_removes_punctuation(self):
+        result = extract_significant_words("Hello, World!", min_length=0)
+        assert "hello" in result
+        assert "world" in result
+
+    def test_empty_input(self):
+        assert extract_significant_words("") == set()
+
+    def test_returns_set(self):
+        result = extract_significant_words("word word word", min_length=0)
+        assert isinstance(result, set)
+        assert result == {"word"}
+
+    def test_underscore_preserved_in_words(self):
+        result = extract_significant_words("hello_world test", min_length=0)
+        assert "hello_world" in result
+
+
+class TestMatchesArtistOrCompilation:
+    """Test matches_artist_or_compilation function."""
+
+    def test_exact_match(self):
+        assert matches_artist_or_compilation("The Beatles", "The Beatles")
+
+    def test_prefix_match(self):
+        assert matches_artist_or_compilation("The Beatles - R", "The Beatles")
+
+    def test_compilation_artist(self):
+        assert matches_artist_or_compilation("Various Artists", "Some Band")
+
+    def test_soundtrack(self):
+        assert matches_artist_or_compilation("Soundtracks - M", "Some Band")
+
+    def test_non_match(self):
+        assert not matches_artist_or_compilation("Radiohead", "The Beatles")
+
+    def test_case_insensitive(self):
+        assert matches_artist_or_compilation("THE BEATLES", "the beatles")
+
+    def test_toy_vs_chew_toy_regression(self):
+        # "Toy" should NOT match "Chew Toy" (suffix, not prefix)
+        assert not matches_artist_or_compilation("Chew Toy", "Toy")
+
+    def test_prefix_not_suffix(self):
+        assert not matches_artist_or_compilation("Young Black Teenagers", "Young Gov")
 
 
 class TestValidateTrackOnTracklist:

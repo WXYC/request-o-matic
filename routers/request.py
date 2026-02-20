@@ -50,8 +50,10 @@ from core.dependencies import (
 )
 from core.matching import (
     MAX_SEARCH_RESULTS,
-    STOPWORDS,
+    extract_significant_words,
     is_compilation_artist,
+    matches_artist_or_compilation,
+    normalize_text,
 )
 from core.search import (
     build_strategies,
@@ -316,8 +318,7 @@ async def search_song_as_artist(
                 continue
 
             # Accept if it's the actual artist or a compilation
-            item_artist = (item.artist or "").lower()
-            if item_artist.startswith(song_as_artist.lower()) or is_compilation_artist(item_artist):
+            if matches_artist_or_compilation(item.artist or "", song_as_artist):
                 results.append(item)
                 seen_ids.add(item.id)
                 logger.info(f"Found '{item.artist} - {item.title}' via Discogs cross-reference")
@@ -367,21 +368,14 @@ async def search_library_with_fallback(
 
             # Filter to only include albums that match the Discogs album name
             # This prevents fuzzy search from returning unrelated albums by the same artist
-            album_lower = album.lower()
-            # Normalize for comparison (remove punctuation, extra spaces)
-            album_normalized = re.sub(r"[^\w\s]", " ", album_lower)
-            album_normalized = " ".join(album_normalized.split())
+            album_normalized = normalize_text(album)
             # Extract significant words from the Discogs album title (exclude stopwords)
-            album_words = {w for w in album_normalized.split() if len(w) > 2 and w not in STOPWORDS}
+            album_words = extract_significant_words(album, min_length=2)
             filtered_results = []
             for item in results:
-                item_title_lower = (item.title or "").lower()
-                item_normalized = re.sub(r"[^\w\s]", " ", item_title_lower)
-                item_normalized = " ".join(item_normalized.split())
+                item_normalized = normalize_text(item.title or "")
                 # Check if the library album title shares significant words with Discogs album
-                item_words = {
-                    w for w in item_normalized.split() if len(w) > 2 and w not in STOPWORDS
-                }
+                item_words = extract_significant_words(item.title or "", min_length=2)
                 # Require meaningful overlap to avoid false positives from common words
                 # - Short titles (1-2 words): Discogs album must START with the library title
                 #   (e.g., "Wireless" matches "Wireless - Live At...", but "The Band" doesn't
@@ -466,14 +460,10 @@ async def search_compilations_for_track(
     # First, try a direct library keyword search
     keyword_matches = []
     try:
-        artist_words = (
-            re.sub(r"[^\w\s]", " ", parsed.artist.lower()).split() if parsed.artist else []
+        sig_artist = (
+            list(extract_significant_words(parsed.artist, min_length=3)) if parsed.artist else []
         )
-        song_words = re.sub(r"[^\w\s]", " ", parsed.song.lower()).split() if parsed.song else []
-
-        # Filter to significant words (using shared STOPWORDS constant)
-        sig_artist = [w for w in artist_words if len(w) > 3 and w not in STOPWORDS]
-        sig_song = [w for w in song_words if len(w) > 3 and w not in STOPWORDS]
+        sig_song = list(extract_significant_words(parsed.song, min_length=3)) if parsed.song else []
 
         # Include both artist words (max 2) and song words (max 2) to find the right album
         query_words = sig_artist[:2] + sig_song[:2]
@@ -485,14 +475,11 @@ async def search_compilations_for_track(
 
             if keyword_results:
                 # Filter by artist unless it's a compilation album
-                filtered_results = []
-                for item in keyword_results:
-                    item_artist = (item.artist or "").lower()
-                    if item_artist.startswith(parsed.artist.lower()):
-                        filtered_results.append(item)
-                    elif is_compilation_artist(item_artist):
-                        # Allow Various Artists/Soundtracks/Compilation albums
-                        filtered_results.append(item)
+                filtered_results = [
+                    item
+                    for item in keyword_results
+                    if matches_artist_or_compilation(item.artist or "", parsed.artist)
+                ]
 
                 if filtered_results:
                     logger.info(
@@ -609,9 +596,7 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
     results = await db.search(query=album_title, limit=MAX_SEARCH_RESULTS)
 
     if not results:
-        # Extract significant keywords (using shared STOPWORDS constant)
-        words = re.sub(r"[^\w\s]", " ", album_title.lower()).split()
-        significant_words = [w for w in words if len(w) > 3 and w not in STOPWORDS]
+        significant_words = list(extract_significant_words(album_title, min_length=3))
 
         if significant_words:
             fuzzy_query = " ".join(significant_words[:4])

@@ -65,6 +65,61 @@ COMPILATION_KEYWORDS = frozenset(
 """Keywords indicating a compilation/soundtrack album (case-insensitive substring match)."""
 
 
+def normalize_text(text: str) -> str:
+    """Remove punctuation, normalize whitespace, and lowercase.
+
+    Replaces all non-word, non-space characters with spaces, then collapses
+    multiple spaces into one. Uses ASCII mode so only Latin letters, digits,
+    and underscores are considered word characters (non-Latin scripts are
+    stripped, matching the original ``[^a-z0-9\\s]`` behavior).
+
+    Args:
+        text: Input text to normalize
+
+    Returns:
+        Lowercased text with punctuation removed and whitespace normalized
+    """
+    result = re.sub(r"[^\w\s]", " ", text.lower(), flags=re.ASCII)
+    return " ".join(result.split())
+
+
+def extract_significant_words(text: str, min_length: int = 3) -> set[str]:
+    """Extract significant words from text after normalization.
+
+    Applies the full pipeline: lowercase, remove punctuation, split into words,
+    filter by minimum length, and remove stopwords.
+
+    Args:
+        text: Input text to extract words from
+        min_length: Exclude words with length <= this value (e.g., min_length=3
+            excludes words of 3 or fewer characters)
+
+    Returns:
+        Set of significant lowercase words
+    """
+    normalized = normalize_text(text)
+    return {w for w in normalized.split() if len(w) > min_length and w not in STOPWORDS}
+
+
+def matches_artist_or_compilation(item_artist: str, target_artist: str) -> bool:
+    """Check if an item's artist matches the target via prefix, or is a compilation.
+
+    This combines the common pattern of checking whether a library item's artist
+    field starts with the searched artist name (prefix matching to avoid false
+    positives like "Toy" matching "Chew Toy") OR is a compilation/soundtrack.
+
+    Args:
+        item_artist: Artist name from a library item or search result
+        target_artist: Artist name being searched for
+
+    Returns:
+        True if item_artist starts with target_artist or is a compilation artist
+    """
+    item_lower = item_artist.lower()
+    target_lower = target_artist.lower()
+    return item_lower.startswith(target_lower) or is_compilation_artist(item_lower)
+
+
 def is_compilation_artist(artist: str) -> bool:
     """Check if an artist name indicates a compilation/soundtrack album.
 

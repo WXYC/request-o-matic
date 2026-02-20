@@ -1,11 +1,10 @@
 import logging
-import re
 from pathlib import Path
 
 import aiosqlite
 from rapidfuzz import fuzz
 
-from core.matching import STOPWORDS
+from core.matching import STOPWORDS, normalize_text
 from library.models import LibraryItem
 
 logger = logging.getLogger(__name__)
@@ -153,9 +152,7 @@ class LibraryDB:
         Splits query into words and searches for titles/artists containing all words.
         Handles cases where punctuation or articles like "The" cause FTS to fail.
         """
-        # Normalize: remove special chars, keep only alphanumeric and spaces
-        normalized = re.sub(r"[^a-z0-9\s]", " ", query.lower())
-        words = normalized.split()
+        words = normalize_text(query).split()
 
         # Remove stopwords that might cause mismatches
         significant_words = [w for w in words if w not in STOPWORDS and len(w) > 1]
@@ -202,9 +199,7 @@ class LibraryDB:
             limit: Max results to return
             threshold: Minimum fuzzy match score (0-100) to include results
         """
-        # Normalize query
-        normalized = re.sub(r"[^a-z0-9\s]", " ", query.lower())
-        words = normalized.split()
+        words = normalize_text(query).split()
 
         if not words:
             return []
