@@ -289,3 +289,43 @@ def sample_parsed_request():
         message_type=MessageType.REQUEST,
         raw_message="Play Bohemian Rhapsody by Queen",
     )
+
+
+def make_parsed_request(
+    artist: str | None = None,
+    song: str | None = None,
+    album: str | None = None,
+    raw_message: str = "test",
+    is_request: bool = True,
+):
+    """Factory for creating ParsedRequest with sensible defaults.
+
+    Reduces boilerplate by defaulting raw_message, is_request, and message_type.
+    """
+    from services.parser import MessageType, ParsedRequest
+
+    return ParsedRequest(
+        artist=artist,
+        song=song,
+        album=album,
+        raw_message=raw_message,
+        is_request=is_request,
+        message_type=MessageType.REQUEST if is_request else MessageType.OTHER,
+    )
+
+
+@pytest.fixture
+def mock_cache_service():
+    """Create a mock DiscogsCacheService for testing cache integration."""
+    from unittest.mock import MagicMock
+
+    from discogs.cache_service import DiscogsCacheService
+
+    cache = MagicMock(spec=DiscogsCacheService)
+    cache.search_releases_by_track = AsyncMock()
+    cache.search_releases = AsyncMock()
+    cache.get_release = AsyncMock()
+    cache.write_release = AsyncMock()
+    cache.validate_track_on_release = AsyncMock()
+    cache.is_available = AsyncMock(return_value=True)
+    return cache

@@ -1,7 +1,6 @@
 """Tests for DiscogsService."""
 
 import re
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -639,20 +638,6 @@ class TestTimedApiCall:
 class TestCacheIntegration:
     """Tests for PostgreSQL cache integration in DiscogsService."""
 
-    @pytest.fixture
-    def mock_cache_service(self):
-        """Create a mock cache service."""
-        from discogs.cache_service import DiscogsCacheService
-
-        cache = MagicMock(spec=DiscogsCacheService)
-        cache.search_releases_by_track = AsyncMock()
-        cache.search_releases = AsyncMock()
-        cache.get_release = AsyncMock()
-        cache.write_release = AsyncMock()
-        cache.validate_track_on_release = AsyncMock()
-        cache.is_available = AsyncMock(return_value=True)
-        return cache
-
     @pytest_asyncio.fixture
     async def service_with_cache(self, mock_cache_service):
         """Create a DiscogsService with cache service."""
@@ -989,20 +974,6 @@ class TestCacheIntegration:
 
 class TestSkipCacheBypassesPgCache:
     """Tests that the skip_cache ContextVar bypasses PG cache lookups."""
-
-    @pytest.fixture
-    def mock_cache_service(self):
-        """Create a mock cache service."""
-        from discogs.cache_service import DiscogsCacheService
-
-        cache = MagicMock(spec=DiscogsCacheService)
-        cache.search_releases_by_track = AsyncMock()
-        cache.search_releases = AsyncMock()
-        cache.get_release = AsyncMock()
-        cache.write_release = AsyncMock()
-        cache.validate_track_on_release = AsyncMock()
-        cache.is_available = AsyncMock(return_value=True)
-        return cache
 
     @pytest_asyncio.fixture
     async def service_with_cache(self, mock_cache_service):
