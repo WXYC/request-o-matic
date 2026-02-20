@@ -11,6 +11,7 @@ The cache uses PostgreSQL's pg_trgm extension for fuzzy text matching.
 
 import logging
 
+from core.matching import validate_track_on_tracklist
 from discogs.models import ReleaseInfo, ReleaseMetadataResponse, TrackItem
 
 logger = logging.getLogger(__name__)
@@ -433,27 +434,4 @@ class DiscogsCacheService:
         if release is None:
             return None  # Cache miss - caller should try API
 
-        track_lower = track.lower()
-        artist_lower = artist.lower()
-
-        for item in release.tracklist:
-            item_title = item.title.lower()
-
-            # Check if track title matches
-            if track_lower not in item_title and item_title not in track_lower:
-                continue
-
-            # Check per-track artists first (for compilations)
-            if item.artists:
-                for track_artist in item.artists:
-                    track_artist_lower = track_artist.lower().split("(")[0].strip()
-                    if artist_lower in track_artist_lower or track_artist_lower in artist_lower:
-                        return True
-            else:
-                # For single-artist releases, check release artist
-                release_artist = release.artist.lower()
-                release_artist = release_artist.split("(")[0].strip()
-                if artist_lower in release_artist or release_artist in artist_lower:
-                    return True
-
-        return False
+        return validate_track_on_tracklist(release.tracklist, release.artist, track, artist)

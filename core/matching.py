@@ -4,7 +4,13 @@ This module centralizes the matching rules used throughout the search flow.
 Constants were consolidated from multiple locations to ensure consistency.
 """
 
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from discogs.models import TrackItem
 
 # =============================================================================
 # Search Result Limiting
@@ -176,3 +182,56 @@ def detect_ambiguous_format(raw_message: str) -> tuple[str, str] | None:
             return (parts[0].strip(), parts[1].strip())
 
     return None
+
+
+# =============================================================================
+# Track Validation
+# =============================================================================
+
+
+def validate_track_on_tracklist(
+    tracklist: list[TrackItem],
+    release_artist: str,
+    track: str,
+    artist: str,
+) -> bool:
+    """Check whether a track by an artist appears on a tracklist.
+
+    Handles both single-artist releases (checks release_artist) and
+    compilations (checks per-track artists). Strips Discogs numbering
+    like ``(2)`` from artist names before comparing.
+
+    Args:
+        tracklist: List of TrackItem objects from a release
+        release_artist: Primary artist on the release
+        track: Track title to find
+        artist: Artist name to match
+
+    Returns:
+        True if the track by the artist is found on the tracklist
+    """
+    track_lower = track.lower()
+    artist_lower = artist.lower()
+
+    for item in tracklist:
+        item_title = item.title.lower()
+        # Check if track title matches (substring in either direction)
+        if track_lower not in item_title and item_title not in track_lower:
+            continue
+
+        # Check per-track artists first (for compilations)
+        if item.artists:
+            for track_artist in item.artists:
+                track_artist_lower = track_artist.lower().split("(")[0].strip()
+                if artist_lower in track_artist_lower or track_artist_lower in artist_lower:
+                    return True
+        else:
+            # For single-artist releases, check release artist
+            rel_artist = release_artist.lower()
+            # Remove Discogs numbering like "(2)"
+            rel_artist = rel_artist.split("(")[0].strip()
+
+            if artist_lower in rel_artist or rel_artist in artist_lower:
+                return True
+
+    return False
