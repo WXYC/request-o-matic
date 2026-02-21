@@ -19,7 +19,7 @@ from discogs.models import DiscogsSearchResult
 from library.models import LibraryItem
 from routers.request import router
 from services.lookup_client import LookupResponse, LookupResultItem, LookupServiceClient
-from services.parser import MessageType, ParsedRequest
+from tests.conftest import make_parsed_request
 
 # -- Fixtures -----------------------------------------------------------------
 
@@ -106,12 +106,9 @@ def inline_app():
     return app
 
 
-SAMPLE_PARSED = ParsedRequest(
+SAMPLE_PARSED = make_parsed_request(
     song="Crazy Little Thing Called Love",
-    album=None,
     artist="Queen",
-    is_request=True,
-    message_type=MessageType.REQUEST,
     raw_message="play crazy little thing called love by queen",
 )
 
@@ -206,14 +203,7 @@ class TestDelegationBranch:
         """corrected_artist from lookup replaces parsed.artist in response."""
         sample_lookup_response.corrected_artist = "Living Colour"
 
-        parsed = ParsedRequest(
-            song=None,
-            album=None,
-            artist="Living Color",
-            is_request=True,
-            message_type=MessageType.REQUEST,
-            raw_message="play living color",
-        )
+        parsed = make_parsed_request(artist="Living Color", raw_message="play living color")
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
         with patch("routers.request.parse_request", return_value=parsed):
@@ -396,12 +386,10 @@ class TestDelegationBranch:
         """LookupRequest is built from parsed fields and raw message."""
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        parsed = ParsedRequest(
+        parsed = make_parsed_request(
             song="Bohemian Rhapsody",
             album="A Night at the Opera",
             artist="Queen",
-            is_request=True,
-            message_type=MessageType.REQUEST,
             raw_message="play bohemian rhapsody by queen",
         )
 
