@@ -109,7 +109,6 @@ class DiscogsCacheService:
                         album=album,
                         artist=row["artist_name"],
                         release_id=row["release_id"],
-                        release_url=f"https://www.discogs.com/release/{row['release_id']}",
                         is_compilation=row["is_compilation"],
                     )
                 )
@@ -208,7 +207,6 @@ class DiscogsCacheService:
                 year=release_row["release_year"],
                 artwork_url=release_row["artwork_url"],
                 tracklist=tracklist,
-                release_url=f"https://www.discogs.com/release/{release_id}",
                 cached=True,
             )
 

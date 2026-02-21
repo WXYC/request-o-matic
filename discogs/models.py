@@ -1,6 +1,8 @@
 """Pydantic models for Discogs API responses."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
+
+DISCOGS_RELEASE_URL_BASE = "https://www.discogs.com/release"
 
 
 class TrackItem(BaseModel):
@@ -18,8 +20,12 @@ class ReleaseInfo(BaseModel):
     album: str
     artist: str
     release_id: int
-    release_url: str
     is_compilation: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def release_url(self) -> str:
+        return f"{DISCOGS_RELEASE_URL_BASE}/{self.release_id}"
 
 
 class TrackReleasesResponse(BaseModel):
@@ -46,8 +52,12 @@ class ReleaseMetadataResponse(BaseModel):
     styles: list[str] = []
     tracklist: list[TrackItem] = []
     artwork_url: str | None = None
-    release_url: str
     cached: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def release_url(self) -> str:
+        return f"{DISCOGS_RELEASE_URL_BASE}/{self.release_id}"
 
 
 class DiscogsSearchRequest(BaseModel):
@@ -64,9 +74,13 @@ class DiscogsSearchResult(BaseModel):
     album: str | None = None
     artist: str | None = None
     release_id: int
-    release_url: str
     artwork_url: str | None = None
     confidence: float = 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def release_url(self) -> str:
+        return f"{DISCOGS_RELEASE_URL_BASE}/{self.release_id}"
 
 
 class DiscogsSearchResponse(BaseModel):

@@ -80,13 +80,11 @@ class TestLookupReleasesByTrack:
                     artist="Artist Name",
                     album="Album One",
                     release_id=12345,
-                    release_url="https://discogs.com/release/12345",
                 ),
                 ReleaseInfo(
                     artist="Artist Name",
                     album="Album Two",
                     release_id=67890,
-                    release_url="https://discogs.com/release/67890",
                 ),
             ],
         )
@@ -112,13 +110,11 @@ class TestLookupReleasesByTrack:
                     artist="Artist Name",
                     album="Valid Album",
                     release_id=12345,
-                    release_url="https://discogs.com/release/12345",
                 ),
                 ReleaseInfo(
                     artist="Artist Name",
                     album="Invalid Album",
                     release_id=67890,
-                    release_url="https://discogs.com/release/67890",
                 ),
             ],
         )
@@ -145,7 +141,6 @@ class TestLookupReleasesByTrack:
                     artist="Unknown Artist",
                     album="Album One",
                     release_id=12345,
-                    release_url="https://discogs.com/release/12345",
                 ),
             ],
         )
@@ -169,7 +164,6 @@ class TestLookupReleasesByTrack:
                     artist="Artist Name",
                     album="Album One",
                     release_id=0,  # Falsy release ID
-                    release_url="https://discogs.com/release/0",
                 ),
             ],
         )
@@ -217,13 +211,11 @@ class TestLookupReleasesByArtist:
                     artist="Artist Name",
                     album="Album One",
                     release_id=12345,
-                    release_url="https://discogs.com/release/12345",
                 ),
                 DiscogsSearchResult(
                     artist="Artist Name",
                     album="Album Two",
                     release_id=67890,
-                    release_url="https://discogs.com/release/67890",
                 ),
             ]
         )
@@ -246,7 +238,6 @@ class TestLookupReleasesByArtist:
                     artist=None,
                     album=None,
                     release_id=12345,
-                    release_url="https://discogs.com/release/12345",
                 ),
             ]
         )

@@ -165,7 +165,6 @@ class TestWriteRelease:
                 TrackItem(position="1", title="VI Scose Poise", duration="5:25"),
                 TrackItem(position="2", title="Cfern", duration="6:02"),
             ],
-            release_url="https://www.discogs.com/release/28138",
         )
 
         await cache.write_release(release_data)
@@ -202,7 +201,6 @@ class TestWriteRelease:
             title="Confield (Updated)",
             artist="Autechre",
             year=2001,
-            release_url="https://www.discogs.com/release/28138",
         )
 
         await cache.write_release(release_data)

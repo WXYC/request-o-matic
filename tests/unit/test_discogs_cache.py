@@ -334,3 +334,71 @@ class TestSkipCache:
         await my_func(TEST_TRACK)
 
         assert call_count == 1  # Function called only once (second was cache hit)
+
+
+class TestCacheRegistry:
+    """Tests for the CacheRegistry singleton."""
+
+    @pytest.fixture(autouse=True)
+    def fresh_caches(self):
+        """Clear caches before and after each test."""
+        clear_all_caches()
+        yield
+        clear_all_caches()
+
+    def test_registry_has_track_property(self):
+        """Test CacheRegistry exposes track cache as a property."""
+        from discogs.memory_cache import caches
+
+        cache = caches.track
+        assert cache is not None
+        assert hasattr(cache, "maxsize")
+
+    def test_registry_has_release_property(self):
+        """Test CacheRegistry exposes release cache as a property."""
+        from discogs.memory_cache import caches
+
+        cache = caches.release
+        assert cache is not None
+
+    def test_registry_has_search_property(self):
+        """Test CacheRegistry exposes search cache as a property."""
+        from discogs.memory_cache import caches
+
+        cache = caches.search
+        assert cache is not None
+
+    def test_registry_has_artist_property(self):
+        """Test CacheRegistry exposes artist cache as a property."""
+        from discogs.memory_cache import caches
+
+        cache = caches.artist
+        assert cache is not None
+
+    def test_registry_has_label_property(self):
+        """Test CacheRegistry exposes label cache as a property."""
+        from discogs.memory_cache import caches
+
+        cache = caches.label
+        assert cache is not None
+
+    def test_registry_returns_same_instance(self):
+        """Test CacheRegistry returns the same cache instance on repeated access."""
+        from discogs.memory_cache import caches
+
+        cache1 = caches.track
+        cache2 = caches.track
+        assert cache1 is cache2
+
+    def test_clear_all_resets_caches(self):
+        """Test clear_all resets lazy cache instances."""
+        from discogs.memory_cache import caches
+
+        cache_before = caches.track
+        cache_before["test_key"] = "test_value"
+        assert "test_key" in cache_before
+
+        caches.clear_all()
+
+        cache_after = caches.track
+        assert "test_key" not in cache_after

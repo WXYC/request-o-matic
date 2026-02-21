@@ -35,7 +35,6 @@ def make_search_result(
         album=album,
         artist=artist,
         release_id=release_id,
-        release_url=f"https://www.discogs.com/release/{release_id}",
         artwork_url=artwork_url,
         confidence=confidence,
     )
@@ -65,7 +64,6 @@ class TestFetchArtworkFallback:
             title="Confield",
             artist="Autechre",
             artist_id=77,
-            release_url="https://www.discogs.com/release/28138",
         )
         # Artist image found
         mock_discogs_service.get_artist_image.return_value = (
@@ -95,7 +93,6 @@ class TestFetchArtworkFallback:
             artist="Autechre",
             artist_id=77,
             label_id=233,
-            release_url="https://www.discogs.com/release/28138",
         )
         # Artist image not found
         mock_discogs_service.get_artist_image.return_value = None
@@ -146,7 +143,6 @@ class TestFetchArtworkFallback:
             release_id=28138,
             title="Confield",
             artist="Autechre",
-            release_url="https://www.discogs.com/release/28138",
         )
 
         results = await fetch_artwork_for_items(items, mock_discogs_service)
