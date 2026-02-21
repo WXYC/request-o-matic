@@ -3,14 +3,18 @@
 import pytest
 
 from core.matching import detect_ambiguous_format
-from library.models import LibraryItem
-from routers.request import (
+from core.orchestration import (
     build_context_message,
     filter_results_by_artist,
     search_library_with_fallback,
     search_with_alternative_interpretation,
 )
+<<<<<<< HEAD
 from tests.conftest import make_parsed_request
+=======
+from library.models import LibraryItem
+from services.parser import MessageType, ParsedRequest
+>>>>>>> d852123 (refactor: extract orchestration module from routers/request.py)
 
 
 @pytest.fixture

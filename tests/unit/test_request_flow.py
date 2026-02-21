@@ -4,13 +4,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from discogs.models import DiscogsSearchResponse, DiscogsSearchResult
-from library.models import LibraryItem
-from routers.request import (
+from core.orchestration import (
     build_context_message,
     filter_results_by_track_validation,
     search_compilations_for_track,
 )
+from library.models import LibraryItem
 from tests.conftest import make_parsed_request
 
 
@@ -48,7 +47,9 @@ async def test_compilation_search_deduplication(mock_library_db):
         raw_message="Abele dance (85 remix) by Manu Dibango",
     )
 
-    with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
+    with patch(
+        "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
+    ) as mock_lookup:
         # Simulate Discogs returning 4 releases that all map to the same album
         mock_lookup.return_value = [
             ("Various", "Change The Beat Vol 1"),
@@ -127,7 +128,7 @@ async def test_song_on_multiple_albums_returns_all():
     both should be in the results (this is different from the Manu Dibango
     case where the song is ONLY on a Various Artists compilation).
     """
-    from routers.request import search_compilations_for_track
+    from core.orchestration import search_compilations_for_track
 
     mock_db = AsyncMock()
 
@@ -158,7 +159,9 @@ async def test_song_on_multiple_albums_returns_all():
     )
 
     # Simulate Discogs returning both releases, and library having both
-    with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
+    with patch(
+        "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
+    ) as mock_lookup:
         mock_lookup.return_value = [
             ("Aphex Twin", "Richard D. James Album"),
             ("Various", "Morvern Callar (Original Motion Picture Soundtrack)"),
@@ -204,7 +207,7 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
 
     This test ensures both paths work correctly before refactoring.
     """
-    from routers.request import search_compilations_for_track
+    from core.orchestration import search_compilations_for_track
 
     mock_db = AsyncMock()
 
@@ -248,7 +251,9 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
         song="Goon Gumpas", artist="Aphex Twin", raw_message="Goon Gumpas by Aphex Twin"
     )
 
-    with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
+    with patch(
+        "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
+    ) as mock_lookup:
         # Discogs returns: one by artist, one by "Various" (soundtrack)
         mock_lookup.return_value = [
             ("Aphex Twin", "Richard D. James Album"),
@@ -301,7 +306,7 @@ async def test_compilation_filtering_rejects_wrong_artist_albums():
     - Library search returns "Love is Gone Mad" by "Big Eyes" (keyword match)
     - Filter should reject Big Eyes album (wrong artist)
     """
-    from routers.request import search_compilations_for_track
+    from core.orchestration import search_compilations_for_track
 
     mock_db = AsyncMock()
 
@@ -331,7 +336,9 @@ async def test_compilation_filtering_rejects_wrong_artist_albums():
 
     parsed = make_parsed_request(song="Hypocrite", artist="Lush", raw_message="Hypocrite by Lush")
 
-    with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
+    with patch(
+        "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
+    ) as mock_lookup:
         mock_lookup.return_value = [
             ("Lush", "Mad Love"),
         ]
