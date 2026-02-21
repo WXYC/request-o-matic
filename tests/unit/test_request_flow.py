@@ -11,7 +11,7 @@ from routers.request import (
     filter_results_by_track_validation,
     search_compilations_for_track,
 )
-from services.parser import MessageType, ParsedRequest
+from tests.conftest import make_parsed_request
 
 
 @pytest.mark.asyncio
@@ -42,12 +42,9 @@ async def test_compilation_search_deduplication(mock_library_db):
 
     mock_library_db.search = mock_search
 
-    parsed = ParsedRequest(
+    parsed = make_parsed_request(
         song="Abele Dance",
         artist="Manu Dibango",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="Abele dance (85 remix) by Manu Dibango",
     )
 
@@ -74,12 +71,9 @@ async def test_compilation_search_deduplication(mock_library_db):
 @pytest.mark.asyncio
 async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
     """Test that compilation search requires both song and artist."""
-    parsed_no_song = ParsedRequest(
-        song=None,
+    parsed_no_song = make_parsed_request(
         artist="Manu Dibango",
         album="Soul Makossa",
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="Soul Makossa by Manu Dibango",
     )
 
@@ -87,14 +81,7 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
     assert results == []
     assert discogs_titles == {}
 
-    parsed_no_artist = ParsedRequest(
-        song="Abele Dance",
-        artist=None,
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Abele Dance",
-    )
+    parsed_no_artist = make_parsed_request(song="Abele Dance", raw_message="Abele Dance")
 
     results, discogs_titles = await search_compilations_for_track(mock_library_db, parsed_no_artist)
     assert results == []
@@ -103,12 +90,9 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
 
 def test_build_context_message_for_found_compilation():
     """Test context message when song is found on compilation."""
-    parsed = ParsedRequest(
+    parsed = make_parsed_request(
         song="Abele Dance",
         artist="Manu Dibango",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="Abele dance (85 remix) by Manu Dibango",
     )
 
@@ -119,13 +103,8 @@ def test_build_context_message_for_found_compilation():
 
 def test_build_context_message_for_artist_fallback():
     """Test context message when showing artist albums as fallback."""
-    parsed = ParsedRequest(
-        song="Unknown Song",
-        artist="Queen",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Unknown Song by Queen",
+    parsed = make_parsed_request(
+        song="Unknown Song", artist="Queen", raw_message="Unknown Song by Queen"
     )
 
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
@@ -174,13 +153,8 @@ async def test_song_on_multiple_albums_returns_all():
         format="cd",
     )
 
-    parsed = ParsedRequest(
-        song="Goon Gumpas",
-        artist="Aphex Twin",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Goon Gumpas by Aphex Twin",
+    parsed = make_parsed_request(
+        song="Goon Gumpas", artist="Aphex Twin", raw_message="Goon Gumpas by Aphex Twin"
     )
 
     # Simulate Discogs returning both releases, and library having both
@@ -270,13 +244,8 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
         format="cd",
     )
 
-    parsed = ParsedRequest(
-        song="Goon Gumpas",
-        artist="Aphex Twin",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Goon Gumpas by Aphex Twin",
+    parsed = make_parsed_request(
+        song="Goon Gumpas", artist="Aphex Twin", raw_message="Goon Gumpas by Aphex Twin"
     )
 
     with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
@@ -360,14 +329,7 @@ async def test_compilation_filtering_rejects_wrong_artist_albums():
         format="cd",
     )
 
-    parsed = ParsedRequest(
-        song="Hypocrite",
-        artist="Lush",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Hypocrite by Lush",
-    )
+    parsed = make_parsed_request(song="Hypocrite", artist="Lush", raw_message="Hypocrite by Lush")
 
     with patch("routers.request.lookup_releases_by_track", new_callable=AsyncMock) as mock_lookup:
         mock_lookup.return_value = [
