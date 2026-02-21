@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from routers.parse import router
-from services.parser import MessageType, ParsedRequest
+from services.parser import MessageType
+from tests.conftest import make_parsed_request
 
 
 @pytest.fixture
@@ -33,12 +34,10 @@ def app(mock_groq_client):
 @pytest.fixture
 def sample_parsed_request():
     """Create a sample parsed request."""
-    return ParsedRequest(
+    return make_parsed_request(
         song="Bohemian Rhapsody",
         album="A Night at the Opera",
         artist="Queen",
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="Play Bohemian Rhapsody by Queen",
     )
 
@@ -119,10 +118,7 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_non_request_message(self, app, mock_groq_client):
         """Test parsing a non-request message (like DJ message)."""
-        non_request = ParsedRequest(
-            song=None,
-            album=None,
-            artist=None,
+        non_request = make_parsed_request(
             is_request=False,
             message_type=MessageType.DJ_MESSAGE,
             raw_message="Thanks for listening!",
@@ -149,10 +145,7 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_feedback_message(self, app, mock_groq_client):
         """Test parsing a feedback message."""
-        feedback = ParsedRequest(
-            song=None,
-            album=None,
-            artist=None,
+        feedback = make_parsed_request(
             is_request=False,
             message_type=MessageType.FEEDBACK,
             raw_message="Love the show!",
@@ -194,12 +187,9 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_song_with_artist(self, app, mock_groq_client):
         """Test parsing a song request with artist."""
-        request = ParsedRequest(
+        request = make_parsed_request(
             song="Stairway to Heaven",
-            album=None,
             artist="Led Zeppelin",
-            is_request=True,
-            message_type=MessageType.REQUEST,
             raw_message="Play Stairway to Heaven by Led Zeppelin",
         )
 
@@ -224,12 +214,8 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_artist_only(self, app, mock_groq_client):
         """Test parsing a request with only artist."""
-        request = ParsedRequest(
-            song=None,
-            album=None,
+        request = make_parsed_request(
             artist="The Beatles",
-            is_request=True,
-            message_type=MessageType.REQUEST,
             raw_message="Play something by The Beatles",
         )
 

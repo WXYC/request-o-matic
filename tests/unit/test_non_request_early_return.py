@@ -14,7 +14,8 @@ from core.dependencies import (
     get_slack_service,
 )
 from routers.request import router
-from services.parser import MessageType, ParsedRequest
+from services.parser import MessageType
+from tests.conftest import make_parsed_request
 
 
 @pytest.fixture
@@ -55,10 +56,7 @@ class TestNonRequestEarlyReturn:
     @pytest.mark.asyncio
     async def test_feedback_message_returns_no_library_results(self, app, mock_library_db):
         """A feedback message like 'love the show!' should not trigger library search."""
-        parsed = ParsedRequest(
-            song=None,
-            artist=None,
-            album=None,
+        parsed = make_parsed_request(
             is_request=False,
             message_type=MessageType.FEEDBACK,
             raw_message="love the show!",
@@ -87,10 +85,8 @@ class TestNonRequestEarlyReturn:
         This is the 'I love acid, luke vibert' case: parser says feedback
         and extracts artist=Luke Vibert, but we should not search the library.
         """
-        parsed = ParsedRequest(
-            song=None,
+        parsed = make_parsed_request(
             artist="Luke Vibert",
-            album=None,
             is_request=False,
             message_type=MessageType.FEEDBACK,
             raw_message="I love acid, luke vibert",
@@ -115,10 +111,7 @@ class TestNonRequestEarlyReturn:
     @pytest.mark.asyncio
     async def test_dj_message_without_request_does_not_search(self, app, mock_library_db):
         """A DJ message that isn't a request should not trigger search."""
-        parsed = ParsedRequest(
-            song=None,
-            artist=None,
-            album=None,
+        parsed = make_parsed_request(
             is_request=False,
             message_type=MessageType.DJ_MESSAGE,
             raw_message="you guys are great, keep it up",
@@ -142,12 +135,9 @@ class TestNonRequestEarlyReturn:
     @pytest.mark.asyncio
     async def test_actual_request_still_searches(self, app, mock_library_db):
         """Sanity check: an actual request should still go through the pipeline."""
-        parsed = ParsedRequest(
+        parsed = make_parsed_request(
             song="Bohemian Rhapsody",
             artist="Queen",
-            album=None,
-            is_request=True,
-            message_type=MessageType.REQUEST,
             raw_message="play bohemian rhapsody by queen",
         )
 

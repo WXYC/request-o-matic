@@ -10,32 +10,22 @@ from routers.request import (
     search_library_with_fallback,
     search_with_alternative_interpretation,
 )
-from services.parser import MessageType, ParsedRequest
+from tests.conftest import make_parsed_request
 
 
 @pytest.fixture
 def sample_request():
     """Create a sample parsed request."""
-    return ParsedRequest(
+    return make_parsed_request(
         song="Bohemian Rhapsody",
-        album=None,
         artist="Queen",
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="Play Bohemian Rhapsody by Queen",
     )
 
 
 def test_build_context_message_compilation():
     """Test context message for compilation match."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
-    )
+    parsed = make_parsed_request(song="Test Song", artist="Test Artist", raw_message="Test")
 
     context = build_context_message(parsed, found_on_compilation=True, song_not_found=False)
     assert context == 'Found "Test Song" by Test Artist on:'
@@ -43,13 +33,8 @@ def test_build_context_message_compilation():
 
 def test_build_context_message_album_not_found():
     """Test context message when album not found."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album="Test Album",
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
+    parsed = make_parsed_request(
+        song="Test Song", artist="Test Artist", album="Test Album", raw_message="Test"
     )
 
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
@@ -60,14 +45,7 @@ def test_build_context_message_album_not_found():
 
 def test_build_context_message_song_not_found():
     """Test context message when song not found."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
-    )
+    parsed = make_parsed_request(song="Test Song", artist="Test Artist", raw_message="Test")
 
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=True)
     assert context is not None
@@ -77,13 +55,8 @@ def test_build_context_message_song_not_found():
 
 def test_build_context_message_none():
     """Test that context is None when nothing special to report."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album="Test Album",
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
+    parsed = make_parsed_request(
+        song="Test Song", artist="Test Artist", album="Test Album", raw_message="Test"
     )
 
     context = build_context_message(parsed, found_on_compilation=False, song_not_found=False)
@@ -92,14 +65,7 @@ def test_build_context_message_none():
 
 def test_build_context_message_no_results():
     """Test context message when song not found AND no results to show."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
-    )
+    parsed = make_parsed_request(song="Test Song", artist="Test Artist", raw_message="Test")
 
     context = build_context_message(
         parsed, found_on_compilation=False, song_not_found=True, has_results=False
@@ -112,14 +78,7 @@ def test_build_context_message_no_results():
 
 def test_build_context_message_song_not_found_with_results():
     """Test context message when song not found but we have other albums to show."""
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Test Artist",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
-    )
+    parsed = make_parsed_request(song="Test Song", artist="Test Artist", raw_message="Test")
 
     context = build_context_message(
         parsed, found_on_compilation=False, song_not_found=True, has_results=True
@@ -148,13 +107,8 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
     ]
     mock_library_db.search.return_value = mock_results
 
-    parsed = ParsedRequest(
-        song="Bohemian Rhapsody",
-        artist="Queen",
-        album="A Night at the Opera",
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
+    parsed = make_parsed_request(
+        song="Bohemian Rhapsody", artist="Queen", album="A Night at the Opera", raw_message="Test"
     )
 
     results, fallback_used = await search_library_with_fallback(
@@ -187,13 +141,8 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
         ],  # Third search with artist only
     ]
 
-    parsed = ParsedRequest(
-        song="Test Song",
-        artist="Queen",
-        album="Unknown Album",
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
+    parsed = make_parsed_request(
+        song="Test Song", artist="Queen", album="Unknown Album", raw_message="Test"
     )
 
     results, fallback_used = await search_library_with_fallback(
@@ -237,12 +186,9 @@ async def test_search_library_with_fallback_filters_by_album_title(mock_library_
         ),
     ]
 
-    parsed = ParsedRequest(
+    parsed = make_parsed_request(
         song="The Things I Tell You",
         artist="Biosphere",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
         raw_message="The Things I Tell You by Biosphere",
     )
 
@@ -290,13 +236,8 @@ async def test_search_library_album_filter_excludes_single_common_word_matches(m
         ),
     ]
 
-    parsed = ParsedRequest(
-        song="Chest Fever",
-        artist="The Band",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Chest Fever The Band",
+    parsed = make_parsed_request(
+        song="Chest Fever", artist="The Band", raw_message="Chest Fever The Band"
     )
 
     # Albums from Discogs track lookup - "Live Band # One" shares only "band" with "The Band"
@@ -466,14 +407,7 @@ async def test_search_library_filters_non_matching_artists(mock_library_db):
         LibraryItem(id=2, artist="Biz Markie", title="Young Girl Bluez"),
     ]
 
-    parsed = ParsedRequest(
-        song="Some Song",
-        artist="Young Gov",
-        album=None,
-        is_request=True,
-        message_type=MessageType.REQUEST,
-        raw_message="Test",
-    )
+    parsed = make_parsed_request(song="Some Song", artist="Young Gov", raw_message="Test")
 
     results, fallback_used = await search_library_with_fallback(mock_library_db, parsed, [])
 
