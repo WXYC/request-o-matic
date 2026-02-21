@@ -17,6 +17,8 @@ from typing import Any, cast
 
 import httpx
 
+from scripts._common import LOCAL_URL, PROD_URL, set_up_logging
+
 # History file location
 HISTORY_FILE = Path.home() / ".request_repl_history"
 
@@ -41,22 +43,6 @@ def configure_readline() -> None:
 
 
 logger = logging.getLogger(__name__)
-
-PROD_URL = "https://request-o-matic-production.up.railway.app/api/v1"
-LOCAL_URL = "http://localhost:8000/api/v1"
-
-
-def set_up_logging(verbose: bool) -> None:
-    """Configure logging based on verbosity level."""
-    level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler()],
-    )
-    if not verbose:
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def print_result(data: dict) -> None:
@@ -150,7 +136,7 @@ def save_history() -> None:
 
 async def repl(base_url: str, verbose: bool) -> None:
     """Run the interactive REPL."""
-    set_up_logging(verbose)
+    set_up_logging(verbose, default_level=logging.WARNING)
     configure_readline()
     load_history()
 
