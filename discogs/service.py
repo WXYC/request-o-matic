@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -21,12 +21,8 @@ from core.telemetry import (
     record_pg_time,
 )
 from discogs.memory_cache import (
-    ARTIST_CACHE,
-    LABEL_CACHE,
-    RELEASE_CACHE,
-    SEARCH_CACHE,
-    TRACK_CACHE,
     async_cached,
+    caches,
     should_skip_cache,
 )
 from discogs.models import (
@@ -54,11 +50,8 @@ except ImportError:
         pass  # No-op if Sentry not available
 
 
-T = TypeVar("T")
-
-
 @dataclass
-class CacheResult:
+class CacheResult[T]:
     """Result from a cache lookup attempt.
 
     Attributes:
@@ -67,7 +60,7 @@ class CacheResult:
     """
 
     hit: bool
-    value: Any = None
+    value: T | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -259,7 +252,7 @@ class DiscogsService:
         response.raise_for_status()
         return response.json()  # type: ignore[no-any-return]
 
-    @async_cached(TRACK_CACHE)
+    @async_cached(caches.track)
     async def search_releases_by_track(
         self, track: str, artist: str | None = None, limit: int = 20
     ) -> TrackReleasesResponse:
@@ -385,11 +378,10 @@ class DiscogsService:
             album=album,
             artist=result_artist,
             release_id=release_id,
-            release_url=f"https://www.discogs.com/release/{release_id}",
             is_compilation=is_compilation,
         )
 
-    @async_cached(RELEASE_CACHE)
+    @async_cached(caches.release)
     async def get_release(self, release_id: int) -> ReleaseMetadataResponse | None:
         """Get full release metadata by ID.
 
@@ -411,7 +403,7 @@ class DiscogsService:
         )
         if cache_result.hit:
             logger.info(f"Cache hit: release {release_id}")
-            return cache_result.value  # type: ignore[no-any-return]
+            return cache_result.value
 
         # Fall back to Discogs API
         try:
@@ -457,7 +449,6 @@ class DiscogsService:
                 styles=data.get("styles", []),
                 tracklist=tracklist,
                 artwork_url=artwork_url,
-                release_url=f"https://www.discogs.com/release/{release_id}",
                 cached=False,
             )
 
@@ -498,7 +489,7 @@ class DiscogsService:
             logger.warning(f"Failed to fetch {entity_type} image for {entity_id}: {e}")
             return None
 
-    @async_cached(ARTIST_CACHE)
+    @async_cached(caches.artist)
     async def get_artist_image(self, artist_id: int) -> str | None:
         """Fetch primary image for a Discogs artist.
 
@@ -510,7 +501,7 @@ class DiscogsService:
         """
         return await self._get_entity_image("artist", artist_id)
 
-    @async_cached(LABEL_CACHE)
+    @async_cached(caches.label)
     async def get_label_image(self, label_id: int) -> str | None:
         """Fetch primary image for a Discogs label.
 
@@ -522,7 +513,7 @@ class DiscogsService:
         """
         return await self._get_entity_image("label", label_id)
 
-    @async_cached(SEARCH_CACHE)
+    @async_cached(caches.search)
     async def search(self, request: DiscogsSearchRequest, limit: int = 5) -> DiscogsSearchResponse:
         """General release search for artwork discovery.
 
@@ -563,7 +554,6 @@ class DiscogsService:
                         album=row["title"],
                         artist=row["artist_name"],
                         release_id=row["release_id"],
-                        release_url=f"https://www.discogs.com/release/{row['release_id']}",
                         artwork_url=row.get("artwork_url"),
                         confidence=confidence,
                     )
@@ -612,14 +602,12 @@ class DiscogsService:
                 )
 
                 release_id = item.get("id")
-                release_url = f"https://www.discogs.com/release/{release_id}"
 
                 results.append(
                     DiscogsSearchResult(
                         album=album,
                         artist=result_artist,
                         release_id=release_id,
-                        release_url=release_url,
                         artwork_url=cover_url,
                         confidence=confidence,
                     )
@@ -692,7 +680,7 @@ class DiscogsService:
                 f"Cache {'validated' if cache_result.value else 'rejected'}: "
                 f"'{track}' by '{artist}' on release {release_id}"
             )
-            return cache_result.value  # type: ignore[no-any-return]
+            return cache_result.value  # type: ignore[return-value]
 
         # Fall back to API via get_release
         release = await self.get_release(release_id)

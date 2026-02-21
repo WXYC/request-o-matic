@@ -38,7 +38,6 @@ def sample_discogs_result():
         artist="Queen",
         album="A Night at the Opera",
         artwork_url="https://example.com/artwork.jpg",
-        release_url="https://www.discogs.com/release/12345",
         release_id=12345,
     )
 

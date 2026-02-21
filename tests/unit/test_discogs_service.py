@@ -671,7 +671,6 @@ class TestCacheIntegration:
                 album=TEST_ALBUM,
                 artist=TEST_ARTIST,
                 release_id=TEST_RELEASE_ID,
-                release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
                 is_compilation=False,
             )
         ]
@@ -724,7 +723,6 @@ class TestCacheIntegration:
             artist=TEST_ARTIST,
             year=2001,
             tracklist=[TrackItem(position="1", title=TEST_TRACK)],
-            release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
             cached=True,
         )
 

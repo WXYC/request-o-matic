@@ -187,43 +187,42 @@ def _get_cache(name: str) -> TTLCache:
     return _caches[name]
 
 
-def get_track_cache() -> TTLCache:
-    """Get or create the track search cache using settings."""
-    return _get_cache("track")
+class CacheRegistry:
+    """Provides lazy, IDE-friendly access to named TTL caches.
+
+    Each property returns the corresponding cache, creating it on first access.
+    Replaces the previous module-level ``__getattr__`` approach which lacked
+    IDE auto-completion and was hard to discover.
+    """
+
+    @property
+    def track(self) -> TTLCache:
+        """Get or create the track search cache."""
+        return _get_cache("track")
+
+    @property
+    def release(self) -> TTLCache:
+        """Get or create the release metadata cache."""
+        return _get_cache("release")
+
+    @property
+    def search(self) -> TTLCache:
+        """Get or create the general search cache."""
+        return _get_cache("search")
+
+    @property
+    def artist(self) -> TTLCache:
+        """Get or create the artist image cache."""
+        return _get_cache("artist")
+
+    @property
+    def label(self) -> TTLCache:
+        """Get or create the label image cache."""
+        return _get_cache("label")
+
+    def clear_all(self) -> None:
+        """Clear all registered caches and reset lazy instances."""
+        clear_all_caches()
 
 
-def get_release_cache() -> TTLCache:
-    """Get or create the release metadata cache using settings."""
-    return _get_cache("release")
-
-
-def get_search_cache() -> TTLCache:
-    """Get or create the general search cache using settings."""
-    return _get_cache("search")
-
-
-def get_artist_cache() -> TTLCache:
-    """Get or create the artist image cache using settings."""
-    return _get_cache("artist")
-
-
-def get_label_cache() -> TTLCache:
-    """Get or create the label image cache using settings."""
-    return _get_cache("label")
-
-
-# Convenience constants for backwards compatibility
-# These are lazily evaluated via __getattr__
-def __getattr__(name: str):
-    """Lazy initialization of cache constants for backwards compatibility."""
-    if name == "TRACK_CACHE":
-        return get_track_cache()
-    elif name == "RELEASE_CACHE":
-        return get_release_cache()
-    elif name == "SEARCH_CACHE":
-        return get_search_cache()
-    elif name == "ARTIST_CACHE":
-        return get_artist_cache()
-    elif name == "LABEL_CACHE":
-        return get_label_cache()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+caches = CacheRegistry()
