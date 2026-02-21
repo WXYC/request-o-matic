@@ -65,7 +65,6 @@ class TestTrackReleasesEndpoint:
                     album=TEST_ALBUM,
                     artist=TEST_ARTIST,
                     release_id=TEST_RELEASE_ID,
-                    release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
                     is_compilation=False,
                 )
             ],
@@ -110,7 +109,6 @@ class TestReleaseEndpoint:
                 TrackItem(position="1", title=TEST_TRACK, duration="5:25"),
             ],
             artwork_url="https://i.discogs.com/image.jpg",
-            release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
             cached=False,
         )
 
@@ -149,7 +147,6 @@ class TestSearchEndpoint:
                     album=TEST_ALBUM,
                     artist=TEST_ARTIST,
                     release_id=TEST_RELEASE_ID,
-                    release_url=f"https://www.discogs.com/release/{TEST_RELEASE_ID}",
                     artwork_url="https://i.discogs.com/thumb.jpg",
                     confidence=0.9,
                 )

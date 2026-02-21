@@ -529,7 +529,6 @@ class TestFilterResultsByTrackValidation:
                         album="Becoming X",
                         artist="Sneaker Pimps",
                         release_id=1273511,
-                        release_url="https://www.discogs.com/release/1273511",
                     )
                 ],
                 total=1,
@@ -540,7 +539,6 @@ class TestFilterResultsByTrackValidation:
                         album="Kiss & Swallow",
                         artist="Sneaker Pimps",
                         release_id=11181051,
-                        release_url="https://www.discogs.com/release/11181051",
                     )
                 ],
                 total=1,
@@ -573,7 +571,6 @@ class TestFilterResultsByTrackValidation:
                         album="Becoming X",
                         artist="Sneaker Pimps",
                         release_id=1273511,
-                        release_url="https://www.discogs.com/release/1273511",
                     )
                 ],
                 total=1,
@@ -584,7 +581,6 @@ class TestFilterResultsByTrackValidation:
                         album="Kiss & Swallow",
                         artist="Sneaker Pimps",
                         release_id=11181051,
-                        release_url="https://www.discogs.com/release/11181051",
                     )
                 ],
                 total=1,
@@ -638,7 +634,6 @@ class TestFilterResultsByTrackValidation:
                         album="Becoming X",
                         artist="Sneaker Pimps",
                         release_id=1273511,
-                        release_url="https://www.discogs.com/release/1273511",
                     )
                 ],
                 total=1,
@@ -673,7 +668,6 @@ class TestFilterResultsByTrackValidation:
                         album="Kiss & Swallow",
                         artist="Sneaker Pimps",
                         release_id=11181051,
-                        release_url="https://www.discogs.com/release/11181051",
                     )
                 ],
                 total=1,
