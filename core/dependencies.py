@@ -255,7 +255,7 @@ async def get_slack_webhook_url(
 
     # Fetch from Railway endpoint
     try:
-        response = await http_client.get("https://wxyc-requests-endpoint-production.up.railway.app")
+        response = await http_client.get(settings.slack_webhook_key_url)
         response.raise_for_status()
         webhook_key = response.text.strip()
         webhook_url = f"https://hooks.slack.com/services/{webhook_key}"

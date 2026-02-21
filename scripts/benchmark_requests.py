@@ -32,11 +32,9 @@ from typing import Any
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from scripts._common import LOCAL_URL, PROD_URL, STAGING_URL
 
-PROD_URL = "https://request-o-matic-production.up.railway.app/api/v1"
-STAGING_URL = "https://request-o-matic-staging.up.railway.app/api/v1"
-LOCAL_URL = "http://localhost:8000/api/v1"
+logger = logging.getLogger(__name__)
 
 # One representative query per search path, drawn from integration tests.
 QUERIES: list[dict[str, str]] = [
