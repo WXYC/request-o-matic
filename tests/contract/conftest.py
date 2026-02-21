@@ -68,6 +68,11 @@ def inline_lookup():
         pytest.skip("DISCOGS_TOKEN not set, skipping inline lookup tests")
 
     from config.settings import get_settings
+    from core.orchestration import (
+        filter_results_by_track_validation,
+        limit_results,
+        resolve_albums_for_track,
+    )
     from core.search import build_strategies, execute_search_pipeline, get_search_type_from_state
     from discogs.service import DiscogsService
     from library.db import LibraryDB
@@ -76,9 +81,6 @@ def inline_lookup():
         _search_library_strategy,
         _song_as_artist_strategy,
         _swapped_interpretation_strategy,
-        filter_results_by_track_validation,
-        limit_results,
-        resolve_albums_for_track,
     )
     from services.parser import MessageType, ParsedRequest
 

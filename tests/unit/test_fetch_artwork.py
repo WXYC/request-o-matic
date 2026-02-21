@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.orchestration import fetch_artwork_for_items
 from discogs.models import (
     DiscogsSearchResponse,
     DiscogsSearchResult,
     ReleaseMetadataResponse,
 )
 from discogs.service import DiscogsService
-from routers.request import fetch_artwork_for_items
 
 
 def make_library_item(*, id: int, artist: str, title: str):
