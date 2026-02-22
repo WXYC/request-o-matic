@@ -383,6 +383,7 @@ async def _keyword_search_for_track(
             return []
 
         # Filter by artist unless it's a compilation album
+        assert parsed.artist is not None  # guaranteed by caller
         filtered_results = [
             item
             for item in keyword_results
@@ -423,10 +424,12 @@ async def _discogs_cross_reference(
     seen_ids: set[int] = set()
     discogs_titles: dict[int, str] = {}
 
+    assert parsed.song is not None and parsed.artist is not None  # guaranteed by caller
+
     try:
         # Extract full song name with remix/version info
         raw_lower = parsed.raw_message.lower()
-        song_search = parsed.song
+        song_search: str = parsed.song
 
         remix_match = re.search(r"\((.*?(?:remix|mix|version|edit).*?)\)", raw_lower, re.IGNORECASE)
         if remix_match and parsed.song.lower() in raw_lower:
