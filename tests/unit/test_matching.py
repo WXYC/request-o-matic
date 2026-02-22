@@ -342,6 +342,22 @@ class TestMatchesArtistOrCompilation:
     def test_prefix_not_suffix(self):
         assert not matches_artist_or_compilation("Young Black Teenagers", "Young Gov")
 
+    def test_allow_compilations_false_rejects_compilation(self):
+        assert not matches_artist_or_compilation(
+            "Various Artists", "Queen", allow_compilations=False
+        )
+
+    def test_allow_compilations_true_accepts_compilation(self):
+        assert matches_artist_or_compilation("Various Artists", "Queen", allow_compilations=True)
+
+    def test_allow_compilations_false_keeps_exact_match(self):
+        assert matches_artist_or_compilation("Queen", "Queen", allow_compilations=False)
+
+    def test_allow_compilations_false_keeps_prefix_match(self):
+        assert matches_artist_or_compilation(
+            "Queen - Greatest Hits", "Queen", allow_compilations=False
+        )
+
 
 class TestValidateTrackOnTracklist:
     """Test validate_track_on_tracklist function."""
