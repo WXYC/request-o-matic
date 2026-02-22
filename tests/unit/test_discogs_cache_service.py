@@ -474,3 +474,53 @@ class TestSearchReleases:
 
         with pytest.raises(CacheUnavailableError):
             await cache.search_releases(artist="Autechre", album="Confield")
+
+
+class TestBuildSearchQuery:
+    """Tests for _build_search_query helper that generates parameterized SQL."""
+
+    def _build(self, artist=None, album=None, limit=5):
+        from discogs.cache_service import DiscogsCacheService
+
+        cache = DiscogsCacheService(pool=MagicMock())
+        return cache._build_search_query(artist=artist, album=album, limit=limit)
+
+    def test_artist_and_album_includes_both_conditions(self):
+        """Test both artist and album generate WHERE with both conditions."""
+        query, params = self._build(artist="Autechre", album="Confield")
+        assert "lower(r.title)" in query
+        assert "lower(ra.artist_name)" in query
+        assert "GREATEST" in query
+        assert params == ["Confield", "Autechre", 10]  # limit * 2
+
+    def test_artist_only_excludes_album(self):
+        """Test artist-only search does not reference album similarity."""
+        query, params = self._build(artist="Autechre")
+        assert "lower(ra.artist_name)" in query
+        assert "GREATEST" not in query
+        assert params == ["Autechre", 10]
+
+    def test_album_only_excludes_artist(self):
+        """Test album-only search does not reference artist similarity."""
+        query, params = self._build(album="Confield")
+        assert "lower(r.title)" in query
+        assert "GREATEST" not in query
+        assert params == ["Confield", 10]
+
+    def test_limit_is_doubled(self):
+        """Test that limit parameter is doubled for the SQL LIMIT clause."""
+        _, params = self._build(artist="Autechre", album="Confield", limit=3)
+        assert params[-1] == 6  # 3 * 2
+
+    def test_returns_sql_with_limit_placeholder(self):
+        """Test returned SQL uses correct positional placeholders."""
+        query, params = self._build(artist="Autechre", album="Confield")
+        # Should have $3 for LIMIT (2 search params + 1 limit)
+        assert f"${len(params)}" in query
+
+    def test_artist_only_returns_correct_placeholder_count(self):
+        """Test artist-only uses $1 for artist and $2 for limit."""
+        query, params = self._build(artist="Autechre")
+        assert "$1" in query
+        assert "$2" in query
+        assert "$3" not in query
