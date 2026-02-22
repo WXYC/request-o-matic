@@ -231,6 +231,31 @@ class DiscogsService:
             add_discogs_breadcrumb("cache_error", {"error": str(e)}, level="warning")
             return CacheResult(hit=False)
 
+    async def _try_cache_write(
+        self,
+        operation: str,
+        cache_fn: Callable[[], Awaitable[None]],
+        breadcrumb_data: dict,
+    ) -> None:
+        """Try to write a result to the PostgreSQL cache.
+
+        Silently handles failures so cache writes never break the main flow.
+
+        Args:
+            operation: Name for logging and breadcrumbs (e.g., "write_release")
+            cache_fn: Zero-argument async callable that performs the cache write
+            breadcrumb_data: Data for Sentry breadcrumbs
+        """
+        if not self.cache_service or should_skip_cache():
+            return
+        try:
+            add_discogs_breadcrumb(f"cache_{operation}", breadcrumb_data)
+            await cache_fn()
+            logger.debug(f"Cache {operation} succeeded")
+        except Exception as e:
+            logger.warning(f"Cache {operation} failed: {e}")
+            add_discogs_breadcrumb("cache_write_error", {"error": str(e)}, level="warning")
+
     async def _timed_api_call(
         self,
         method: str,
@@ -462,14 +487,11 @@ class DiscogsService:
             )
 
             # Write back to cache for future queries
-            if self.cache_service and not should_skip_cache():
-                try:
-                    add_discogs_breadcrumb("cache_write_release", {"release_id": release_id})
-                    await self.cache_service.write_release(release)
-                    logger.debug(f"Cached release {release_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to cache release {release_id}: {e}")
-                    add_discogs_breadcrumb("cache_write_error", {"error": str(e)}, level="warning")
+            await self._try_cache_write(
+                "write_release",
+                lambda: self.cache_service.write_release(release),  # type: ignore[union-attr]
+                {"release_id": release_id},
+            )
 
             return release
 

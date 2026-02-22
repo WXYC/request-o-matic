@@ -311,6 +311,67 @@ class DiscogsCacheService:
             logger.error(f"Cache write_release failed: {e}")
             raise CacheUnavailableError(f"Cache write_release failed: {e}") from e
 
+    def _build_search_query(
+        self,
+        artist: str | None = None,
+        album: str | None = None,
+        limit: int = 5,
+    ) -> tuple[str, list]:
+        """Build a parameterized SQL query for release search.
+
+        Generates the appropriate WHERE clause, similarity scoring, and positional
+        parameters based on which search fields are provided. This replaces three
+        near-identical query branches with a single parameterized builder.
+
+        Args:
+            artist: Artist name to search for
+            album: Album/release title to search for
+            limit: Maximum number of results to return
+
+        Returns:
+            Tuple of (query_sql, params) ready for pool.fetch()
+        """
+        conditions = []
+        similarity_cols = []
+        params: list = []
+        idx = 1
+
+        if album:
+            conditions.append(f"lower(r.title) % lower(${idx})")
+            similarity_cols.append(f"similarity(lower(r.title), lower(${idx}))")
+            params.append(album)
+            idx += 1
+        if artist:
+            conditions.append(f"lower(ra.artist_name) % lower(${idx})")
+            similarity_cols.append(f"similarity(lower(ra.artist_name), lower(${idx}))")
+            params.append(artist)
+            idx += 1
+
+        score_expr = (
+            f"GREATEST({', '.join(similarity_cols)})"
+            if len(similarity_cols) > 1
+            else similarity_cols[0]
+        )
+
+        inner = f"""
+            SELECT DISTINCT ON (r.id)
+                r.id as release_id, r.title, ra.artist_name, r.artwork_url,
+                {score_expr} as score
+            FROM release r
+            JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
+            WHERE {" OR ".join(conditions)}
+            ORDER BY r.id, score DESC
+        """
+
+        params.append(limit * 2)
+        query = f"""
+            SELECT * FROM ({inner}) sub
+            ORDER BY score DESC
+            LIMIT ${idx}
+        """
+
+        return query, params
+
     async def search_releases(
         self, artist: str | None = None, album: str | None = None, limit: int = 5
     ) -> list[dict]:
@@ -333,59 +394,8 @@ class DiscogsCacheService:
             return []
 
         try:
-            if artist and album:
-                query = """
-                    SELECT DISTINCT ON (r.id)
-                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
-                        GREATEST(
-                            similarity(lower(r.title), lower($1)),
-                            similarity(lower(ra.artist_name), lower($2))
-                        ) as score
-                    FROM release r
-                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
-                    WHERE lower(r.title) % lower($1)
-                       OR lower(ra.artist_name) % lower($2)
-                    ORDER BY r.id, score DESC
-                """
-                # Re-sort by score after DISTINCT ON
-                query = f"""
-                    SELECT * FROM ({query}) sub
-                    ORDER BY score DESC
-                    LIMIT $3
-                """
-                rows = await self.pool.fetch(query, album, artist, limit * 2)
-            elif artist:
-                query = """
-                    SELECT DISTINCT ON (r.id)
-                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
-                        similarity(lower(ra.artist_name), lower($1)) as score
-                    FROM release r
-                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
-                    WHERE lower(ra.artist_name) % lower($1)
-                    ORDER BY r.id, score DESC
-                """
-                query = f"""
-                    SELECT * FROM ({query}) sub
-                    ORDER BY score DESC
-                    LIMIT $2
-                """
-                rows = await self.pool.fetch(query, artist, limit * 2)
-            else:  # album only
-                query = """
-                    SELECT DISTINCT ON (r.id)
-                        r.id as release_id, r.title, ra.artist_name, r.artwork_url,
-                        similarity(lower(r.title), lower($1)) as score
-                    FROM release r
-                    JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
-                    WHERE lower(r.title) % lower($1)
-                    ORDER BY r.id, score DESC
-                """
-                query = f"""
-                    SELECT * FROM ({query}) sub
-                    ORDER BY score DESC
-                    LIMIT $2
-                """
-                rows = await self.pool.fetch(query, album, limit * 2)
+            query, params = self._build_search_query(artist=artist, album=album, limit=limit)
+            rows = await self.pool.fetch(query, *params)
 
             results = []
             seen_titles = set()
