@@ -9,12 +9,8 @@ from core.orchestration import (
     search_library_with_fallback,
     search_with_alternative_interpretation,
 )
-<<<<<<< HEAD
-from tests.conftest import make_parsed_request
-=======
 from library.models import LibraryItem
-from services.parser import MessageType, ParsedRequest
->>>>>>> d852123 (refactor: extract orchestration module from routers/request.py)
+from tests.conftest import make_parsed_request
 
 
 @pytest.fixture

@@ -9,6 +9,7 @@ from core.orchestration import (
     filter_results_by_track_validation,
     search_compilations_for_track,
 )
+from discogs.models import DiscogsSearchResponse, DiscogsSearchResult
 from library.models import LibraryItem
 from tests.conftest import make_parsed_request
 
