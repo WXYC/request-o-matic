@@ -102,7 +102,11 @@ def extract_significant_words(text: str, min_length: int = 3) -> set[str]:
     return {w for w in normalized.split() if len(w) > min_length and w not in STOPWORDS}
 
 
-def matches_artist_or_compilation(item_artist: str, target_artist: str) -> bool:
+def matches_artist_or_compilation(
+    item_artist: str,
+    target_artist: str,
+    allow_compilations: bool = True,
+) -> bool:
     """Check if an item's artist matches the target via prefix, or is a compilation.
 
     This combines the common pattern of checking whether a library item's artist
@@ -112,13 +116,21 @@ def matches_artist_or_compilation(item_artist: str, target_artist: str) -> bool:
     Args:
         item_artist: Artist name from a library item or search result
         target_artist: Artist name being searched for
+        allow_compilations: If True, compilation/soundtrack artists are accepted.
+            Set to False when compilations should be excluded (e.g., strict
+            artist filtering).
 
     Returns:
-        True if item_artist starts with target_artist or is a compilation artist
+        True if item_artist starts with target_artist, or (when allowed)
+        is a compilation artist
     """
     item_lower = item_artist.lower()
     target_lower = target_artist.lower()
-    return item_lower.startswith(target_lower) or is_compilation_artist(item_lower)
+    if item_lower.startswith(target_lower):
+        return True
+    if allow_compilations:
+        return is_compilation_artist(item_lower)
+    return False
 
 
 def is_compilation_artist(artist: str) -> bool:
