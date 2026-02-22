@@ -11,7 +11,7 @@ from typing import Any, TypeVar
 from cachetools import TTLCache  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
-from core.telemetry import record_memory_cache_hit
+from core.telemetry import record_memory_cache_hit, record_memory_cache_miss
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,7 @@ def async_cached(cache: TTLCache) -> Callable[[Callable[..., T]], Callable[..., 
 
             # Cache miss - call function
             logger.debug(f"Cache miss for {func.__name__}")
+            record_memory_cache_miss()
             result = await func(*args, **kwargs)  # type: ignore[misc]
 
             # Don't cache None results

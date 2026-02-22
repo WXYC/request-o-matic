@@ -410,3 +410,105 @@ class TestDelegationBranch:
         assert lookup_req.song == "Bohemian Rhapsody"
         assert lookup_req.album == "A Night at the Opera"
         assert lookup_req.raw_message == "play bohemian rhapsody by queen"
+
+
+class TestDelegatedCacheStats:
+    """Tests for cache stats propagation in delegated mode.
+
+    When request-o-matic delegates to library-metadata-lookup, all Discogs
+    cache/API interactions happen remotely. The lookup service returns its
+    cache_stats in the response. These tests verify that the delegated stats
+    are surfaced in the UnifiedResponse rather than the local all-zero counters.
+    """
+
+    @pytest.mark.asyncio
+    async def test_lookup_cache_stats_returned_in_response(
+        self, app, mock_lookup_client, sample_lookup_response
+    ):
+        """Cache stats from lookup service should appear in the response."""
+        remote_stats = {
+            "memory_hits": 2,
+            "pg_hits": 3,
+            "pg_misses": 1,
+            "api_calls": 4,
+            "pg_time_ms": 12.5,
+            "api_time_ms": 350.0,
+        }
+        sample_lookup_response.cache_stats = remote_stats
+        mock_lookup_client.lookup.return_value = sample_lookup_response
+
+        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play queen", "skip_slack": True},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        cache_stats = data["cache_stats"]
+        assert cache_stats["memory_hits"] == 2
+        assert cache_stats["pg_hits"] == 3
+        assert cache_stats["pg_misses"] == 1
+        assert cache_stats["api_calls"] == 4
+        assert cache_stats["pg_time_ms"] == 12.5
+        assert cache_stats["api_time_ms"] == 350.0
+
+    @pytest.mark.asyncio
+    async def test_lookup_cache_stats_not_all_zeros(
+        self, app, mock_lookup_client, sample_lookup_response
+    ):
+        """Delegated response should NOT report all-zero stats when the lookup
+        service reports real activity."""
+        remote_stats = {
+            "memory_hits": 0,
+            "pg_hits": 1,
+            "pg_misses": 2,
+            "api_calls": 3,
+            "pg_time_ms": 8.0,
+            "api_time_ms": 200.0,
+        }
+        sample_lookup_response.cache_stats = remote_stats
+        mock_lookup_client.lookup.return_value = sample_lookup_response
+
+        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play queen", "skip_slack": True},
+                )
+
+        data = response.json()
+        cache_stats = data["cache_stats"]
+        # At least one of these must be non-zero
+        assert (
+            cache_stats["pg_hits"]
+            + cache_stats["pg_misses"]
+            + cache_stats["api_calls"]
+        ) > 0, "Delegated cache stats should not be all zeros when lookup service reports activity"
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_local_stats_when_lookup_returns_none(
+        self, app, mock_lookup_client, sample_lookup_response
+    ):
+        """When lookup service returns no cache_stats, fall back to local counters."""
+        sample_lookup_response.cache_stats = None
+        mock_lookup_client.lookup.return_value = sample_lookup_response
+
+        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play queen", "skip_slack": True},
+                )
+
+        data = response.json()
+        # Should still have cache_stats (from local init_cache_stats), just all zeros
+        assert data["cache_stats"] is not None
+        assert data["cache_stats"]["memory_hits"] == 0

@@ -2,6 +2,11 @@
 
 import pytest
 
+from core.telemetry import (
+    _cache_stats_var,
+    get_cache_stats,
+    init_cache_stats,
+)
 from discogs.memory_cache import (
     async_cached,
     clear_all_caches,
@@ -239,6 +244,73 @@ class TestAsyncCached:
         await my_func("nonexistent")  # Should call again since None wasn't cached
 
         assert call_count == 2
+
+
+class TestAsyncCachedTelemetry:
+    """Tests for async_cached decorator's telemetry integration."""
+
+    @pytest.fixture(autouse=True)
+    def _set_up(self):
+        """Clear caches and reset ContextVar before each test."""
+        clear_all_caches()
+        token = _cache_stats_var.set(None)  # type: ignore[arg-type]
+        yield
+        clear_all_caches()
+        _cache_stats_var.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_records_memory_miss(self):
+        """A cache miss should increment memory_misses counter."""
+        init_cache_stats()
+        cache = create_ttl_cache(maxsize=100, ttl=3600)
+
+        @async_cached(cache)
+        async def my_func(track: str) -> dict:
+            return {"track": track, "cached": False}
+
+        await my_func("Test Track")
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["memory_misses"] == 1
+        assert stats["memory_hits"] == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_records_memory_hit_not_miss(self):
+        """A cache hit should increment memory_hits but not memory_misses."""
+        init_cache_stats()
+        cache = create_ttl_cache(maxsize=100, ttl=3600)
+
+        @async_cached(cache)
+        async def my_func(track: str) -> dict:
+            return {"track": track, "cached": False}
+
+        await my_func("Test Track")  # miss
+        await my_func("Test Track")  # hit
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["memory_hits"] == 1
+        assert stats["memory_misses"] == 1
+
+    @pytest.mark.asyncio
+    async def test_multiple_misses_counted(self):
+        """Multiple cache misses with different keys are all counted."""
+        init_cache_stats()
+        cache = create_ttl_cache(maxsize=100, ttl=3600)
+
+        @async_cached(cache)
+        async def my_func(track: str) -> dict:
+            return {"track": track, "cached": False}
+
+        await my_func("Track A")
+        await my_func("Track B")
+        await my_func("Track C")
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["memory_misses"] == 3
+        assert stats["memory_hits"] == 0
 
 
 class TestClearAllCaches:

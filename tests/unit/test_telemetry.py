@@ -14,6 +14,7 @@ from core.telemetry import (
     record_api_time,
     record_discogs_api_call,
     record_memory_cache_hit,
+    record_memory_cache_miss,
     record_pg_cache_hit,
     record_pg_cache_miss,
     record_pg_time,
@@ -246,6 +247,7 @@ class TestContextVarCacheStats:
 
         assert stats is not None
         assert stats["memory_hits"] == 0
+        assert stats["memory_misses"] == 0
         assert stats["pg_hits"] == 0
         assert stats["pg_misses"] == 0
         assert stats["api_calls"] == 0
@@ -284,6 +286,17 @@ class TestContextVarCacheStats:
         stats = get_cache_stats()
         assert stats is not None
         assert stats["memory_hits"] == 3
+
+    def test_record_memory_cache_miss(self):
+        """Verify memory cache misses are recorded."""
+        init_cache_stats()
+
+        record_memory_cache_miss()
+        record_memory_cache_miss()
+
+        stats = get_cache_stats()
+        assert stats is not None
+        assert stats["memory_misses"] == 2
 
     def test_record_discogs_api_call(self):
         """Verify Discogs API calls are recorded."""
