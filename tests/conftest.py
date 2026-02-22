@@ -14,6 +14,7 @@ import pytest
 
 from config.settings import Settings
 from library.models import LibraryItem
+from services.parser import MessageType
 
 # =============================================================================
 # Environment Configuration
@@ -279,7 +280,7 @@ def sample_library_items():
 @pytest.fixture
 def sample_parsed_request():
     """Create a sample parsed request for testing."""
-    from services.parser import MessageType, ParsedRequest
+    from services.parser import ParsedRequest
 
     return ParsedRequest(
         song="Bohemian Rhapsody",
@@ -297,20 +298,23 @@ def make_parsed_request(
     album: str | None = None,
     raw_message: str = "test",
     is_request: bool = True,
+    message_type: MessageType | None = None,
 ):
     """Factory for creating ParsedRequest with sensible defaults.
 
     Reduces boilerplate by defaulting raw_message, is_request, and message_type.
     """
-    from services.parser import MessageType, ParsedRequest
+    from services.parser import ParsedRequest
 
+    if message_type is None:
+        message_type = MessageType.REQUEST if is_request else MessageType.OTHER
     return ParsedRequest(
         artist=artist,
         song=song,
         album=album,
         raw_message=raw_message,
         is_request=is_request,
-        message_type=MessageType.REQUEST if is_request else MessageType.OTHER,
+        message_type=message_type,
     )
 
 
