@@ -121,6 +121,7 @@ class RequestTelemetry:
         else:
             cache_props = {
                 "memory_hits": 0,
+                "memory_misses": 0,
                 "pg_hits": 0,
                 "pg_misses": 0,
                 "api_calls": 0,
@@ -158,6 +159,7 @@ def init_cache_stats() -> None:
     _cache_stats_var.set(
         {
             "memory_hits": 0,
+            "memory_misses": 0,
             "pg_hits": 0,
             "pg_misses": 0,
             "api_calls": 0,
@@ -184,6 +186,11 @@ def _update_cache_stat(key: str, value: float = 1) -> None:
 def record_memory_cache_hit() -> None:
     """Record an in-memory TTL cache hit in the current request context."""
     _update_cache_stat("memory_hits")
+
+
+def record_memory_cache_miss() -> None:
+    """Record an in-memory TTL cache miss in the current request context."""
+    _update_cache_stat("memory_misses")
 
 
 def record_pg_cache_hit() -> None:

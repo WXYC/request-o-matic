@@ -164,10 +164,11 @@ def print_cache_stats(cache_stats: dict) -> None:
     """Print Discogs cache statistics."""
     print_section("Discogs Cache")
     memory_hits = cache_stats.get("memory_hits", 0)
+    memory_misses = cache_stats.get("memory_misses", 0)
     pg_hits = cache_stats.get("pg_hits", 0)
     pg_misses = cache_stats.get("pg_misses", 0)
     api_calls = cache_stats.get("api_calls", 0)
-    print(f"  In-memory cache:   {memory_hits} hits")
+    print(f"  In-memory cache:   {memory_hits} hits, {memory_misses} misses")
     print(f"  PostgreSQL cache:  {pg_hits} hits, {pg_misses} misses")
     print(f"  Discogs API calls: {api_calls}")
     pg_time = cache_stats.get("pg_time_ms", 0)

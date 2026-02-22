@@ -309,6 +309,7 @@ async def handle_request(
         song_not_found = False
         found_on_compilation = False
         context: str | None = None
+        cache_stats_override: dict | None = None
 
         if lookup_client:
             # Delegated mode: call library-metadata-lookup service
@@ -340,6 +341,11 @@ async def handle_request(
             song_not_found = lookup_response.song_not_found
             found_on_compilation = lookup_response.found_on_compilation
             context = lookup_response.context_message
+
+            # Prefer the lookup service's cache stats over local counters,
+            # which stay at 0 since all Discogs/cache work is delegated.
+            if lookup_response.cache_stats:
+                cache_stats_override = lookup_response.cache_stats
 
         else:
             # Inline mode: existing pipeline
@@ -460,7 +466,7 @@ async def handle_request(
             song_not_found=song_not_found,
             found_on_compilation=found_on_compilation,
             context_message=context,
-            cache_stats=get_cache_stats(),
+            cache_stats=cache_stats_override or get_cache_stats(),
         )
 
     except HTTPException:
