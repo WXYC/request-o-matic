@@ -110,8 +110,8 @@ def filter_results_by_artist(
 
     Requires the searched artist name to appear at the START of the result's
     artist field (case-insensitive). This prevents false positives like
-    "Toy" matching "Chew Toy" while still allowing "Various" to match
-    "Various Artists - Rock - D".
+    "Toy" matching "Chew Toy". Compilations are NOT accepted here — this is
+    strict artist filtering (unlike keyword search which allows compilations).
 
     Args:
         results: List of library items from search
@@ -123,14 +123,11 @@ def filter_results_by_artist(
     if not artist:
         return results
 
-    artist_lower = artist.lower()
-    filtered = []
-    for item in results:
-        item_artist = (item.artist or "").lower()
-        # Check if result's artist starts with searched artist
-        # This handles both exact matches and "Various Artists - ..." patterns
-        if item_artist.startswith(artist_lower):
-            filtered.append(item)
+    filtered = [
+        item
+        for item in results
+        if matches_artist_or_compilation(item.artist or "", artist, allow_compilations=False)
+    ]
 
     if len(filtered) < len(results):
         logger.info(
@@ -458,22 +455,18 @@ async def _discogs_cross_reference(
             # This prevents "Mad Love" by Lush matching "Love is Gone Mad" by Big Eyes
             # but still allows Various Artists compilations and soundtracks through
             if matches and parsed.artist:
-                filtered_matches = []
-                artist_lower = parsed.artist.lower()
-
-                # Check if the Discogs release is by a compilation artist
+                # Only allow compilation matches when Discogs says the release
+                # is by a compilation artist
                 discogs_is_compilation = is_compilation_artist(release_artist)
-
-                for match in matches:
-                    match_artist = (match.artist or "").lower()
-
-                    # If Discogs says it's by the artist, only match artist albums
-                    # If Discogs says it's a compilation, allow compilation matches
-                    if match_artist.startswith(artist_lower):
-                        filtered_matches.append(match)
-                    elif discogs_is_compilation and is_compilation_artist(match_artist):
-                        filtered_matches.append(match)
-                matches = filtered_matches
+                matches = [
+                    match
+                    for match in matches
+                    if matches_artist_or_compilation(
+                        match.artist or "",
+                        parsed.artist,
+                        allow_compilations=discogs_is_compilation,
+                    )
+                ]
 
             if matches:
                 logger.info(
@@ -531,10 +524,7 @@ async def search_compilations_for_track(
     # If Discogs didn't find anything, fall back to keyword matches
     if not results and keyword_matches:
         logger.info("Discogs search found nothing, using keyword matches as fallback")
-        seen_ids = {item.id for item in results}
-        for item in keyword_matches[:1]:
-            if item.id not in seen_ids:
-                results.append(item)
+        results = deduplicate(results + keyword_matches[:1])
 
     # Prioritize albums whose title matches the song title
     # (e.g., "Meet Me in the City" album for song "Meet Me in the City")
