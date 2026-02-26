@@ -125,9 +125,7 @@ def filter_results_by_artist(
         return results
 
     filtered = [
-        item
-        for item in results
-        if item_matches_artist(item, artist, allow_compilations=False)
+        item for item in results if item_matches_artist(item, artist, allow_compilations=False)
     ]
 
     if len(filtered) < len(results):
@@ -383,9 +381,7 @@ async def _keyword_search_for_track(
         # Filter by artist unless it's a compilation album
         assert parsed.artist is not None  # guaranteed by caller
         filtered_results = [
-            item
-            for item in keyword_results
-            if item_matches_artist(item, parsed.artist)
+            item for item in keyword_results if item_matches_artist(item, parsed.artist)
         ]
 
         if filtered_results:

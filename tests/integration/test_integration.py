@@ -135,8 +135,7 @@ class TestDiscogsIntegration:
             print(f"  {i}. {artist} - {album}")
 
         assert len(releases) > 0, (
-            "Discogs should return releases for 'Me And Mr Jones' by 'Plug' "
-            "(alias for Luke Vibert)"
+            "Discogs should return releases for 'Me And Mr Jones' by 'Plug' (alias for Luke Vibert)"
         )
 
     @pytest.mark.asyncio
