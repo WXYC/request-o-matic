@@ -99,7 +99,17 @@ async def alt_artist_db(tmp_path):
         """)
 
         test_albums = [
-            (1, "Drum 'n' Bass for Papa (+ Plug EPs 1,2 & 3)", "Plug", "Pl", 1, 1, "Electronic", "cd", "Luke Vibert"),
+            (
+                1,
+                "Drum 'n' Bass for Papa (+ Plug EPs 1,2 & 3)",
+                "Plug",
+                "Pl",
+                1,
+                1,
+                "Electronic",
+                "cd",
+                "Luke Vibert",
+            ),
             (2, "Ridmik", "Luke Vibert", "Vi", 3, 1, "Electronic", "cd", None),
         ]
 
