@@ -20,6 +20,7 @@ from core.matching import (
     deduplicate,
     extract_significant_words,
     is_compilation_artist,
+    item_matches_artist,
     matches_artist_or_compilation,
     normalize_text,
     sort_by_title_relevance,
@@ -83,14 +84,14 @@ async def resolve_albums_for_track(
                 parsed.song, parsed.artist, limit=10, service=discogs_service
             )
             if releases:
-                # Extract unique album names, filtering to releases by this artist
+                # Extract unique album names from all validated releases.
+                # No artist filter here — lookup_releases_by_track already validated
+                # each release via validate_track_on_release, which handles aliases
+                # (e.g., "Plug" -> "Luke Vibert").
                 albums = []
-                artist_lower = parsed.artist.lower()
-                for release_artist, album in releases:
-                    # Only include releases by the requested artist (not compilations)
-                    if release_artist.lower().startswith(artist_lower):
-                        if album not in albums:
-                            albums.append(album)
+                for _release_artist, album in releases:
+                    if album not in albums:
+                        albums.append(album)
                 if albums:
                     logger.info(f"Found {len(albums)} albums for song '{parsed.song}': {albums}")
                     return albums, False
@@ -126,7 +127,7 @@ def filter_results_by_artist(
     filtered = [
         item
         for item in results
-        if matches_artist_or_compilation(item.artist or "", artist, allow_compilations=False)
+        if item_matches_artist(item, artist, allow_compilations=False)
     ]
 
     if len(filtered) < len(results):
@@ -236,7 +237,7 @@ async def search_song_as_artist(
                 continue
 
             # Accept if it's the actual artist or a compilation
-            if matches_artist_or_compilation(item.artist or "", song_as_artist):
+            if item_matches_artist(item, song_as_artist):
                 results.append(item)
                 seen_ids.add(item.id)
                 logger.info(f"Found '{item.artist} - {item.title}' via Discogs cross-reference")
@@ -384,7 +385,7 @@ async def _keyword_search_for_track(
         filtered_results = [
             item
             for item in keyword_results
-            if matches_artist_or_compilation(item.artist or "", parsed.artist)
+            if item_matches_artist(item, parsed.artist)
         ]
 
         if filtered_results:
@@ -461,8 +462,8 @@ async def _discogs_cross_reference(
                 matches = [
                     match
                     for match in matches
-                    if matches_artist_or_compilation(
-                        match.artist or "",
+                    if item_matches_artist(
+                        match,
                         parsed.artist,
                         allow_compilations=discogs_is_compilation,
                     )

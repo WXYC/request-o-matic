@@ -120,6 +120,27 @@ class TestDiscogsIntegration:
 
     @pytest.mark.asyncio
     @skip_if_no_token
+    async def test_plug_me_and_mr_jones_lookup(self):
+        """Test that Discogs returns releases for 'Me And Mr Jones' by 'Plug'.
+
+        "Plug" is an alias for "Luke Vibert" on Discogs. The API resolves the alias
+        and returns releases by Luke Vibert that contain the track.
+        """
+        from discogs.lookup import lookup_releases_by_track
+
+        releases = await lookup_releases_by_track("Me And Mr Jones", "Plug")
+
+        print(f"\n✅ Found {len(releases)} releases for 'Me And Mr Jones' by 'Plug':")
+        for i, (artist, album) in enumerate(releases[:5], 1):
+            print(f"  {i}. {artist} - {album}")
+
+        assert len(releases) > 0, (
+            "Discogs should return releases for 'Me And Mr Jones' by 'Plug' "
+            "(alias for Luke Vibert)"
+        )
+
+    @pytest.mark.asyncio
+    @skip_if_no_token
     async def test_discogs_rate_limiting(self):
         """Test that we handle rate limits gracefully."""
         assert DISCOGS_TOKEN is not None
@@ -1485,3 +1506,41 @@ class TestFullRequestIntegration:
             )
 
         print("\n✅ Correctly avoided false correction of 'Plug' to 'Plugz'!")
+
+    @pytest.mark.asyncio
+    async def test_plug_me_and_mr_jones_finds_album(self, base_url):
+        """
+        Test that 'me and mr jones by plug' returns results including the correct album.
+
+        Bug: "Plug" is an alias for "Luke Vibert" on Discogs. The system failed at three
+        levels: Discogs track validation, album resolution filtering, and library artist
+        filtering all rejected the alias mismatch.
+
+        Expected: Should return "Drum 'n' Bass for Papa" (or similar Plug/Luke Vibert album).
+        """
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": "me and mr jones by plug", "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        parsed = data.get("parsed", {})
+        results = data.get("library_results", [])
+
+        print("\n📝 Parsed:")
+        print(f"  Artist: {parsed.get('artist')}")
+        print(f"  Song: {parsed.get('song')}")
+        print(f"  Album: {parsed.get('album')}")
+
+        print("\n📚 Library Results:")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        assert len(results) > 0, (
+            "Should find results for 'me and mr jones by plug'. "
+            "Plug is an alias for Luke Vibert on Discogs."
+        )

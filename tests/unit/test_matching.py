@@ -11,12 +11,14 @@ from core.matching import (
     detect_ambiguous_format,
     extract_significant_words,
     is_compilation_artist,
+    item_matches_artist,
     matches_artist_or_compilation,
     normalize_text,
     sort_by_title_relevance,
     validate_track_on_tracklist,
 )
 from discogs.models import TrackItem
+from library.models import LibraryItem
 
 
 class TestConstants:
@@ -359,6 +361,47 @@ class TestMatchesArtistOrCompilation:
         )
 
 
+class TestItemMatchesArtist:
+    """Test item_matches_artist function."""
+
+    def test_primary_artist_match(self):
+        item = LibraryItem(id=1, artist="Plug")
+        assert item_matches_artist(item, "Plug")
+
+    def test_alternate_artist_match(self):
+        item = LibraryItem(id=1, artist="Plug", alternate_artist_name="Luke Vibert")
+        assert item_matches_artist(item, "Luke Vibert")
+
+    def test_no_match(self):
+        item = LibraryItem(id=1, artist="Plug", alternate_artist_name="Luke Vibert")
+        assert not item_matches_artist(item, "Aphex Twin")
+
+    def test_none_alternate_artist(self):
+        item = LibraryItem(id=1, artist="Plug", alternate_artist_name=None)
+        assert not item_matches_artist(item, "Luke Vibert")
+
+    def test_compilation_accepted_via_primary(self):
+        item = LibraryItem(id=1, artist="Various Artists - Rock", alternate_artist_name=None)
+        assert item_matches_artist(item, "Plug", allow_compilations=True)
+
+    def test_compilation_rejected_when_disallowed(self):
+        item = LibraryItem(id=1, artist="Various Artists - Rock", alternate_artist_name=None)
+        assert not item_matches_artist(item, "Plug", allow_compilations=False)
+
+    def test_alternate_artist_does_not_use_compilation_fallback(self):
+        """Alternate artist check should not accept compilations."""
+        item = LibraryItem(id=1, artist="Other", alternate_artist_name="Various Artists")
+        assert not item_matches_artist(item, "Plug", allow_compilations=True)
+
+    def test_none_artist_field(self):
+        item = LibraryItem(id=1, artist=None)
+        assert not item_matches_artist(item, "Plug")
+
+    def test_prefix_matching_on_alternate(self):
+        item = LibraryItem(id=1, artist="Other", alternate_artist_name="Luke Vibert")
+        assert item_matches_artist(item, "Luke Vibert")
+
+
 class TestValidateTrackOnTracklist:
     """Test validate_track_on_tracklist function."""
 
@@ -460,6 +503,56 @@ class TestValidateTrackOnTracklist:
         self, description, tracklist, release_artist, track, artist, expected
     ):
         assert validate_track_on_tracklist(tracklist, release_artist, track, artist) is expected
+
+    @pytest.mark.parametrize(
+        "description,tracklist,release_artist,track,artist,trust,expected",
+        [
+            (
+                "alias: trust_release_artist bypasses artist mismatch",
+                [TrackItem(position="1", title="Me And Mr Jones", artists=[])],
+                "Luke Vibert",
+                "Me And Mr Jones",
+                "Plug",
+                True,
+                True,
+            ),
+            (
+                "alias: trust_release_artist=False still rejects mismatch",
+                [TrackItem(position="1", title="Me And Mr Jones", artists=[])],
+                "Luke Vibert",
+                "Me And Mr Jones",
+                "Plug",
+                False,
+                False,
+            ),
+            (
+                "alias: trust_release_artist with no title match still rejects",
+                [TrackItem(position="1", title="Different Song", artists=[])],
+                "Luke Vibert",
+                "Me And Mr Jones",
+                "Plug",
+                True,
+                False,
+            ),
+            (
+                "alias: trust_release_artist does not affect compilation path",
+                [TrackItem(position="1", title="Me And Mr Jones", artists=["Other Artist"])],
+                "Various Artists",
+                "Me And Mr Jones",
+                "Plug",
+                True,
+                False,
+            ),
+        ],
+        ids=lambda x: x if isinstance(x, str) else "",
+    )
+    def test_validate_track_trust_release_artist(
+        self, description, tracklist, release_artist, track, artist, trust, expected
+    ):
+        result = validate_track_on_tracklist(
+            tracklist, release_artist, track, artist, trust_release_artist=trust
+        )
+        assert result is expected
 
 
 class TestDeduplicate:

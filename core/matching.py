@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from discogs.models import TrackItem
+    from library.models import LibraryItem
 
 # =============================================================================
 # Search Result Limiting
@@ -130,6 +131,34 @@ def matches_artist_or_compilation(
         return True
     if allow_compilations:
         return is_compilation_artist(item_lower)
+    return False
+
+
+def item_matches_artist(
+    item: LibraryItem,
+    target_artist: str,
+    allow_compilations: bool = True,
+) -> bool:
+    """Check if a library item matches the target artist, including alternate names.
+
+    Checks the item's primary ``artist`` field first via
+    :func:`matches_artist_or_compilation`. If that fails and the item has an
+    ``alternate_artist_name``, the alternate name is checked too.
+
+    Args:
+        item: Library item to check
+        target_artist: Artist name being searched for
+        allow_compilations: If True, compilation/soundtrack artists are accepted.
+
+    Returns:
+        True if the item's artist (or alternate) matches the target
+    """
+    if matches_artist_or_compilation(item.artist or "", target_artist, allow_compilations):
+        return True
+    if item.alternate_artist_name and matches_artist_or_compilation(
+        item.alternate_artist_name, target_artist, allow_compilations=False
+    ):
+        return True
     return False
 
 
@@ -309,6 +338,7 @@ def validate_track_on_tracklist(
     release_artist: str,
     track: str,
     artist: str,
+    trust_release_artist: bool = False,
 ) -> bool:
     """Check whether a track by an artist appears on a tracklist.
 
@@ -321,6 +351,10 @@ def validate_track_on_tracklist(
         release_artist: Primary artist on the release
         track: Track title to find
         artist: Artist name to match
+        trust_release_artist: If True and the track title matches on a
+            single-artist release, accept the match even if the release artist
+            doesn't match the searched artist. This handles Discogs aliases
+            (e.g., "Plug" is an alias for "Luke Vibert").
 
     Returns:
         True if the track by the artist is found on the tracklist
@@ -347,6 +381,8 @@ def validate_track_on_tracklist(
             rel_artist = rel_artist.split("(")[0].strip()
 
             if artist_lower in rel_artist or rel_artist in artist_lower:
+                return True
+            if trust_release_artist:
                 return True
 
     return False
