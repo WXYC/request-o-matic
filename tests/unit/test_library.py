@@ -71,10 +71,68 @@ async def test_db(tmp_path):
     db_path.unlink()
 
 
+@pytest_asyncio.fixture
+async def alt_artist_db(tmp_path):
+    """Create a test database with the alternate_artist_name column."""
+    db_path = tmp_path / "alt_artist_test.db"
+
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("""
+            CREATE TABLE library (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                artist TEXT,
+                call_letters TEXT,
+                artist_call_number INTEGER,
+                release_call_number INTEGER,
+                genre TEXT,
+                format TEXT,
+                alternate_artist_name TEXT
+            )
+        """)
+
+        await conn.execute("""
+            CREATE VIRTUAL TABLE library_fts USING fts5(
+                title, artist, alternate_artist_name,
+                content='library', content_rowid='id'
+            )
+        """)
+
+        test_albums = [
+            (1, "Drum 'n' Bass for Papa (+ Plug EPs 1,2 & 3)", "Plug", "Pl", 1, 1, "Electronic", "cd", "Luke Vibert"),
+            (2, "Ridmik", "Luke Vibert", "Vi", 3, 1, "Electronic", "cd", None),
+        ]
+
+        await conn.executemany(
+            "INSERT INTO library VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", test_albums
+        )
+
+        await conn.execute("""
+            INSERT INTO library_fts(rowid, title, artist, alternate_artist_name)
+            SELECT id, title, artist, alternate_artist_name FROM library
+        """)
+
+        await conn.commit()
+
+    db = LibraryDB(db_path=db_path)
+    await db.connect()
+    yield db
+    await db.close()
+
+
 # --- Normal FTS Search Tests ---
 
 
 class TestFTSSearch:
+    @pytest.mark.asyncio
+    async def test_returns_alternate_artist_name(self, alt_artist_db: LibraryDB):
+        """FTS query populates alternate_artist_name when the column exists."""
+        results = await alt_artist_db.search(query="Plug", limit=10)
+
+        assert len(results) >= 1
+        plug_result = next(r for r in results if r.artist == "Plug")
+        assert plug_result.alternate_artist_name == "Luke Vibert"
+
     @pytest.mark.asyncio
     async def test_search_by_artist(self, test_db: LibraryDB):
         """Test basic FTS search by artist name."""

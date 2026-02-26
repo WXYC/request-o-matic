@@ -709,7 +709,9 @@ class DiscogsService:
         if release is None:
             return False
 
-        found = validate_track_on_tracklist(release.tracklist, release.artist, track, artist)
+        found = validate_track_on_tracklist(
+            release.tracklist, release.artist, track, artist, trust_release_artist=True
+        )
         if found:
             logger.info(f"Validated: '{track}' by '{artist}' found on release {release_id}")
         else:

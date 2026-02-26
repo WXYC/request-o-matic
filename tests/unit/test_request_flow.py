@@ -6,7 +6,9 @@ import pytest
 
 from core.orchestration import (
     build_context_message,
+    filter_results_by_artist,
     filter_results_by_track_validation,
+    resolve_albums_for_track,
     search_compilations_for_track,
 )
 from discogs.models import DiscogsSearchResponse, DiscogsSearchResult
@@ -657,3 +659,52 @@ class TestFilterResultsByTrackValidation:
         assert results is not None
         assert len(results) == 1
         assert results[0].title == "Kiss & Swallow"
+
+
+@pytest.mark.asyncio
+async def test_resolve_albums_accepts_alias_releases():
+    """resolve_albums_for_track accepts albums where Discogs resolved an alias.
+
+    "Plug" is an alias for "Luke Vibert" on Discogs. When Discogs returns
+    releases by "Luke Vibert" for a search of "Plug", the album should be accepted.
+    """
+    parsed = make_parsed_request(
+        song="Me And Mr Jones",
+        artist="Plug",
+        raw_message="me and mr jones by plug",
+    )
+
+    with patch(
+        "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
+    ) as mock_lookup:
+        mock_lookup.return_value = [
+            ("Luke Vibert", "Drum 'n' Bass for Papa (+ Plug EPs 1, 2 & 3)"),
+        ]
+
+        albums, song_not_found = await resolve_albums_for_track(parsed)
+
+    assert not song_not_found
+    assert "Drum 'n' Bass for Papa (+ Plug EPs 1, 2 & 3)" in albums
+
+
+@pytest.mark.asyncio
+async def test_filter_results_uses_alternate_artist_name():
+    """filter_results_by_artist matches on alternate_artist_name when primary doesn't match."""
+    items = [
+        LibraryItem(
+            id=38167,
+            title="Drum 'n' Bass for Papa (+ Plug EPs 1,2 & 3)",
+            artist="Plug",
+            alternate_artist_name="Luke Vibert",
+        ),
+        LibraryItem(
+            id=99999,
+            title="Unrelated Album",
+            artist="Other Artist",
+        ),
+    ]
+
+    filtered = filter_results_by_artist(items, "Luke Vibert")
+
+    assert len(filtered) == 1
+    assert filtered[0].id == 38167
