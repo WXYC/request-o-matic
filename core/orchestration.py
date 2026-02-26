@@ -21,7 +21,6 @@ from core.matching import (
     extract_significant_words,
     is_compilation_artist,
     item_matches_artist,
-    matches_artist_or_compilation,
     normalize_text,
     sort_by_title_relevance,
 )
