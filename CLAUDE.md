@@ -21,8 +21,47 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 - `services/slack.py` - Slack message formatting and posting
 - `core/dependencies.py` - FastAPI dependency injection (HTTP client, Groq, Slack, PostHog)
 - `core/sentry.py` - Sentry error tracking integration
-- `core/telemetry.py` - PostHog telemetry tracking
+- `core/telemetry.py` - PostHog telemetry with cache stats tracking
 - `config/settings.py` - Pydantic Settings configuration
+
+### Discogs Cache (Optional)
+The service supports an optional PostgreSQL cache for Discogs data to reduce API calls:
+
+**Cache Strategy:**
+1. Query local PostgreSQL cache first
+2. On cache miss, query Discogs API
+3. Write API results back to cache for future queries
+4. Gracefully degrade to API-only if cache unavailable
+
+**Cache Service (`discogs/cache_service.py`):**
+- Uses asyncpg for async PostgreSQL connections
+- Trigram similarity (pg_trgm) for fuzzy text matching
+- `CacheUnavailableError` exception for connection failures
+
+**Enabling the Cache:**
+Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. If not set, the service uses Discogs API directly (existing behavior).
+
+**Setting Up the Cache Database:**
+The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
+
+### Library ETL
+The `library.db` SQLite database is synced daily from the WXYC MySQL database:
+
+- **`scripts/sync-library.sh`** - Orchestrates ETL, commits changes, and pushes to staging
+- **`scripts/export_to_sqlite.py`** - Connects via SSH to remote MySQL, exports to SQLite with FTS5
+
+The sync runs daily at 7 AM via launchd (`~/Library/LaunchAgents/com.wxyc.request-o-matic-etl.plist`).
+
+**Manual sync:**
+```bash
+# Run ETL (no Slack notifications)
+./scripts/sync-library.sh
+
+# Run with Slack error notifications
+./scripts/sync-library.sh --notify
+```
+
+**Logs:** `~/Library/Logs/request-o-matic-etl.log`
 
 ## Development Workflow
 

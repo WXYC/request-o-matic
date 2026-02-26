@@ -125,6 +125,32 @@ docker run -p 8000:8000 \
   request-o-matic
 ```
 
+### Using Docker Compose
+
+Create a `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DISCOGS_TOKEN=${DISCOGS_TOKEN}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    env_file:
+      - .env
+```
+
+Then run:
+
+```bash
+docker-compose up
+```
+
 ## API Endpoints
 
 ### Core Endpoints (v1)
