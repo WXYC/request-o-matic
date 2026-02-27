@@ -11,6 +11,14 @@ from core.orchestration import (
 )
 from library.models import LibraryItem
 from tests.conftest import make_parsed_request
+from tests.scenarios import (
+    AMPS_FOR_CHRIST_AMBIGUOUS,
+    BAND_COMMON_WORD,
+    BIOSPHERE_ALBUM_FILTER,
+    LAID_BACK_ARTIST_VS_TITLE,
+    TOY_WORD_BOUNDARY,
+    YOUNG_GOV_PREFIX,
+)
 
 
 @pytest.fixture
@@ -186,10 +194,11 @@ async def test_search_library_with_fallback_filters_by_album_title(mock_library_
         ),
     ]
 
+    S = BIOSPHERE_ALBUM_FILTER
     parsed = make_parsed_request(
-        song="The Things I Tell You",
-        artist="Biosphere",
-        raw_message="The Things I Tell You by Biosphere",
+        song=S.song,
+        artist=S.artist,
+        raw_message=S.raw_message,
     )
 
     # Search with album name from Discogs
@@ -236,8 +245,11 @@ async def test_search_library_album_filter_excludes_single_common_word_matches(m
         ),
     ]
 
+    S = BAND_COMMON_WORD
     parsed = make_parsed_request(
-        song="Chest Fever", artist="The Band", raw_message="Chest Fever The Band"
+        song=S.song,
+        artist=S.artist,
+        raw_message=S.raw_message,
     )
 
     # Albums from Discogs track lookup - "Live Band # One" shares only "band" with "The Band"
@@ -258,16 +270,17 @@ class TestFilterResultsByArtist:
 
     def test_filters_out_non_matching_artists(self):
         """Test that results not matching the artist are filtered out."""
+        S = YOUNG_GOV_PREFIX
         results = [
             LibraryItem(id=1, artist="Biz Markie", title="Young Girl Bluez"),
             LibraryItem(id=2, artist="Young Black Teenagers", title="Proud to be Black"),
-            LibraryItem(id=3, artist="Young Gov", title="Some Album"),
+            LibraryItem(id=3, artist=S.artist, title="Some Album"),
         ]
 
-        filtered = filter_results_by_artist(results, "Young Gov")
+        filtered = filter_results_by_artist(results, S.artist)
 
         assert len(filtered) == 1
-        assert filtered[0].artist == "Young Gov"
+        assert filtered[0].artist == S.artist
 
     def test_keeps_matching_artists(self):
         """Test that results matching the artist are kept."""
@@ -342,60 +355,64 @@ class TestFilterResultsByArtist:
 
     def test_young_gov_scenario(self):
         """Test the specific Young Gov scenario that was failing."""
+        S = YOUNG_GOV_PREFIX
         results = [
             LibraryItem(id=1, artist="Biz Markie", title='Young Girl Bluez 12"'),
             LibraryItem(id=2, artist="Young Black Teenagers", title='Proud to be Black 12"'),
             LibraryItem(id=3, artist="Young Black Teenagers", title="Young Black Teenagers"),
         ]
 
-        filtered = filter_results_by_artist(results, "Young Gov")
+        filtered = filter_results_by_artist(results, S.artist)
 
         # None of these should match "Young Gov"
         assert len(filtered) == 0
 
     def test_laid_back_scenario(self):
         """Test the Laid Back scenario - should not match albums with 'laid back' in title."""
+        S = LAID_BACK_ARTIST_VS_TITLE
         results = [
             LibraryItem(
                 id=1, artist="Various Artists - Hiphop", title="Night Shift - Laid Back Trip Hop"
             ),
-            LibraryItem(id=2, artist="Gregg Allman", title="Laid Back"),
-            LibraryItem(id=3, artist="Laid Back", title="Keep Smiling"),
+            LibraryItem(id=2, artist="Gregg Allman", title=S.artist),
+            LibraryItem(id=3, artist=S.artist, title="Keep Smiling"),
         ]
 
-        filtered = filter_results_by_artist(results, "Laid Back")
+        filtered = filter_results_by_artist(results, S.artist)
 
         # Only the actual band "Laid Back" should match
         assert len(filtered) == 1
-        assert filtered[0].artist == "Laid Back"
+        assert filtered[0].artist == S.artist
 
     def test_amps_for_christ_scenario(self):
         """Test that 'Amps for Christ' matches correctly and filters out 'Edward Bear'."""
+        S = AMPS_FOR_CHRIST_AMBIGUOUS
         results = [
             LibraryItem(id=1, artist="Edward Bear", title="Edward Bear"),
-            LibraryItem(id=61692, artist="Amps for Christ", title="Circuits"),
+            LibraryItem(id=61692, artist=S.artist, title="Circuits"),
         ]
 
-        filtered = filter_results_by_artist(results, "Amps for Christ")
+        filtered = filter_results_by_artist(results, S.artist)
 
         # Only "Amps for Christ" should match, not "Edward Bear"
         assert len(filtered) == 1
-        assert filtered[0].artist == "Amps for Christ"
+        assert filtered[0].artist == S.artist
         assert filtered[0].title == "Circuits"
 
     def test_toy_does_not_match_chew_toy(self):
         """Test that 'Toy' does not match 'Chew Toy' (word boundary matching)."""
+        S = TOY_WORD_BOUNDARY
         results = [
             LibraryItem(id=1, artist="Chew Toy", title="The Touch my Disney ep"),
-            LibraryItem(id=2, artist="Toy", title="Toy"),
+            LibraryItem(id=2, artist=S.artist, title=S.artist),
         ]
 
-        filtered = filter_results_by_artist(results, "Toy")
+        filtered = filter_results_by_artist(results, S.artist)
 
         # Only "Toy" should match, not "Chew Toy"
         assert len(filtered) == 1
-        assert filtered[0].artist == "Toy"
-        assert filtered[0].title == "Toy"
+        assert filtered[0].artist == S.artist
+        assert filtered[0].title == S.artist
 
 
 @pytest.mark.asyncio
@@ -407,7 +424,9 @@ async def test_search_library_filters_non_matching_artists(mock_library_db):
         LibraryItem(id=2, artist="Biz Markie", title="Young Girl Bluez"),
     ]
 
-    parsed = make_parsed_request(song="Some Song", artist="Young Gov", raw_message="Test")
+    parsed = make_parsed_request(
+        song="Some Song", artist=YOUNG_GOV_PREFIX.artist, raw_message="Test"
+    )
 
     results, fallback_used = await search_library_with_fallback(mock_library_db, parsed, [])
 
@@ -421,13 +440,15 @@ class TestDetectAmbiguousFormat:
 
     def test_detects_dash_format(self):
         """Test detection of 'X - Y' format."""
-        result = detect_ambiguous_format("Amps for Christ - Edward")
-        assert result == ("Amps for Christ", "Edward")
+        S = AMPS_FOR_CHRIST_AMBIGUOUS
+        result = detect_ambiguous_format(S.raw_message)
+        assert result == (S.artist, S.song)
 
     def test_detects_period_format(self):
         """Test detection of 'X. Y' format."""
-        result = detect_ambiguous_format("Amps for Christ. Edward")
-        assert result == ("Amps for Christ", "Edward")
+        S = AMPS_FOR_CHRIST_AMBIGUOUS
+        result = detect_ambiguous_format(f"{S.artist}. {S.song}")
+        assert result == (S.artist, S.song)
 
     def test_returns_none_for_normal_message(self):
         """Test that normal messages don't trigger ambiguity detection."""
@@ -456,20 +477,23 @@ class TestSearchWithAlternativeInterpretation:
     @pytest.mark.asyncio
     async def test_finds_correct_artist_first_interpretation(self, mock_library_db):
         """Test finding results when only first interpretation (part1=artist) matches."""
+        S = AMPS_FOR_CHRIST_AMBIGUOUS
         # First search (part1 as artist) returns match
         # Second search (part2 as artist) returns no matching artist
         mock_library_db.search.side_effect = [
-            [LibraryItem(id=1, artist="Amps for Christ", title="Circuits")],
+            [LibraryItem(id=1, artist=S.artist, title="Circuits")],
             [LibraryItem(id=2, artist="Someone Else", title="Other Album")],
         ]
 
         results, _ = await search_with_alternative_interpretation(
-            mock_library_db, "Amps for Christ", "Edward"
+            mock_library_db,
+            S.artist,
+            S.song,
         )
 
         # Only Amps for Christ matches (Someone Else doesn't contain "Edward")
         assert len(results) == 1
-        assert results[0].artist == "Amps for Christ"
+        assert results[0].artist == S.artist
         assert results[0].title == "Circuits"
 
     @pytest.mark.asyncio
@@ -544,10 +568,11 @@ class TestSearchWithAlternativeInterpretation:
         This tests the ambiguous format where both interpretations might yield results.
         The function returns results from both interpretations so users can pick.
         """
+        S = AMPS_FOR_CHRIST_AMBIGUOUS
         mock_library_db.search.side_effect = [
             # First query: "Amps for Christ Edward" - filtered by "Amps for Christ"
             [
-                LibraryItem(id=61692, artist="Amps for Christ", title="Circuits"),
+                LibraryItem(id=61692, artist=S.artist, title="Circuits"),
                 LibraryItem(id=1, artist="Edward Bear", title="Edward Bear"),
             ],
             # Second query: "Edward Amps for Christ" - filtered by "Edward"
@@ -557,7 +582,9 @@ class TestSearchWithAlternativeInterpretation:
         ]
 
         results, _ = await search_with_alternative_interpretation(
-            mock_library_db, "Amps for Christ", "Edward"
+            mock_library_db,
+            S.artist,
+            S.song,
         )
 
         # Both interpretations find something:
@@ -566,5 +593,5 @@ class TestSearchWithAlternativeInterpretation:
         # Results are combined and deduplicated
         assert len(results) == 2
         artists = {r.artist for r in results}
-        assert "Amps for Christ" in artists
+        assert S.artist in artists
         assert "Edward Bear" in artists

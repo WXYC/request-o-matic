@@ -3,6 +3,7 @@ import pytest
 import pytest_asyncio
 
 from library.db import LibraryDB
+from tests.scenarios import LIVING_COLOR_SPELLING, PLUG_ALIAS
 
 # --- Fixtures ---
 
@@ -137,10 +138,10 @@ class TestFTSSearch:
     @pytest.mark.asyncio
     async def test_returns_alternate_artist_name(self, alt_artist_db: LibraryDB):
         """FTS query populates alternate_artist_name when the column exists."""
-        results = await alt_artist_db.search(query="Plug", limit=10)
+        results = await alt_artist_db.search(query=PLUG_ALIAS.artist, limit=10)
 
         assert len(results) >= 1
-        plug_result = next(r for r in results if r.artist == "Plug")
+        plug_result = next(r for r in results if r.artist == PLUG_ALIAS.artist)
         assert plug_result.alternate_artist_name == "Luke Vibert"
 
     @pytest.mark.asyncio
@@ -467,7 +468,7 @@ class TestFindSimilarArtist:
     @pytest.mark.asyncio
     async def test_color_to_colour(self, spelling_db: LibraryDB):
         """Test that 'Living Color' corrects to 'Living Colour'."""
-        result = await spelling_db.find_similar_artist("Living Color")
+        result = await spelling_db.find_similar_artist(LIVING_COLOR_SPELLING.artist)
 
         assert result == "Living Colour"
 
@@ -518,7 +519,7 @@ class TestFindSimilarArtist:
         For short names, a single character difference is proportionally large,
         so the threshold should be raised to prevent false corrections.
         """
-        result = await spelling_db.find_similar_artist("Plug")
+        result = await spelling_db.find_similar_artist(PLUG_ALIAS.artist)
 
         assert result is None, (
             f"Expected None (no correction), got '{result}'. "
@@ -529,7 +530,7 @@ class TestFindSimilarArtist:
     @pytest.mark.parametrize(
         "misspelled, expected",
         [
-            ("Living Color", "Living Colour"),
+            (LIVING_COLOR_SPELLING.artist, "Living Colour"),
             ("Led Zepplin", "Led Zeppelin"),
             ("Arctic Monkies", "Arctic Monkeys"),
         ],
