@@ -51,11 +51,11 @@ async def test_compilation_search_deduplication(mock_library_db):
 
     mock_library_db.search = mock_search
 
-    S = MANU_DIBANGO_COMPILATION
+    s = MANU_DIBANGO_COMPILATION
     parsed = make_parsed_request(
-        song=S.song,
-        artist=S.artist,
-        raw_message=S.raw_message,
+        song=s.song,
+        artist=s.artist,
+        raw_message=s.raw_message,
     )
 
     with patch(
@@ -83,10 +83,10 @@ async def test_compilation_search_deduplication(mock_library_db):
 @pytest.mark.asyncio
 async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
     """Test that compilation search requires both song and artist."""
-    S = MANU_DIBANGO_COMPILATION
-    assert S.song is not None
+    s = MANU_DIBANGO_COMPILATION
+    assert s.song is not None
     parsed_no_song = make_parsed_request(
-        artist=S.artist,
+        artist=s.artist,
         album="Soul Makossa",
         raw_message="Soul Makossa by Manu Dibango",
     )
@@ -95,7 +95,7 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
     assert results == []
     assert discogs_titles == {}
 
-    parsed_no_artist = make_parsed_request(song=S.song, raw_message=S.song)
+    parsed_no_artist = make_parsed_request(song=s.song, raw_message=s.song)
 
     results, discogs_titles = await search_compilations_for_track(mock_library_db, parsed_no_artist)
     assert results == []
@@ -104,16 +104,16 @@ async def test_compilation_search_returns_empty_when_no_song(mock_library_db):
 
 def test_build_context_message_for_found_compilation():
     """Test context message when song is found on compilation."""
-    S = MANU_DIBANGO_COMPILATION
+    s = MANU_DIBANGO_COMPILATION
     parsed = make_parsed_request(
-        song=S.song,
-        artist=S.artist,
-        raw_message=S.raw_message,
+        song=s.song,
+        artist=s.artist,
+        raw_message=s.raw_message,
     )
 
     context = build_context_message(parsed, found_on_compilation=True, song_not_found=False)
 
-    assert context == f'Found "{S.song}" by {S.artist} on:'
+    assert context == f'Found "{s.song}" by {s.artist} on:'
 
 
 def test_build_context_message_for_artist_fallback():
@@ -168,11 +168,11 @@ async def test_song_on_multiple_albums_returns_all():
         format="cd",
     )
 
-    S = APHEX_TWIN_MULTIPLE_ALBUMS
+    s = APHEX_TWIN_MULTIPLE_ALBUMS
     parsed = make_parsed_request(
-        song=S.song,
-        artist=S.artist,
-        raw_message=S.raw_message,
+        song=s.song,
+        artist=s.artist,
+        raw_message=s.raw_message,
     )
 
     # Simulate Discogs returning both releases, and library having both
@@ -264,11 +264,11 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
         format="cd",
     )
 
-    S = APHEX_TWIN_MULTIPLE_ALBUMS
+    s = APHEX_TWIN_MULTIPLE_ALBUMS
     parsed = make_parsed_request(
-        song=S.song,
-        artist=S.artist,
-        raw_message=S.raw_message,
+        song=s.song,
+        artist=s.artist,
+        raw_message=s.raw_message,
     )
 
     with patch(
@@ -354,8 +354,8 @@ async def test_compilation_filtering_rejects_wrong_artist_albums():
         format="cd",
     )
 
-    S = LUSH_TRACK_FILTER
-    parsed = make_parsed_request(song="Hypocrite", artist=S.artist, raw_message="Hypocrite by Lush")
+    s = LUSH_TRACK_FILTER
+    parsed = make_parsed_request(song="Hypocrite", artist=s.artist, raw_message="Hypocrite by Lush")
 
     with patch(
         "core.orchestration.lookup_releases_by_track", new_callable=AsyncMock
@@ -409,12 +409,12 @@ async def test_compilation_found_replaces_artist_albums():
         format="cd",
     )
 
-    S = MANU_DIBANGO_COMPILATION
+    s = MANU_DIBANGO_COMPILATION
     artist_albums = [
         LibraryItem(
             id=1,
             title="Soul Makossa",
-            artist=S.artist,
+            artist=s.artist,
             call_letters="DI",
             artist_call_number=12,
             release_call_number=1,
@@ -424,7 +424,7 @@ async def test_compilation_found_replaces_artist_albums():
         LibraryItem(
             id=2,
             title="Polysonik",
-            artist=S.artist,
+            artist=s.artist,
             call_letters="DI",
             artist_call_number=12,
             release_call_number=2,
@@ -434,7 +434,7 @@ async def test_compilation_found_replaces_artist_albums():
         LibraryItem(
             id=3,
             title="The Rough Guide",
-            artist=S.artist,
+            artist=s.artist,
             call_letters="DI",
             artist_call_number=12,
             release_call_number=3,
@@ -478,13 +478,13 @@ class TestFilterResultsByTrackValidation:
     to determine which ones actually contain the requested track.
     """
 
-    S = SNEAKER_PIMPS_TRACK_VALIDATION
+    s = SNEAKER_PIMPS_TRACK_VALIDATION
 
     @pytest.fixture
     def becoming_x(self):
         return LibraryItem(
             id=2725,
-            artist=self.S.artist,
+            artist=self.s.artist,
             title="Becoming X",
             call_letters="Sn",
             artist_call_number=5,
@@ -497,7 +497,7 @@ class TestFilterResultsByTrackValidation:
     def kiss_and_swallow(self):
         return LibraryItem(
             id=70823,
-            artist=self.S.artist,
+            artist=self.s.artist,
             title="Kiss & Swallow",
             call_letters="Sn",
             artist_call_number=5,
@@ -520,7 +520,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Becoming X",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=1273511,
                     )
                 ],
@@ -530,7 +530,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Kiss & Swallow",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=11181051,
                     )
                 ],
@@ -543,8 +543,8 @@ class TestFilterResultsByTrackValidation:
 
         results = await filter_results_by_track_validation(
             [becoming_x, kiss_and_swallow],
-            self.S.song,
-            self.S.artist,
+            self.s.song,
+            self.s.artist,
             mock_discogs,
         )
 
@@ -562,7 +562,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Becoming X",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=1273511,
                     )
                 ],
@@ -572,7 +572,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Kiss & Swallow",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=11181051,
                     )
                 ],
@@ -585,8 +585,8 @@ class TestFilterResultsByTrackValidation:
 
         results = await filter_results_by_track_validation(
             [becoming_x, kiss_and_swallow],
-            self.S.song,
-            self.S.artist,
+            self.s.song,
+            self.s.artist,
             mock_discogs,
         )
 
@@ -597,8 +597,8 @@ class TestFilterResultsByTrackValidation:
         """When Discogs service is unavailable, return None."""
         results = await filter_results_by_track_validation(
             [becoming_x, kiss_and_swallow],
-            self.S.song,
-            self.S.artist,
+            self.s.song,
+            self.s.artist,
             None,
         )
 
@@ -610,7 +610,7 @@ class TestFilterResultsByTrackValidation:
         mock_discogs = AsyncMock()
 
         results = await filter_results_by_track_validation(
-            [becoming_x], None, self.S.artist, mock_discogs
+            [becoming_x], None, self.s.artist, mock_discogs
         )
 
         assert results is None
@@ -625,7 +625,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Becoming X",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=1273511,
                     )
                 ],
@@ -639,8 +639,8 @@ class TestFilterResultsByTrackValidation:
 
         results = await filter_results_by_track_validation(
             [becoming_x, kiss_and_swallow],
-            self.S.song,
-            self.S.artist,
+            self.s.song,
+            self.s.artist,
             mock_discogs,
         )
 
@@ -659,7 +659,7 @@ class TestFilterResultsByTrackValidation:
                 results=[
                     DiscogsSearchResult(
                         album="Kiss & Swallow",
-                        artist=self.S.artist,
+                        artist=self.s.artist,
                         release_id=11181051,
                     )
                 ],
@@ -671,8 +671,8 @@ class TestFilterResultsByTrackValidation:
 
         results = await filter_results_by_track_validation(
             [becoming_x, kiss_and_swallow],
-            self.S.song,
-            self.S.artist,
+            self.s.song,
+            self.s.artist,
             mock_discogs,
         )
 
@@ -689,10 +689,10 @@ async def test_resolve_albums_accepts_alias_releases():
     "Plug" is an alias for "Luke Vibert" on Discogs. When Discogs returns
     releases by "Luke Vibert" for a search of "Plug", the album should be accepted.
     """
-    S = PLUG_ALIAS
+    s = PLUG_ALIAS
     parsed = make_parsed_request(
-        song=S.song,
-        artist=S.artist,
+        song=s.song,
+        artist=s.artist,
         raw_message="me and mr jones by plug",
     )
 
@@ -712,12 +712,12 @@ async def test_resolve_albums_accepts_alias_releases():
 @pytest.mark.asyncio
 async def test_filter_results_uses_alternate_artist_name():
     """filter_results_by_artist matches on alternate_artist_name when primary doesn't match."""
-    S = PLUG_ALIAS
+    s = PLUG_ALIAS
     items = [
         LibraryItem(
             id=38167,
             title="Drum 'n' Bass for Papa (+ Plug EPs 1,2 & 3)",
-            artist=S.artist,
+            artist=s.artist,
             alternate_artist_name="Luke Vibert",
         ),
         LibraryItem(

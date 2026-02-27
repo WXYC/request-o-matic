@@ -66,10 +66,10 @@ class TestDiscogsIntegration:
         """Test the actual Manu Dibango compilation search scenario."""
         assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
-        S = MANU_DIBANGO_COMPILATION
+        s = MANU_DIBANGO_COMPILATION
 
         # Test the real scenario
-        response = await service.search_releases_by_track(f"{S.song} (85 Remix)", S.artist)
+        response = await service.search_releases_by_track(f"{s.song} (85 Remix)", s.artist)
 
         print(f"\n✅ Found {len(response.releases)} releases on Discogs:")
         for i, release in enumerate(response.releases[:5], 1):
@@ -112,9 +112,9 @@ class TestDiscogsIntegration:
         """
         from discogs.lookup import lookup_releases_by_track
 
-        S = SUGAR_PLANT_FALSE_POSITIVE
-        assert S.song is not None and S.artist is not None
-        releases = await lookup_releases_by_track(S.song, S.artist)
+        s = SUGAR_PLANT_FALSE_POSITIVE
+        assert s.song is not None and s.artist is not None
+        releases = await lookup_releases_by_track(s.song, s.artist)
 
         print(f"\n✅ Found {len(releases)} releases on Discogs:")
         for i, (artist, album) in enumerate(releases[:10], 1):
@@ -261,10 +261,10 @@ class TestLibraryIntegration:
         db = LibraryDB(db_path=LIBRARY_DB_PATH)
         await db.connect()
 
-        S = ECHO_BUNNYMEN_ARTIST_ONLY
-        results = await db.search(query=S.artist, limit=5)
+        s = ECHO_BUNNYMEN_ARTIST_ONLY
+        results = await db.search(query=s.artist, limit=5)
 
-        print(f"\n✅ Found {len(results)} results for '{S.artist}':")
+        print(f"\n✅ Found {len(results)} results for '{s.artist}':")
         for result in results:
             print(f"  - {result.artist} - {result.title}")
             print(f"    Call: {result.call_number}")
@@ -338,8 +338,8 @@ class TestEndToEndIntegration:
         # Step 1: Search Discogs
         assert DISCOGS_TOKEN is not None
         service = DiscogsService(DISCOGS_TOKEN)
-        S = MANU_DIBANGO_COMPILATION
-        response = await service.search_releases_by_track(f"{S.song} (85 Remix)", S.artist)
+        s = MANU_DIBANGO_COMPILATION
+        response = await service.search_releases_by_track(f"{s.song} (85 Remix)", s.artist)
 
         print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
 
@@ -547,9 +547,9 @@ class TestParserIntegration:
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
-        S = QUIXOTIC_SPECIAL_CHARS
+        s = QUIXOTIC_SPECIAL_CHARS
 
-        result = parse_request(S.raw_message, client)
+        result = parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
@@ -611,9 +611,9 @@ class TestParserIntegration:
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
-        S = MI_AMI_COMMA_FORMAT
+        s = MI_AMI_COMMA_FORMAT
 
-        result = parse_request(S.raw_message, client)
+        result = parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -624,10 +624,10 @@ class TestParserIntegration:
         assert result.song is not None, "Should extract song title"
         assert result.artist is not None, "Should extract artist name"
         assert "man" in result.song.lower() and "house" in result.song.lower(), (
-            f"Expected song '{S.song}', got: {result.song}"
+            f"Expected song '{s.song}', got: {result.song}"
         )
         assert "mi ami" in result.artist.lower(), (
-            f"Expected artist '{S.artist}', got: {result.artist}"
+            f"Expected artist '{s.artist}', got: {result.artist}"
         )
 
         print("  ✅ Correctly parsed comma-separated format!")
@@ -685,10 +685,10 @@ class TestParserIntegration:
         from services.parser import parse_request
 
         client = Groq(api_key=GROQ_API_KEY)
-        S = ETERNAL_HALLUCINATION
-        assert S.artist is not None and S.song is not None
+        s = ETERNAL_HALLUCINATION
+        assert s.artist is not None and s.song is not None
 
-        result = parse_request(S.raw_message, client)
+        result = parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
@@ -700,8 +700,8 @@ class TestParserIntegration:
 
         # Artist should be exactly what the listener wrote, not a hallucination
         assert result.artist is not None, "Should extract artist"
-        assert result.artist.lower() == S.artist.lower(), (
-            f"Expected artist '{S.artist}' (from message), got: {result.artist}"
+        assert result.artist.lower() == s.artist.lower(), (
+            f"Expected artist '{s.artist}' (from message), got: {result.artist}"
         )
         assert "eternalux" not in (result.artist or "").lower(), (
             "Artist 'Eternalux' is hallucinated -- not in the original message"
@@ -741,19 +741,19 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = ECHO_BUNNYMEN_ARTIST_ONLY
+        s = ECHO_BUNNYMEN_ARTIST_ONLY
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
 
         # Check parsing
         parsed = data.get("parsed", {})
-        assert parsed.get("artist") == S.artist, (
-            f"Should parse artist as '{S.artist}', got {parsed.get('artist')}"
+        assert parsed.get("artist") == s.artist, (
+            f"Should parse artist as '{s.artist}', got {parsed.get('artist')}"
         )
 
         # Check results
@@ -782,11 +782,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = MEET_ME_IN_CITY
+        s = MEET_ME_IN_CITY
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -804,7 +804,7 @@ class TestFullRequestIntegration:
             print(f"  - {r.get('artist')} - {r.get('title')} ({r.get('call_number')})")
 
         # Should have results
-        assert len(results) > 0, f"Should find results for {S.artist}"
+        assert len(results) > 0, f"Should find results for {s.artist}"
 
         # The first result should be "Meet Me in the City", NOT "Do the Rump"
         first_result = results[0]
@@ -828,11 +828,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = LUSH_TRACK_FILTER
+        s = LUSH_TRACK_FILTER
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -884,11 +884,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = BIOSPHERE_ALBUM_FILTER
+        s = BIOSPHERE_ALBUM_FILTER
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -940,18 +940,18 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = YOUNG_GOV_PREFIX
+        s = YOUNG_GOV_PREFIX
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for '{S.artist}':")
+        print(f"\n📚 Library Results for '{s.artist}':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -979,19 +979,19 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = LAID_BACK_ARTIST_VS_TITLE
-        assert S.artist is not None
+        s = LAID_BACK_ARTIST_VS_TITLE
+        assert s.artist is not None
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for '{S.artist}':")
+        print(f"\n📚 Library Results for '{s.artist}':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1009,7 +1009,7 @@ class TestFullRequestIntegration:
             artist = r.get("artist", "").lower()
             title = r.get("title", "").lower()
 
-            assert S.artist.lower() in artist or S.artist.lower() in title, (
+            assert s.artist.lower() in artist or s.artist.lower() in title, (
                 f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
             )
 
@@ -1026,18 +1026,18 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = TOY_WORD_BOUNDARY
+        s = TOY_WORD_BOUNDARY
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for '{S.artist}':")
+        print(f"\n📚 Library Results for '{s.artist}':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1063,18 +1063,18 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = AMPS_FOR_CHRIST_AMBIGUOUS
+        s = AMPS_FOR_CHRIST_AMBIGUOUS
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.artist, "skip_slack": True},
+                json={"message": s.artist, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
 
         results = data.get("library_results", [])
 
-        print(f"\n📚 Library Results for '{S.artist}':")
+        print(f"\n📚 Library Results for '{s.artist}':")
         for r in results:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
@@ -1109,11 +1109,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = HOLLAND_1945
+        s = HOLLAND_1945
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1153,11 +1153,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = MI_AMI_COMMA_FORMAT
+        s = MI_AMI_COMMA_FORMAT
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1205,11 +1205,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = LIVING_COLOR_SPELLING
+        s = LIVING_COLOR_SPELLING
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1251,11 +1251,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = SUGAR_PLANT_FALSE_POSITIVE
+        s = SUGAR_PLANT_FALSE_POSITIVE
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1404,11 +1404,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = SNEAKER_PIMPS_TRACK_VALIDATION
+        s = SNEAKER_PIMPS_TRACK_VALIDATION
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1512,11 +1512,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = PLUG_ALIAS
+        s = PLUG_ALIAS
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": S.raw_message, "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
@@ -1554,11 +1554,11 @@ class TestFullRequestIntegration:
         """
         import httpx
 
-        S = PLUG_ALIAS
+        s = PLUG_ALIAS
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{base_url}/request",
-                json={"message": "me and mr jones by plug", "skip_slack": True},
+                json={"message": s.raw_message, "skip_slack": True},
             )
             response.raise_for_status()
             data = response.json()
