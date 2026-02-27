@@ -468,6 +468,7 @@ class TestFindSimilarArtist:
     @pytest.mark.asyncio
     async def test_color_to_colour(self, spelling_db: LibraryDB):
         """Test that 'Living Color' corrects to 'Living Colour'."""
+        assert LIVING_COLOR_SPELLING.artist is not None
         result = await spelling_db.find_similar_artist(LIVING_COLOR_SPELLING.artist)
 
         assert result == "Living Colour"
@@ -519,6 +520,7 @@ class TestFindSimilarArtist:
         For short names, a single character difference is proportionally large,
         so the threshold should be raised to prevent false corrections.
         """
+        assert PLUG_ALIAS.artist is not None
         result = await spelling_db.find_similar_artist(PLUG_ALIAS.artist)
 
         assert result is None, (

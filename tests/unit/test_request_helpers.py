@@ -478,6 +478,7 @@ class TestSearchWithAlternativeInterpretation:
     async def test_finds_correct_artist_first_interpretation(self, mock_library_db):
         """Test finding results when only first interpretation (part1=artist) matches."""
         S = AMPS_FOR_CHRIST_AMBIGUOUS
+        assert S.artist is not None and S.song is not None
         # First search (part1 as artist) returns match
         # Second search (part2 as artist) returns no matching artist
         mock_library_db.search.side_effect = [
@@ -569,6 +570,7 @@ class TestSearchWithAlternativeInterpretation:
         The function returns results from both interpretations so users can pick.
         """
         S = AMPS_FOR_CHRIST_AMBIGUOUS
+        assert S.artist is not None and S.song is not None
         mock_library_db.search.side_effect = [
             # First query: "Amps for Christ Edward" - filtered by "Amps for Christ"
             [
