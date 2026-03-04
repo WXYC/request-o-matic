@@ -8,9 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from core.dependencies import (
-    get_discogs_service,
     get_groq_client,
-    get_library_db,
     get_lookup_client,
     get_posthog_client,
     get_slack_service,
@@ -70,38 +68,13 @@ def app(mock_lookup_client):
     app.include_router(router, prefix="/api/v1")
 
     mock_groq = Mock()
-    mock_db = AsyncMock()
     mock_slack = AsyncMock()
     mock_slack.webhook_url = "https://hooks.slack.com/test"
 
     app.dependency_overrides[get_groq_client] = lambda: mock_groq
-    app.dependency_overrides[get_library_db] = lambda: mock_db
-    app.dependency_overrides[get_discogs_service] = lambda: None
     app.dependency_overrides[get_slack_service] = lambda: mock_slack
     app.dependency_overrides[get_posthog_client] = lambda: None
     app.dependency_overrides[get_lookup_client] = lambda: mock_lookup_client
-
-    return app
-
-
-@pytest.fixture
-def inline_app():
-    """Create a test app with delegation disabled (lookup_client=None)."""
-    app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
-
-    mock_groq = Mock()
-    mock_db = AsyncMock()
-    mock_db.find_similar_artist = AsyncMock(return_value=None)
-    mock_slack = AsyncMock()
-    mock_slack.webhook_url = "https://hooks.slack.com/test"
-
-    app.dependency_overrides[get_groq_client] = lambda: mock_groq
-    app.dependency_overrides[get_library_db] = lambda: mock_db
-    app.dependency_overrides[get_discogs_service] = lambda: None
-    app.dependency_overrides[get_slack_service] = lambda: mock_slack
-    app.dependency_overrides[get_posthog_client] = lambda: None
-    app.dependency_overrides[get_lookup_client] = lambda: None
 
     return app
 
@@ -145,31 +118,6 @@ class TestDelegationBranch:
         assert data["artwork"]["artwork_url"] == "https://img.discogs.com/test.jpg"
         assert data["song_not_found"] is False
         assert data["found_on_compilation"] is False
-
-    @pytest.mark.asyncio
-    async def test_delegation_skips_inline_pipeline(
-        self, app, mock_lookup_client, sample_lookup_response
-    ):
-        """When lookup_client is present, inline search functions are not called."""
-        mock_lookup_client.lookup.return_value = sample_lookup_response
-
-        with (
-            patch("routers.request.parse_request", return_value=SAMPLE_PARSED),
-            patch("routers.request.execute_search_pipeline") as mock_search,
-            patch("routers.request.fetch_artwork_for_items") as mock_artwork,
-            patch("routers.request.resolve_albums_for_track") as mock_resolve,
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play queen", "skip_slack": True},
-                )
-
-        mock_search.assert_not_called()
-        mock_artwork.assert_not_called()
-        mock_resolve.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_delegation_maps_response_fields(self, app, mock_lookup_client):

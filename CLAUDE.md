@@ -8,23 +8,19 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 
 ### Request Flow
 1. **Parse**: Groq AI (`llama-3.1-8b-instant`) extracts artist/song/album from message
-2. **Album Lookup**: If song provided without album, query Discogs for album name
-3. **Library Search**: Search SQLite database with fuzzy matching
-4. **Artist Filtering**: Filter results to match requested artist (prefix matching)
-5. **Compilation Search**: If no results, search for track on compilations
-6. **Track Validation**: If fallback returned all artist albums, validate each against Discogs tracklists to keep only albums containing the requested track
-7. **Artwork**: Fetch album art from Discogs
-8. **Slack**: Post formatted results with artwork
+2. **Early return**: Non-request messages (feedback, DJ messages) are posted to Slack without search
+3. **Delegate**: Search is delegated to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) via HTTP (`LOOKUP_SERVICE_URL`). If not configured, returns HTTP 503.
+4. **Slack**: Post enriched results with artwork to Slack
 
 ### Key Files
-- `routers/request.py` - Main request handling and search orchestration
+- `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
 - `services/parser.py` - Groq AI message parsing
-- `library/db.py` - SQLite full-text search with FTS5 and fuzzy fallback
-- `discogs/service.py` - Discogs API service with optional PostgreSQL cache
+- `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
+- `library/db.py` - SQLite full-text search with FTS5 (used by library router)
+- `discogs/service.py` - Discogs API service with optional PostgreSQL cache (used by Discogs router)
 - `discogs/cache_service.py` - PostgreSQL cache for Discogs data (reduces API calls)
 - `discogs/memory_cache.py` - In-memory TTL cache for API responses
-- `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
-- `core/matching.py` - Shared text normalization, artist matching, deduplication, and track validation utilities
+- `core/matching.py` - Shared text normalization, compilation detection, confidence scoring, and track validation
 - `core/sentry.py` - Sentry error tracking integration
 - `core/telemetry.py` - PostHog telemetry with cache stats tracking
 ### Discogs Cache (Optional)
@@ -165,18 +161,7 @@ Example (from Sugar Plant bug fix):
 
 ## Common Issues and Fixes
 
-### False Positive Artist Matches
-The `filter_results_by_artist()` function uses **prefix matching** to avoid:
-- "Toy" matching "Chew Toy"
-- "Young Gov" matching "Young Black Teenagers"
-
-Artists must appear at the START of the result's artist field.
-
-### Ambiguous "X - Y" Formats
-Messages like "Artist - Title" or "Title - Artist" are ambiguous. The `detect_ambiguous_format()` and `search_with_alternative_interpretation()` functions try both interpretations and return all matches.
-
-### Compilation Search False Positives
-The keyword search in `search_compilations_for_track()` filters results by artist to prevent matching albums that happen to share a song title (e.g., "The All Seeing Eye" album by Wayne Shorter when searching for a song by Toy).
+Search logic (artist matching, ambiguous format handling, compilation search) lives in the [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) service. See that repo's documentation for details on false positive filtering, ambiguous format handling, and compilation search.
 
 ## Environment Variables
 
@@ -188,7 +173,7 @@ Optional:
 - `SLACK_WEBHOOK_URL` - For posting results
 - `SENTRY_DSN` - For error tracking (Sentry)
 - `DATABASE_URL_DISCOGS` - PostgreSQL URL for Discogs cache (e.g., `postgresql://user:pass@host:5432/discogs`)
-- `LOOKUP_SERVICE_URL` - Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). When set, delegates all search operations to this service. If unset, uses inline search pipeline. Errors propagate as 502.
+- `LOOKUP_SERVICE_URL` - **Required.** Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). All search is delegated to this service. If unset, song requests return HTTP 503. Errors propagate as 502.
 
 Library ETL (for `scripts/sync-library.sh`):
 - `LIBRARY_SSH_HOST` - SSH host to connect to
