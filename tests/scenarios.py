@@ -283,6 +283,7 @@ UNIT_COVERAGE: dict[str, list[str]] = {
         "tests/unit/test_request_flow.py::TestFilterResultsByTrackValidation::test_returns_none_when_no_song",
         "tests/unit/test_request_flow.py::TestFilterResultsByTrackValidation::test_handles_discogs_search_returning_no_results",
         "tests/unit/test_request_flow.py::TestFilterResultsByTrackValidation::test_handles_discogs_exception_gracefully",
+        "tests/unit/test_request_helpers.py::test_search_library_falls_back_to_artist_when_discogs_albums_not_in_library",
     ],
     "biosphere_album_filter": [
         "tests/unit/test_request_helpers.py::test_search_library_with_fallback_filters_by_album_title",
@@ -323,7 +324,7 @@ UNIT_COVERAGE: dict[str, list[str]] = {
     "flow_coma_808_state": [
         "tests/unit/test_orchestration.py::test_search_album_fuzzy_rejects_subset_match",
         "tests/unit/test_orchestration.py::test_search_album_fuzzy_rejects_subset_match_on_exact_search",
-        "tests/unit/test_request_helpers.py::test_search_library_no_fallback_when_discogs_found_albums",
+        "tests/unit/test_request_helpers.py::test_search_library_artist_fallback_when_discogs_albums_not_in_library",
     ],
 }
 
