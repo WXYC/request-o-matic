@@ -17,6 +17,7 @@ from tests.scenarios import (
     BIOSPHERE_ALBUM_FILTER,
     FLOW_COMA_808_STATE,
     LAID_BACK_ARTIST_VS_TITLE,
+    SNEAKER_PIMPS_TRACK_VALIDATION,
     TOY_WORD_BOUNDARY,
     YOUNG_GOV_PREFIX,
 )
@@ -166,13 +167,14 @@ async def test_search_library_with_fallback_artist_only_when_no_discogs_albums(m
 
 
 @pytest.mark.asyncio
-async def test_search_library_no_fallback_when_discogs_found_albums(mock_library_db):
-    """When Discogs found specific albums but none are in the library, don't fall back.
+async def test_search_library_artist_fallback_when_discogs_albums_not_in_library(mock_library_db):
+    """When Discogs found specific albums but none are in library, artist fallback runs.
 
-    Bug (FLOW_COMA_808_STATE): Discogs finds "Flow Coma" on "The Best Of 808 State:
-    Blueprint", but the library doesn't have that album. The old code fell back to
-    artist+song/artist-only search, returning the unrelated "808 State" (self-titled)
-    album which does NOT contain "Flow Coma".
+    Scenario (FLOW_COMA_808_STATE): Discogs finds "Flow Coma" on "The Best Of
+    808 State: Blueprint" but the library doesn't have it. The artist+song fallback
+    returns the "808 State" self-titled album, which is a false positive.
+    filter_results_by_track_validation() (tested separately in
+    TestFilterResultsByTrackValidation) rejects it because "Flow Coma" isn't on it.
     """
     _ = FLOW_COMA_808_STATE  # link to scenario
 
@@ -187,12 +189,11 @@ async def test_search_library_no_fallback_when_discogs_found_albums(mock_library
         release_call_number=1,
     )
 
-    # Album search returns empty, but artist+song and artist-only searches
-    # would return the false positive (if they ran).
+    # Album search returns empty, but artist+song fallback returns the false positive.
     mock_library_db.search.side_effect = [
         [],  # album search: no match for "The Best Of 808 State: Blueprint"
-        [false_positive],  # artist+song: would match "808 State Flow Coma" via fuzzy
-        [false_positive],  # artist-only: would match "808 State"
+        [false_positive],  # artist+song: "808 State Flow Coma" matches via fuzzy
+        [false_positive],  # artist-only: "808 State" matches
     ]
 
     parsed = make_parsed_request(
@@ -205,14 +206,70 @@ async def test_search_library_no_fallback_when_discogs_found_albums(mock_library
         mock_library_db, parsed, ["The Best Of 808 State: Blueprint"]
     )
 
-    # Should return empty — don't fall back to generic artist search
-    assert results == [], (
-        "Should not fall back to artist search when Discogs found specific albums. "
-        "Returning '808 State' (self-titled) would be a false positive."
+    # Artist+song fallback now returns the false positive; it's the job of
+    # filter_results_by_track_validation() to reject it downstream.
+    assert len(results) == 1
+    assert results[0].title == "808 State"
+    assert fallback_used is True
+    assert mock_library_db.search.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_search_library_falls_back_to_artist_when_discogs_albums_not_in_library(
+    mock_library_db,
+):
+    """When Discogs found only singles/EPs not in library, fall through to artist search.
+
+    Bug (SNEAKER_PIMPS_TRACK_VALIDATION): "6 underground by sneaker pimps" — Discogs
+    only returns singles which aren't in the library. The artist-only fallback should
+    still run, returning all Sneaker Pimps albums. filter_results_by_track_validation()
+    (called by perform_lookup) then validates each against Discogs tracklists.
+    """
+    _ = SNEAKER_PIMPS_TRACK_VALIDATION  # link to scenario
+
+    becoming_x = LibraryItem(
+        id=1,
+        artist="Sneaker Pimps",
+        title="Becoming X",
+        call_letters="S",
+        artist_call_number=1,
+        release_call_number=1,
+        genre="Electronic",
+        format="CD",
+    )
+    kiss_swallow = LibraryItem(
+        id=2,
+        artist="Sneaker Pimps",
+        title="Kiss & Swallow",
+        call_letters="S",
+        artist_call_number=1,
+        release_call_number=2,
+        genre="Electronic",
+        format="CD",
+    )
+    mock_library_db.search.side_effect = [
+        [],  # album search for "6 Underground (Rewired)" → no match
+        [],  # album search for "6 Underground" → no match
+        [],  # artist+song "Sneaker Pimps 6 Underground" → no match
+        [becoming_x, kiss_swallow],  # artist-only "Sneaker Pimps" → both albums
+    ]
+
+    parsed = make_parsed_request(
+        song="6 Underground",
+        artist="Sneaker Pimps",
+        raw_message="6 underground - sneaker pimps",
+    )
+
+    results, fallback_used = await search_library_with_fallback(
+        mock_library_db,
+        parsed,
+        ["6 Underground (Rewired)", "6 Underground"],
+    )
+    assert len(results) == 2, (
+        "Artist-only fallback should return both Sneaker Pimps albums; "
+        "filter_results_by_track_validation handles false-positive filtering"
     )
     assert fallback_used is True
-    # Should only have searched for the specific album, not done artist+song or artist-only
-    assert mock_library_db.search.call_count == 1
 
 
 @pytest.mark.asyncio

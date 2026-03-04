@@ -317,15 +317,14 @@ async def search_library_with_fallback(
             sort_by_title_relevance(all_results, albums[0])
             return all_results, False
 
-        # Discogs found specific albums for this track but none matched in the
-        # library.  Don't fall through to generic artist search — that would
-        # return unrelated albums (e.g., "808 State" self-titled for a track
-        # on "The Best Of 808 State: Blueprint").  The compilation search
-        # strategy runs next and can still find the track.
+        # When Discogs found albums but none matched the library, fall through to
+        # artist+song and artist-only search.  filter_results_by_track_validation()
+        # (called by perform_lookup after the search pipeline) validates fallback
+        # results against Discogs tracklists to prevent false positives.
         logger.info(
-            f"Discogs found albums {albums} but none matched in library; skipping artist fallback"
+            f"Discogs found albums {albums} but none matched in library; "
+            "falling through to artist search"
         )
-        return [], True
 
     # If no albums from Discogs, try artist + song
     # This is a fallback when we couldn't confirm which album contains the track
