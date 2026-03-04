@@ -301,19 +301,18 @@ async def test_compilation_filtering_allows_soundtrack_when_discogs_says_various
 
         results, discogs_titles = await search_compilations_for_track(mock_db, parsed)
 
-    # Current behavior: when Discogs says "Various" released something,
-    # ANY compilation-type album from the fuzzy search is allowed through.
-    # This is permissive but may cause false positives.
-    # For refactoring, we preserve this behavior.
-    assert len(results) == 3, (
-        f"Expected 3 results, got {len(results)}: {[r.title for r in results]}"
+    # The fuzz.ratio + prefix gate in search_album_fuzzy filters out unrelated
+    # compilations whose titles don't match the Discogs album title.
+    assert len(results) == 2, (
+        f"Expected 2 results, got {len(results)}: {[r.title for r in results]}"
     )
 
     result_ids = {r.id for r in results}
     assert 101 in result_ids, "Should include artist's own album"
     assert 100 in result_ids, "Should include soundtrack (Discogs said 'Various')"
-    assert 102 in result_ids, (
-        "Current behavior: unrelated compilation also included (permissive filter)"
+    assert 102 not in result_ids, (
+        "Unrelated compilation should be excluded — its title 'Random Electronic "
+        "Compilation' is not similar enough to 'Morvern Callar'"
     )
 
 

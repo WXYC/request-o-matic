@@ -83,3 +83,38 @@ async def test_search_album_fuzzy_rejects_subset_match():
         "'Essential Dance Music Classics Volume Three' — "
         "token_set_ratio is 100% due to subset bias but fuzz.ratio is only 41%"
     )
+
+
+@pytest.mark.asyncio
+async def test_search_album_fuzzy_rejects_subset_match_on_exact_search():
+    """search_album_fuzzy should also filter exact FTS5 results by length-sensitive similarity.
+
+    Bug (FLOW_COMA_808_STATE): FTS5 tokenizes "The Best Of 808 State: Blueprint" and
+    matches "808 State" because it contains tokens "808" and "State". The fuzz.ratio gate
+    was only on the fuzzy fallback path, so the exact search returned false positives.
+    """
+    _ = FLOW_COMA_808_STATE  # link to scenario
+
+    db = AsyncMock()
+    # Exact FTS5 search returns the false positive directly
+    db.search = AsyncMock(
+        return_value=[
+            LibraryItem(
+                id=958,
+                title="808 State",
+                artist="808 State",
+                genre="Electronic",
+                format="vinyl",
+                call_letters="Ei",
+                artist_call_number=1,
+                release_call_number=1,
+            )
+        ]
+    )
+
+    results = await search_album_fuzzy(db, "The Best Of 808 State: Blueprint")
+    assert results == [], (
+        "Should reject '808 State' as a match for "
+        "'The Best Of 808 State: Blueprint' — "
+        "FTS5 matches on shared tokens but fuzz.ratio correctly penalizes length mismatch"
+    )
