@@ -322,6 +322,8 @@ UNIT_COVERAGE: dict[str, list[str]] = {
     "eternal_hallucination": [],  # MISSING
     "flow_coma_808_state": [
         "tests/unit/test_orchestration.py::test_search_album_fuzzy_rejects_subset_match",
+        "tests/unit/test_orchestration.py::test_search_album_fuzzy_rejects_subset_match_on_exact_search",
+        "tests/unit/test_request_helpers.py::test_search_library_no_fallback_when_discogs_found_albums",
     ],
 }
 

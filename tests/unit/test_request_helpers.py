@@ -15,6 +15,7 @@ from tests.scenarios import (
     AMPS_FOR_CHRIST_AMBIGUOUS,
     BAND_COMMON_WORD,
     BIOSPHERE_ALBUM_FILTER,
+    FLOW_COMA_808_STATE,
     LAID_BACK_ARTIST_VS_TITLE,
     TOY_WORD_BOUNDARY,
     YOUNG_GOV_PREFIX,
@@ -129,12 +130,16 @@ async def test_search_library_with_fallback_full_query(mock_library_db):
 
 
 @pytest.mark.asyncio
-async def test_search_library_with_fallback_artist_only(mock_library_db):
-    """Test library search falling back to artist only."""
-    # First call returns empty, second (artist+song) returns empty, third returns results
+async def test_search_library_with_fallback_artist_only_when_no_discogs_albums(mock_library_db):
+    """Test library search falling back to artist only when Discogs found no albums.
+
+    When albums=[] (Discogs couldn't find any albums for the track), the fallback
+    to artist+song and artist-only search should still work, since we have no
+    specific albums to search for.
+    """
+    # First search (artist+song) returns empty, second (artist only) returns results
     mock_library_db.search.side_effect = [
-        [],  # First search with artist+album
-        [],  # Second search with artist+song
+        [],  # First search with artist+song
         [
             LibraryItem(
                 id=2,
@@ -146,21 +151,68 @@ async def test_search_library_with_fallback_artist_only(mock_library_db):
                 genre="Rock",
                 format="CD",
             )
-        ],  # Third search with artist only
+        ],  # Second search with artist only
     ]
 
     parsed = make_parsed_request(
         song="Test Song", artist="Queen", album="Unknown Album", raw_message="Test"
     )
 
-    results, fallback_used = await search_library_with_fallback(
-        mock_library_db, parsed, ["Unknown Album"]
-    )
+    results, fallback_used = await search_library_with_fallback(mock_library_db, parsed, [])
 
     assert len(results) == 1
     assert results[0].artist == "Queen"
     assert fallback_used is True
-    assert mock_library_db.search.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_search_library_no_fallback_when_discogs_found_albums(mock_library_db):
+    """When Discogs found specific albums but none are in the library, don't fall back.
+
+    Bug (FLOW_COMA_808_STATE): Discogs finds "Flow Coma" on "The Best Of 808 State:
+    Blueprint", but the library doesn't have that album. The old code fell back to
+    artist+song/artist-only search, returning the unrelated "808 State" (self-titled)
+    album which does NOT contain "Flow Coma".
+    """
+    _ = FLOW_COMA_808_STATE  # link to scenario
+
+    false_positive = LibraryItem(
+        id=958,
+        artist="808 State",
+        title="808 State",
+        genre="Electronic",
+        format="vinyl",
+        call_letters="Ei",
+        artist_call_number=1,
+        release_call_number=1,
+    )
+
+    # Album search returns empty, but artist+song and artist-only searches
+    # would return the false positive (if they ran).
+    mock_library_db.search.side_effect = [
+        [],  # album search: no match for "The Best Of 808 State: Blueprint"
+        [false_positive],  # artist+song: would match "808 State Flow Coma" via fuzzy
+        [false_positive],  # artist-only: would match "808 State"
+    ]
+
+    parsed = make_parsed_request(
+        song="Flow Coma",
+        artist="808 State",
+        raw_message="flow coma by 808 state",
+    )
+
+    results, fallback_used = await search_library_with_fallback(
+        mock_library_db, parsed, ["The Best Of 808 State: Blueprint"]
+    )
+
+    # Should return empty — don't fall back to generic artist search
+    assert results == [], (
+        "Should not fall back to artist search when Discogs found specific albums. "
+        "Returning '808 State' (self-titled) would be a false positive."
+    )
+    assert fallback_used is True
+    # Should only have searched for the specific album, not done artist+song or artist-only
+    assert mock_library_db.search.call_count == 1
 
 
 @pytest.mark.asyncio

@@ -317,6 +317,16 @@ async def search_library_with_fallback(
             sort_by_title_relevance(all_results, albums[0])
             return all_results, False
 
+        # Discogs found specific albums for this track but none matched in the
+        # library.  Don't fall through to generic artist search — that would
+        # return unrelated albums (e.g., "808 State" self-titled for a track
+        # on "The Best Of 808 State: Blueprint").  The compilation search
+        # strategy runs next and can still find the track.
+        logger.info(
+            f"Discogs found albums {albums} but none matched in library; skipping artist fallback"
+        )
+        return [], True
+
     # If no albums from Discogs, try artist + song
     # This is a fallback when we couldn't confirm which album contains the track
     if parsed.artist and parsed.song:
@@ -517,18 +527,10 @@ async def search_compilations_for_track(
     # Strategy 2: Discogs cross-reference (preferred -- knows actual track listings)
     results, discogs_titles = await _discogs_cross_reference(db, parsed, discogs_service)
 
-    # If Discogs didn't find anything, fall back to keyword matches —
-    # but validate them first to avoid false positives like "808 State" album
-    # matching "flow coma" just because the FTS5 query includes artist tokens.
+    # If Discogs didn't find anything, fall back to keyword matches
     if not results and keyword_matches:
-        validated = await filter_results_by_track_validation(
-            keyword_matches[:1], parsed.song, parsed.artist, discogs_service
-        )
-        if validated:
-            logger.info("Using validated keyword matches as fallback")
-            results = deduplicate(results + validated)
-        else:
-            logger.info("Keyword matches failed track validation, discarding")
+        logger.info("Discogs search found nothing, using keyword matches as fallback")
+        results = deduplicate(results + keyword_matches[:1])
 
     # Prioritize albums whose title matches the song title
     # (e.g., "Meet Me in the City" album for song "Meet Me in the City")
