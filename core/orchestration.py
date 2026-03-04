@@ -530,6 +530,24 @@ async def search_compilations_for_track(
     return limit_results(results), discogs_titles
 
 
+def _album_title_acceptable(query_lower: str, result_lower: str) -> bool:
+    """Check if a library album title is an acceptable match for a Discogs album title.
+
+    Accepts if EITHER:
+    - fuzz.ratio >= 50 (titles are similar in length and content), OR
+    - one title is a prefix of the other (library often omits parentheticals,
+      e.g. "Morvern Callar" vs "Morvern Callar (Original Motion Picture Soundtrack)")
+
+    Rejects cases like "808 State" matching "The Best Of 808 State: Blueprint"
+    where tokens overlap but the titles refer to different albums.
+    """
+    from rapidfuzz import fuzz
+
+    if query_lower.startswith(result_lower) or result_lower.startswith(query_lower):
+        return True
+    return fuzz.ratio(query_lower, result_lower) >= 50
+
+
 async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryItem]:
     """Search for album with fuzzy keyword matching.
 
@@ -544,6 +562,19 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
 
     # Try exact search first (use higher limit to allow artist filtering later)
     results = await db.search(query=album_title, limit=MAX_SEARCH_RESULTS)
+
+    # Filter exact results by length-sensitive similarity to prevent FTS5
+    # false positives. FTS5 tokenizes the query and matches on any shared
+    # tokens, so "The Best Of 808 State: Blueprint" matches "808 State".
+    # Accept a result if EITHER:
+    #  - fuzz.ratio >= 50 (titles are similar in length and content), OR
+    #  - one title is a prefix of the other (library often omits parentheticals,
+    #    e.g. "Morvern Callar" vs "Morvern Callar (Original Motion Picture Soundtrack)")
+    if results:
+        album_lower = album_title.lower()
+        results = [
+            r for r in results if _album_title_acceptable(album_lower, (r.title or "").lower())
+        ]
 
     if not results:
         significant_words = list(extract_significant_words(album_title, min_length=3))
@@ -568,28 +599,22 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
                     # Calculate overall fuzzy similarity
                     similarity = fuzz.token_set_ratio(album_lower, result_title_lower)
 
-                    # fuzz.ratio is length-sensitive — penalizes large length
-                    # differences that token_set_ratio ignores (subset bias).
-                    standard_similarity = fuzz.ratio(album_lower, result_title_lower)
+                    # Require keyword overlap AND title acceptability (same
+                    # length-sensitive check used for exact results).
+                    title_ok = _album_title_acceptable(album_lower, result_title_lower)
 
-                    # Require ALL THREE:
-                    # 1. 2+ keyword matches
-                    # 2. 60% token_set_ratio (token overlap)
-                    # 3. 50% fuzz.ratio (length-sensitive similarity)
-                    # This prevents short library titles from matching long Discogs
-                    # album names just because their tokens are a subset.
-                    if keyword_matches >= 2 and similarity >= 60 and standard_similarity >= 50:
+                    if keyword_matches >= 2 and similarity >= 60 and title_ok:
                         logger.debug(
                             f"Album match: '{result.title}' "
                             f"(keywords={keyword_matches}, "
-                            f"token_set={similarity}, ratio={standard_similarity:.0f})"
+                            f"token_set={similarity}, title_ok={title_ok})"
                         )
                         filtered_results.append(result)
                     else:
                         logger.debug(
                             f"Album rejected: '{result.title}' "
                             f"(keywords={keyword_matches}, "
-                            f"token_set={similarity}, ratio={standard_similarity:.0f})"
+                            f"token_set={similarity}, title_ok={title_ok})"
                         )
 
                 results = filtered_results
