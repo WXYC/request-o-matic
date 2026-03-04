@@ -517,10 +517,18 @@ async def search_compilations_for_track(
     # Strategy 2: Discogs cross-reference (preferred -- knows actual track listings)
     results, discogs_titles = await _discogs_cross_reference(db, parsed, discogs_service)
 
-    # If Discogs didn't find anything, fall back to keyword matches
+    # If Discogs didn't find anything, fall back to keyword matches —
+    # but validate them first to avoid false positives like "808 State" album
+    # matching "flow coma" just because the FTS5 query includes artist tokens.
     if not results and keyword_matches:
-        logger.info("Discogs search found nothing, using keyword matches as fallback")
-        results = deduplicate(results + keyword_matches[:1])
+        validated = await filter_results_by_track_validation(
+            keyword_matches[:1], parsed.song, parsed.artist, discogs_service
+        )
+        if validated:
+            logger.info("Using validated keyword matches as fallback")
+            results = deduplicate(results + validated)
+        else:
+            logger.info("Keyword matches failed track validation, discarding")
 
     # Prioritize albums whose title matches the song title
     # (e.g., "Meet Me in the City" album for song "Meet Me in the City")
