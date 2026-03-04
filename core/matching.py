@@ -1,25 +1,16 @@
 """Shared matching constants and utilities for search operations.
 
-This module centralizes the matching rules used throughout the search flow.
-Constants were consolidated from multiple locations to ensure consistency.
+This module centralizes the matching rules used by the library database,
+Discogs service, and Discogs cache service.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Hashable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from discogs.models import TrackItem
-    from library.models import LibraryItem
-
-# =============================================================================
-# Search Result Limiting
-# =============================================================================
-
-MAX_SEARCH_RESULTS = 5
-"""Maximum number of results to return from search operations."""
 
 
 # =============================================================================
@@ -83,83 +74,6 @@ def normalize_text(text: str) -> str:
     """
     result = re.sub(r"[^\w\s]", " ", text.lower(), flags=re.ASCII)
     return " ".join(result.split())
-
-
-def extract_significant_words(text: str, min_length: int = 3) -> set[str]:
-    """Extract significant words from text after normalization.
-
-    Applies the full pipeline: lowercase, remove punctuation, split into words,
-    filter by minimum length, and remove stopwords.
-
-    Args:
-        text: Input text to extract words from
-        min_length: Exclude words with length <= this value (e.g., min_length=3
-            excludes words of 3 or fewer characters)
-
-    Returns:
-        Set of significant lowercase words
-    """
-    normalized = normalize_text(text)
-    return {w for w in normalized.split() if len(w) > min_length and w not in STOPWORDS}
-
-
-def matches_artist_or_compilation(
-    item_artist: str,
-    target_artist: str,
-    allow_compilations: bool = True,
-) -> bool:
-    """Check if an item's artist matches the target via prefix, or is a compilation.
-
-    This combines the common pattern of checking whether a library item's artist
-    field starts with the searched artist name (prefix matching to avoid false
-    positives like "Toy" matching "Chew Toy") OR is a compilation/soundtrack.
-
-    Args:
-        item_artist: Artist name from a library item or search result
-        target_artist: Artist name being searched for
-        allow_compilations: If True, compilation/soundtrack artists are accepted.
-            Set to False when compilations should be excluded (e.g., strict
-            artist filtering).
-
-    Returns:
-        True if item_artist starts with target_artist, or (when allowed)
-        is a compilation artist
-    """
-    item_lower = item_artist.lower()
-    target_lower = target_artist.lower()
-    if item_lower.startswith(target_lower):
-        return True
-    if allow_compilations:
-        return is_compilation_artist(item_lower)
-    return False
-
-
-def item_matches_artist(
-    item: LibraryItem,
-    target_artist: str,
-    allow_compilations: bool = True,
-) -> bool:
-    """Check if a library item matches the target artist, including alternate names.
-
-    Checks the item's primary ``artist`` field first via
-    :func:`matches_artist_or_compilation`. If that fails and the item has an
-    ``alternate_artist_name``, the alternate name is checked too.
-
-    Args:
-        item: Library item to check
-        target_artist: Artist name being searched for
-        allow_compilations: If True, compilation/soundtrack artists are accepted.
-
-    Returns:
-        True if the item's artist (or alternate) matches the target
-    """
-    if matches_artist_or_compilation(item.artist or "", target_artist, allow_compilations):
-        return True
-    if item.alternate_artist_name and matches_artist_or_compilation(
-        item.alternate_artist_name, target_artist, allow_compilations=False
-    ):
-        return True
-    return False
 
 
 def is_compilation_artist(artist: str) -> bool:
@@ -240,92 +154,6 @@ def calculate_confidence(
         score = 0.2
 
     return min(score, 1.0)
-
-
-# =============================================================================
-# Format Detection
-# =============================================================================
-
-
-def detect_ambiguous_format(raw_message: str) -> tuple[str, str] | None:
-    """Detect if message has ambiguous 'X - Y' or 'X. Y' format.
-
-    These formats are ambiguous because they could be interpreted as either:
-    - Artist: X, Title: Y
-    - Title: X, Artist: Y
-
-    Args:
-        raw_message: The original request message
-
-    Returns:
-        Tuple of (part1, part2) if ambiguous format detected, None otherwise.
-    """
-    # Check for "X - Y" pattern with various spacing around dash
-    # Matches: "X - Y", "X- Y", "X -Y" (requires at least one space to avoid "hip-hop")
-    dash_match = re.search(r"(.+?)\s*-\s+(.+)|(.+?)\s+-\s*(.+)", raw_message)
-    if dash_match:
-        # Groups 1,2 for "X- Y" pattern, groups 3,4 for "X -Y" pattern
-        if dash_match.group(1) and dash_match.group(2):
-            part1, part2 = dash_match.group(1).strip(), dash_match.group(2).strip()
-        else:
-            part1, part2 = dash_match.group(3).strip(), dash_match.group(4).strip()
-        if part1 and part2:
-            return (part1, part2)
-
-    # Check for "X. Y" pattern (period followed by space)
-    if ". " in raw_message:
-        parts = raw_message.split(". ", 1)
-        if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-            return (parts[0].strip(), parts[1].strip())
-
-    return None
-
-
-# =============================================================================
-# Deduplication
-# =============================================================================
-
-
-def deduplicate[T](
-    items: list[T],
-    key: Callable[[T], Hashable] = lambda x: x.id,  # type: ignore[attr-defined]
-) -> list[T]:
-    """Remove duplicates from a list, preserving first-occurrence order.
-
-    Args:
-        items: List of items to deduplicate
-        key: Function to extract a hashable key from each item (default: item.id)
-
-    Returns:
-        New list with duplicates removed
-    """
-    seen: set[Hashable] = set()
-    result: list[T] = []
-    for item in items:
-        k = key(item)
-        if k not in seen:
-            seen.add(k)
-            result.append(item)
-    return result
-
-
-# =============================================================================
-# Sort by Title Relevance
-# =============================================================================
-
-
-def sort_by_title_relevance(items: list, target: str) -> None:
-    """Sort items in-place so items whose title contains the target come first.
-
-    Args:
-        items: List of items with a ``title`` attribute (may be None)
-        target: Target string to match against item titles (case-insensitive)
-    """
-    target_lower = target.lower()
-    items.sort(
-        key=lambda r: target_lower in (r.title or "").lower(),
-        reverse=True,
-    )
 
 
 # =============================================================================

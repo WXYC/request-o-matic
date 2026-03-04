@@ -1,15 +1,14 @@
 """Tests for early return when parser classifies a message as not a request."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from core.dependencies import (
-    get_discogs_service,
     get_groq_client,
-    get_library_db,
+    get_lookup_client,
     get_posthog_client,
     get_slack_service,
 )
@@ -24,28 +23,19 @@ def mock_groq_client():
 
 
 @pytest.fixture
-def mock_library_db():
-    db = AsyncMock()
-    db.search = AsyncMock(return_value=[])
-    return db
+def app(mock_groq_client):
+    """Create a test app with all dependencies mocked.
 
-
-@pytest.fixture
-def mock_discogs_service():
-    return AsyncMock()
-
-
-@pytest.fixture
-def app(mock_groq_client, mock_library_db, mock_discogs_service):
-    """Create a test app with all dependencies mocked."""
+    No lookup_client is provided, so actual requests will get 503.
+    Non-requests early-return before the lookup_client check.
+    """
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
 
     app.dependency_overrides[get_groq_client] = lambda: mock_groq_client
-    app.dependency_overrides[get_library_db] = lambda: mock_library_db
-    app.dependency_overrides[get_discogs_service] = lambda: mock_discogs_service
     app.dependency_overrides[get_slack_service] = lambda: None
     app.dependency_overrides[get_posthog_client] = lambda: None
+    app.dependency_overrides[get_lookup_client] = lambda: None
 
     return app
 
@@ -54,7 +44,7 @@ class TestNonRequestEarlyReturn:
     """When the parser says is_request=False, the handler should skip the search pipeline."""
 
     @pytest.mark.asyncio
-    async def test_feedback_message_returns_no_library_results(self, app, mock_library_db):
+    async def test_feedback_message_returns_no_library_results(self, app):
         """A feedback message like 'love the show!' should not trigger library search."""
         parsed = make_parsed_request(
             is_request=False,
@@ -75,11 +65,9 @@ class TestNonRequestEarlyReturn:
         data = response.json()
         assert data["parsed"]["is_request"] is False
         assert data["library_results"] == []
-        # Should not have searched the library at all
-        mock_library_db.search.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_feedback_with_artist_does_not_search(self, app, mock_library_db):
+    async def test_feedback_with_artist_does_not_search(self, app):
         """Even if the parser extracts an artist from feedback, don't search.
 
         This is the 'I love acid, luke vibert' case: parser says feedback
@@ -106,10 +94,9 @@ class TestNonRequestEarlyReturn:
         assert data["parsed"]["is_request"] is False
         assert data["parsed"]["artist"] == "Luke Vibert"
         assert data["library_results"] == []
-        mock_library_db.search.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dj_message_without_request_does_not_search(self, app, mock_library_db):
+    async def test_dj_message_without_request_does_not_search(self, app):
         """A DJ message that isn't a request should not trigger search."""
         parsed = make_parsed_request(
             is_request=False,
@@ -130,11 +117,10 @@ class TestNonRequestEarlyReturn:
         data = response.json()
         assert data["parsed"]["is_request"] is False
         assert data["library_results"] == []
-        mock_library_db.search.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_actual_request_still_searches(self, app, mock_library_db):
-        """Sanity check: an actual request should still go through the pipeline."""
+    async def test_actual_request_returns_503_without_lookup_client(self, app):
+        """An actual request returns 503 when no lookup service is configured."""
         parsed = make_parsed_request(
             song="Bohemian Rhapsody",
             artist="Queen",
@@ -150,6 +136,5 @@ class TestNonRequestEarlyReturn:
                     json={"message": "play bohemian rhapsody by queen", "skip_slack": True},
                 )
 
-        assert response.status_code == 200
-        # The search pipeline should have been invoked (even if it returned nothing)
-        mock_library_db.search.assert_called()
+        assert response.status_code == 503
+        assert "Search service not configured" in response.json()["detail"]
