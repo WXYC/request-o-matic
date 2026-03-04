@@ -568,19 +568,28 @@ async def search_album_fuzzy(db: LibraryDB, album_title: str) -> list[LibraryIte
                     # Calculate overall fuzzy similarity
                     similarity = fuzz.token_set_ratio(album_lower, result_title_lower)
 
-                    # Require BOTH: 2+ keyword matches AND 60% overall similarity
-                    # This prevents "22 Explosive Hits, Vol 2" matching "K-Tel: 22 Explosive Hits!"
-                    # which share keywords but are different albums (similarity ~50%)
-                    if keyword_matches >= 2 and similarity >= 60:
+                    # fuzz.ratio is length-sensitive — penalizes large length
+                    # differences that token_set_ratio ignores (subset bias).
+                    standard_similarity = fuzz.ratio(album_lower, result_title_lower)
+
+                    # Require ALL THREE:
+                    # 1. 2+ keyword matches
+                    # 2. 60% token_set_ratio (token overlap)
+                    # 3. 50% fuzz.ratio (length-sensitive similarity)
+                    # This prevents short library titles from matching long Discogs
+                    # album names just because their tokens are a subset.
+                    if keyword_matches >= 2 and similarity >= 60 and standard_similarity >= 50:
                         logger.debug(
                             f"Album match: '{result.title}' "
-                            f"(keywords={keyword_matches}, similarity={similarity})"
+                            f"(keywords={keyword_matches}, "
+                            f"token_set={similarity}, ratio={standard_similarity:.0f})"
                         )
                         filtered_results.append(result)
                     else:
                         logger.debug(
                             f"Album rejected: '{result.title}' "
-                            f"(keywords={keyword_matches}, similarity={similarity})"
+                            f"(keywords={keyword_matches}, "
+                            f"token_set={similarity}, ratio={standard_similarity:.0f})"
                         )
 
                 results = filtered_results

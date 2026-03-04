@@ -243,6 +243,19 @@ ETERNAL_HALLUCINATION = _register(
     tags=frozenset({"parser", "hallucination"}),
 )
 
+FLOW_COMA_808_STATE = _register(
+    id="flow_coma_808_state",
+    description="Flow Coma by 808 State should not match unrelated '808 State' album",
+    raw_message="flow coma by 808 state",
+    artist="808 State",
+    song="Flow Coma",
+    bug=(
+        "search_album_fuzzy matched library album '808 State' to Discogs album "
+        "'The Best Of 808 State: Blueprint' via token_set_ratio subset bias"
+    ),
+    tags=frozenset({"album_filter", "title_mismatch"}),
+)
+
 
 # ---------------------------------------------------------------------------
 # Coverage matrix
@@ -307,6 +320,9 @@ UNIT_COVERAGE: dict[str, list[str]] = {
     "holland_1945": [],  # MISSING
     "quixotic_special_chars": [],  # MISSING
     "eternal_hallucination": [],  # MISSING
+    "flow_coma_808_state": [
+        "tests/unit/test_orchestration.py::test_search_album_fuzzy_rejects_subset_match",
+    ],
 }
 
 INTEGRATION_COVERAGE: dict[str, list[str]] = {
@@ -366,5 +382,8 @@ INTEGRATION_COVERAGE: dict[str, list[str]] = {
     ],
     "eternal_hallucination": [
         "tests/integration/test_integration.py::TestParserIntegration::test_does_not_hallucinate_artist_names",
+    ],
+    "flow_coma_808_state": [
+        "tests/integration/test_integration.py::TestFullRequestIntegration::test_flow_coma_808_state_excludes_unrelated_album",
     ],
 }
