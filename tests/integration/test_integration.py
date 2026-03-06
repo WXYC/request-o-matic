@@ -28,6 +28,7 @@ from tests.scenarios import (
     MI_AMI_COMMA_FORMAT,
     PLUG_ALIAS,
     QUIXOTIC_SPECIAL_CHARS,
+    SOME_PHIL_COLLINS_FILLER,
     SNEAKER_PIMPS_TRACK_VALIDATION,
     SPOONFUL_DASH_FORMAT,
     SUGAR_PLANT_FALSE_POSITIVE,
@@ -761,6 +762,41 @@ class TestParserIntegration:
         assert "wheels of fire" in album.lower(), f"Expected album '{s.album}', got: {album}"
 
         print("  ✅ Correctly parsed dash-separated format!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_filler_words_not_parsed_as_song_title(self):
+        """Test that filler words like 'some' are not interpreted as song titles.
+
+        Bug: "Some phil collins please" was parsed as song="Some", artist="Phil Collins"
+        when "some" is just a determiner meaning "play some Phil Collins".
+
+        Expected: artist="Phil Collins", song=null.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = SOME_PHIL_COLLINS_FILLER
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None, "Should extract artist"
+        assert "collins" in result.artist.lower(), (
+            f"Expected artist 'Phil Collins', got: {result.artist}"
+        )
+        assert result.song is None, (
+            f"Expected song to be null ('some' is a filler word), got: {result.song}"
+        )
+
+        print("  ✅ Filler word 'some' correctly ignored!")
 
 
 class TestFullRequestIntegration:
