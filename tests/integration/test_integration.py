@@ -754,15 +754,11 @@ class TestParserIntegration:
 
         song = result.song
         assert song is not None, "Should extract song title"
-        assert song.lower() == (s.song or "").lower(), (
-            f"Expected song '{s.song}', got: {song}"
-        )
+        assert song.lower() == (s.song or "").lower(), f"Expected song '{s.song}', got: {song}"
 
         album = result.album
         assert album is not None, "Should extract album"
-        assert "wheels of fire" in album.lower(), (
-            f"Expected album '{s.album}', got: {album}"
-        )
+        assert "wheels of fire" in album.lower(), f"Expected album '{s.album}', got: {album}"
 
         print("  ✅ Correctly parsed dash-separated format!")
 
