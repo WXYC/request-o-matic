@@ -746,19 +746,22 @@ class TestParserIntegration:
 
         assert result.is_request is True, "Should recognize as a request"
 
-        assert result.artist is not None, "Should extract artist"
-        assert result.artist.lower() == s.artist.lower(), (
-            f"Expected artist '{s.artist}', got: {result.artist}"
+        artist = result.artist
+        assert artist is not None, "Should extract artist"
+        assert artist.lower() == (s.artist or "").lower(), (
+            f"Expected artist '{s.artist}', got: {artist}"
         )
 
-        assert result.song is not None, "Should extract song title"
-        assert result.song.lower() == s.song.lower(), (
-            f"Expected song '{s.song}', got: {result.song}"
+        song = result.song
+        assert song is not None, "Should extract song title"
+        assert song.lower() == (s.song or "").lower(), (
+            f"Expected song '{s.song}', got: {song}"
         )
 
-        assert result.album is not None, "Should extract album"
-        assert "wheels of fire" in result.album.lower(), (
-            f"Expected album '{s.album}', got: {result.album}"
+        album = result.album
+        assert album is not None, "Should extract album"
+        assert "wheels of fire" in album.lower(), (
+            f"Expected album '{s.album}', got: {album}"
         )
 
         print("  ✅ Correctly parsed dash-separated format!")
