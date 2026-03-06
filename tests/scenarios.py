@@ -247,6 +247,15 @@ SPOONFUL_DASH_FORMAT = _register(
     tags=frozenset({"parser", "dash_format"}),
 )
 
+SOME_PHIL_COLLINS_FILLER = _register(
+    id="some_phil_collins_filler",
+    description="'Some phil collins please' - 'some' is a filler word, not a song title",
+    raw_message="Some phil collins please",
+    artist="Phil Collins",
+    bug="Parser interpreted 'Some' as a song title instead of recognizing it as a filler word",
+    tags=frozenset({"parser", "filler_word"}),
+)
+
 FLOW_COMA_808_STATE = _register(
     id="flow_coma_808_state",
     description="Flow Coma by 808 State should not match unrelated '808 State' album",
