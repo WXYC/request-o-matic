@@ -29,6 +29,7 @@ from tests.scenarios import (
     PLUG_ALIAS,
     QUIXOTIC_SPECIAL_CHARS,
     SNEAKER_PIMPS_TRACK_VALIDATION,
+    SPOONFUL_DASH_FORMAT,
     SUGAR_PLANT_FALSE_POSITIVE,
     TOY_WORD_BOUNDARY,
     YOUNG_GOV_PREFIX,
@@ -718,6 +719,49 @@ class TestParserIntegration:
         assert result.album is None, f"Expected album to be null, got: {result.album}"
 
         print("  ✅ Parser extracted only names from the original message!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_dash_separated_song_artist_album_format(self):
+        """Test that 'Spoonful-Cream-Wheels of Fire lp' parses correctly.
+
+        Bug: The parser treated the entire 'Spoonful-Cream-Wheels of Fire' as the
+        song title and 'lp' as the album, instead of splitting on dashes to get
+        song=Spoonful, artist=Cream, album=Wheels of Fire.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = SPOONFUL_DASH_FORMAT
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Album: {result.album}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+
+        assert result.artist is not None, "Should extract artist"
+        assert result.artist.lower() == s.artist.lower(), (
+            f"Expected artist '{s.artist}', got: {result.artist}"
+        )
+
+        assert result.song is not None, "Should extract song title"
+        assert result.song.lower() == s.song.lower(), (
+            f"Expected song '{s.song}', got: {result.song}"
+        )
+
+        assert result.album is not None, "Should extract album"
+        assert "wheels of fire" in result.album.lower(), (
+            f"Expected album '{s.album}', got: {result.album}"
+        )
+
+        print("  ✅ Correctly parsed dash-separated format!")
 
 
 class TestFullRequestIntegration:

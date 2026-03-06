@@ -45,6 +45,8 @@ Guidelines:
 - If someone says "anything by X" or "any song off Y album", that's still a request
 - A message can be both a dj_message AND contain a request (is_request: true)
 - Terse messages like "song title. artist name.", "song - artist", "song title, artist name", or "song by artist" should extract both song and artist. The word "by" in "X by Y" is a preposition indicating authorship -- Y is the artist, not an album. This applies even when the song title contains common words like "love", "hate", "like", etc. For example, "I love acid, luke vibert" is a request for the song "I Love Acid" by Luke Vibert, not feedback.
+- Dashes (with or without spaces) are delimiters separating song, artist, and album. "Song-Artist-Album" or "Song - Artist - Album" should be split into three fields. For example, "Spoonful-Cream-Wheels of Fire lp" means song="Spoonful", artist="Cream", album="Wheels of Fire".
+- Words like "lp", "cd", "vinyl", "7\"", "12\"", "45" at the end of a message are physical format descriptors, not album names. Ignore them. For example, in "Spoonful-Cream-Wheels of Fire lp", "lp" is a format descriptor and "Wheels of Fire" is the album.
 - When in doubt about whether something is a song title or album, prefer treating it as a song title
 
 Respond with valid JSON only, no markdown formatting."""

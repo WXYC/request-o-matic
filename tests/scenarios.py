@@ -236,6 +236,17 @@ ETERNAL_HALLUCINATION = _register(
     tags=frozenset({"parser", "hallucination"}),
 )
 
+SPOONFUL_DASH_FORMAT = _register(
+    id="spoonful_dash_format",
+    description="Dash-separated 'Spoonful-Cream-Wheels of Fire lp' parsed correctly",
+    raw_message="Spoonful-Cream-Wheels of Fire lp",
+    artist="Cream",
+    song="Spoonful",
+    album="Wheels of Fire",
+    bug="Parser treated entire 'Spoonful-Cream-Wheels of Fire' as song and 'lp' as album",
+    tags=frozenset({"parser", "dash_format"}),
+)
+
 FLOW_COMA_808_STATE = _register(
     id="flow_coma_808_state",
     description="Flow Coma by 808 State should not match unrelated '808 State' album",
