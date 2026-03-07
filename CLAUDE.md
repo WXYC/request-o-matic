@@ -44,23 +44,8 @@ Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. 
 The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
 
 ### Library ETL
-The `library.db` SQLite database is synced daily from the WXYC MySQL database:
 
-- **`scripts/sync-library.sh`** - Orchestrates ETL, commits changes, and pushes to staging
-- **`scripts/export_to_sqlite.py`** - Connects via SSH to remote MySQL, exports to SQLite with FTS5
-
-The sync runs daily at 7 AM via launchd (`~/Library/LaunchAgents/com.wxyc.request-parser-etl.plist`).
-
-**Manual sync:**
-```bash
-# Run ETL (no Slack notifications)
-./scripts/sync-library.sh
-
-# Run with Slack error notifications
-./scripts/sync-library.sh --notify
-```
-
-**Logs:** `~/Library/Logs/request-parser-etl.log`
+The library ETL pipeline (`sync-library.sh`, `export_to_sqlite.py`) lives in [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup). See that repo's CLAUDE.md for details.
 
 ## Development Workflow
 
@@ -175,14 +160,6 @@ Optional:
 - `DATABASE_URL_DISCOGS` - PostgreSQL URL for Discogs cache (e.g., `postgresql://user:pass@host:5432/discogs`)
 - `LOOKUP_SERVICE_URL` - **Required.** Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). All search is delegated to this service. If unset, song requests return HTTP 503. Errors propagate as 502.
 
-Library ETL (for `scripts/sync-library.sh`):
-- `LIBRARY_SSH_HOST` - SSH host to connect to
-- `LIBRARY_SSH_USER` - SSH username
-- `LIBRARY_DB_HOST` - MySQL host (as seen from SSH host)
-- `LIBRARY_DB_USER` - MySQL username
-- `LIBRARY_DB_PASSWORD` - MySQL password
-- `LIBRARY_DB_NAME` - MySQL database name
-- `SLACK_MONITORING_WEBHOOK` - Webhook for error notifications (used with `--notify`)
 
 ## Code Style
 
