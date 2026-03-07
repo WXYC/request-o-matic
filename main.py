@@ -41,7 +41,7 @@ init_sentry(
 log_file = None
 if settings.log_level != "DEBUG":
     log_dir = Path("/app/logs") if Path("/app/logs").exists() else Path("logs")
-    log_file = log_dir / "request-parser.log"
+    log_file = log_dir / "request-o-matic.log"
 setup_logging(level=settings.log_level, log_file=log_file)
 
 logger = logging.getLogger(__name__)

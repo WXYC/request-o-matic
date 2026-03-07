@@ -6,7 +6,7 @@ A FastAPI service that supplements song requests with structured metadata, album
 
 - **Smart Song Parsing**: Uses Groq AI to extract structured metadata from natural language song requests
 - **Album Artwork Lookup**: Fetches album artwork from Discogs
-- **Library Catalog Search**: Full-text search across a local SQLite music library database
+- **Library Catalog Search**: Delegates to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) for full-text search with Discogs cross-referencing
 - **Slack Integration**: Posts enriched song data to Slack with embedded artwork
 - **Fast API**: Built with FastAPI for high performance and automatic API documentation
 
@@ -21,7 +21,7 @@ A FastAPI service that supplements song requests with structured metadata, album
 
 ```bash
 git clone <repository-url>
-cd request-parser
+cd request-o-matic
 ```
 
 ### 2. Create Virtual Environment (Recommended)
@@ -120,14 +120,14 @@ The application will start on `http://localhost:8000`
 
 ```bash
 # Build the image
-docker build -t request-parser .
+docker build -t request-o-matic .
 
 # Run the container
 docker run -p 8000:8000 \
   -e GROQ_API_KEY=your_groq_api_key \
   -e DISCOGS_TOKEN=your_discogs_token \
   -e SLACK_WEBHOOK_URL=your_slack_webhook \
-  request-parser
+  request-o-matic
 ```
 
 ### Using Docker Compose
@@ -164,7 +164,7 @@ All endpoints except `/health` are prefixed with `/api/v1`:
 
 - `GET /health` - Health check with service status details
 - `POST /api/v1/parse` - Parse a natural language song request into structured metadata
-- `POST /api/v1/request` - Full request workflow: parse → search library → find artwork → post to Slack
+- `POST /api/v1/request` - Full request workflow: parse → delegate search to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) → post to Slack
 - `POST /api/v1/artwork` - Find album artwork for a given song/album/artist
 - `GET /api/v1/library/search` - Search the library catalog
 
@@ -302,6 +302,7 @@ If Slack integration fails:
 | `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
 | `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
 | `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
+| `LOOKUP_SERVICE_URL` | No | - | Base URL of [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) service for search delegation |
 | `DATABASE_URL_DISCOGS` | No | - | PostgreSQL URL for Discogs cache (see [Discogs Cache Setup](#discogs-cache-setup)) |
 
 ## Discogs Cache Setup
@@ -348,4 +349,4 @@ Services are managed through FastAPI's lifespan context manager:
 
 ## Support
 
-For issues and questions, please [open an issue](https://github.com/your-repo/request-parser/issues) on GitHub.
+For issues and questions, please [open an issue](https://github.com/WXYC/request-o-matic/issues) on GitHub.

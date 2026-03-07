@@ -1,1 +1,1 @@
-"""Integration tests for request-parser."""
+"""Integration tests for request-o-matic."""

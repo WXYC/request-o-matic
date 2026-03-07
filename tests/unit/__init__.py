@@ -1,1 +1,1 @@
-"""Unit tests for request-parser."""
+"""Unit tests for request-o-matic."""
