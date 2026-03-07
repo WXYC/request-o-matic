@@ -88,15 +88,7 @@ ENABLE_ARTWORK_LOOKUP=true
 - **SLACK_WEBHOOK_URL**: Create an incoming webhook in your Slack workspace's [App Settings](https://api.slack.com/messaging/webhooks)
 - **POSTHOG_API_KEY**: Optional - Get your project API key from [PostHog](https://posthog.com/) for telemetry tracking
 
-### 4. Verify Database
-
-The project includes a pre-built SQLite database (`library.db`). If you need to rebuild it or if the file is missing:
-
-```bash
-python scripts/export_to_sqlite.py
-```
-
-### 5. Run the Application
+### 4. Run the Application
 
 #### Option A: Using Python directly
 
@@ -270,14 +262,6 @@ The project uses:
 - **Custom exceptions** for better error handling
 
 ## Troubleshooting
-
-### Database Not Found Error
-
-If you see an error about `library.db` not being found:
-
-```bash
-python scripts/export_to_sqlite.py
-```
 
 ### GROQ_API_KEY Not Set Error
 

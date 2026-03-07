@@ -167,3 +167,12 @@ Optional:
 - Use `black` for formatting, `ruff` for linting
 - Type hints encouraged but not enforced
 - Async/await for all I/O operations
+
+## Example Music Data for Tests
+
+WXYC is a freeform station. When creating test fixtures or mock data, use representative artists instead of mainstream acts like Queen, Radiohead, or The Beatles. The canonical data source is `wxyc-shared/src/test-utils/wxyc-example-data.json`.
+
+Preferred defaults for fixtures:
+- `ParsedRequest`: `artist="Juana Molina", song="la paradoja", album="DOGA"`
+- `LibraryItem`: `artist="Stereolab", title="Aluminum Tunes", genre="Rock"`
+- Other good choices: Cat Power / "Moon Pix" (Matador), Jessica Pratt / "On Your Own Love Again" (Drag City), Chuquimamani-Condori / "Edits" (self-released), Duke Ellington & John Coltrane / "Duke Ellington & John Coltrane" (Impulse Records), Sessa / "Pequena Vertigem de Amor" (Mexican Summer), Large Professor / "1st Class" (Matador Records)
