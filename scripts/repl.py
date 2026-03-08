@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+# Allow running from any directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import httpx
 
 from scripts._common import LOCAL_URL, PROD_URL, set_up_logging

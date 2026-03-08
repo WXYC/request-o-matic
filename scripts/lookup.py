@@ -11,7 +11,11 @@ import argparse
 import asyncio
 import logging
 import sys
+from pathlib import Path
 from typing import Any, cast
+
+# Allow running from any directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
