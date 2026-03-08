@@ -1,6 +1,5 @@
 """Unit tests for core/dependencies.py."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -9,21 +8,16 @@ import pytest
 from config.settings import Settings
 from core.dependencies import (
     SlackService,
-    close_discogs_service,
     close_http_client,
-    close_library_db,
     flush_posthog,
-    get_discogs_service,
     get_groq_client,
     get_http_client,
-    get_library_db,
     get_posthog_client,
     get_slack_service,
     get_slack_webhook_url,
     shutdown_posthog,
 )
 from core.exceptions import ServiceInitializationError
-from discogs.cache_service import DiscogsCacheService
 
 
 @pytest.fixture
@@ -31,11 +25,8 @@ def mock_settings():
     """Create mock settings."""
     return Settings(
         groq_api_key="test_groq_key",
-        discogs_token="test_discogs_token",
         slack_webhook_url="https://hooks.slack.com/test",
-        library_db_path=Path("test_library.db"),
         enable_slack_integration=True,
-        enable_artwork_lookup=True,
         enable_telemetry=True,
         posthog_api_key="test_posthog_key",
     )
@@ -48,28 +39,19 @@ def reset_module_state():
 
     # Save original state
     original_http_client = deps._http_client
-    original_library_db = deps._library_db
-    original_discogs_service = deps._discogs_service
     original_posthog_client = deps._posthog_client
-    original_discogs_pool = deps._discogs_pool
     original_slack_webhook_url = deps._slack_webhook_url
 
     # Reset state
     deps._http_client = None
-    deps._library_db = None
-    deps._discogs_service = None
     deps._posthog_client = None
-    deps._discogs_pool = None
     deps._slack_webhook_url = None
 
     yield
 
     # Restore original state
     deps._http_client = original_http_client
-    deps._library_db = original_library_db
-    deps._discogs_service = original_discogs_service
     deps._posthog_client = original_posthog_client
-    deps._discogs_pool = original_discogs_pool
     deps._slack_webhook_url = original_slack_webhook_url
 
 
@@ -132,133 +114,6 @@ class TestGetGroqClient:
 
         with pytest.raises(ServiceInitializationError, match="GROQ_API_KEY not configured"):
             get_groq_client(settings)
-
-
-class TestGetLibraryDb:
-    """Tests for get_library_db function."""
-
-    @pytest.mark.asyncio
-    async def test_creates_and_connects_db(self, mock_settings):
-        """Test that get_library_db creates and connects database."""
-        with patch("core.dependencies.LibraryDB") as mock_db_class:
-            mock_db = AsyncMock()
-            mock_db_class.return_value = mock_db
-
-            db = await get_library_db(mock_settings)
-
-            mock_db_class.assert_called_once()
-            mock_db.connect.assert_called_once()
-            assert db is mock_db
-
-    @pytest.mark.asyncio
-    async def test_returns_same_instance(self, mock_settings):
-        """Test that get_library_db returns same instance."""
-        import core.dependencies as deps
-
-        mock_db = AsyncMock()
-        deps._library_db = mock_db
-
-        db = await get_library_db(mock_settings)
-        assert db is mock_db
-
-    @pytest.mark.asyncio
-    async def test_raises_on_connection_failure(self, mock_settings):
-        """Test that get_library_db raises on connection failure."""
-        with patch("core.dependencies.LibraryDB") as mock_db_class:
-            mock_db = AsyncMock()
-            mock_db.connect.side_effect = Exception("Connection failed")
-            mock_db_class.return_value = mock_db
-
-            with pytest.raises(ServiceInitializationError, match="Database initialization failed"):
-                await get_library_db(mock_settings)
-
-
-class TestCloseLibraryDb:
-    """Tests for close_library_db function."""
-
-    @pytest.mark.asyncio
-    async def test_closes_db(self):
-        """Test that close_library_db closes the database."""
-        import core.dependencies as deps
-
-        mock_db = AsyncMock()
-        deps._library_db = mock_db
-
-        await close_library_db()
-
-        mock_db.close.assert_called_once()
-        assert deps._library_db is None
-
-    @pytest.mark.asyncio
-    async def test_handles_no_db(self):
-        """Test that close_library_db handles None database."""
-        import core.dependencies as deps
-
-        deps._library_db = None
-        await close_library_db()  # Should not raise
-
-
-class TestGetDiscogsService:
-    """Tests for get_discogs_service function."""
-
-    @pytest.mark.asyncio
-    async def test_creates_service_with_token(self, mock_settings):
-        """Test that get_discogs_service creates service when token is set."""
-        with patch("core.dependencies.DiscogsService") as mock_service_class:
-            mock_service = Mock()
-            mock_service_class.return_value = mock_service
-
-            service = await get_discogs_service(mock_settings)
-
-            mock_service_class.assert_called_once_with("test_discogs_token", cache_service=None)
-            assert service is mock_service
-
-    @pytest.mark.asyncio
-    async def test_returns_none_without_token(self):
-        """Test that get_discogs_service returns None when token is missing."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token=None,
-        )
-
-        service = await get_discogs_service(settings)
-        assert service is None
-
-    @pytest.mark.asyncio
-    async def test_returns_same_instance(self, mock_settings):
-        """Test that get_discogs_service returns same instance."""
-        import core.dependencies as deps
-
-        mock_service = Mock()
-        deps._discogs_service = mock_service
-
-        service = await get_discogs_service(mock_settings)
-        assert service is mock_service
-
-
-class TestCloseDiscogsService:
-    """Tests for close_discogs_service function."""
-
-    @pytest.mark.asyncio
-    async def test_closes_service(self):
-        """Test that close_discogs_service closes the service."""
-        import core.dependencies as deps
-
-        mock_service = AsyncMock()
-        deps._discogs_service = mock_service
-
-        await close_discogs_service()
-
-        mock_service.close.assert_called_once()
-        assert deps._discogs_service is None
-
-    @pytest.mark.asyncio
-    async def test_handles_no_service(self):
-        """Test that close_discogs_service handles None service."""
-        import core.dependencies as deps
-
-        deps._discogs_service = None
-        await close_discogs_service()  # Should not raise
 
 
 class TestGetPosthogClient:
@@ -464,108 +319,3 @@ class TestGetSlackService:
         assert isinstance(service, SlackService)
         assert service.webhook_url == "https://hooks.slack.com/test"
         assert service.http_client is mock_client
-
-
-class TestDiscogsCacheWiring:
-    """Tests for asyncpg pool initialization and cache service wiring."""
-
-    @pytest.mark.asyncio
-    async def test_creates_pool_and_cache_service_when_url_set(self):
-        """Test that pool and cache service are created when DATABASE_URL_DISCOGS is set."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_discogs_token",
-            database_url_discogs="postgresql://jake@localhost:5432/discogs",
-        )
-
-        mock_pool = AsyncMock()
-        with patch("core.dependencies.asyncpg.create_pool", new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_pool
-
-            service = await get_discogs_service(settings)
-
-            mock_create.assert_called_once_with(
-                "postgresql://jake@localhost:5432/discogs", min_size=1, max_size=5
-            )
-            assert service is not None
-            assert isinstance(service.cache_service, DiscogsCacheService)
-            assert service.cache_service.pool is mock_pool
-
-    @pytest.mark.asyncio
-    async def test_no_pool_when_url_not_set(self):
-        """Test that no pool is created when DATABASE_URL_DISCOGS is not set."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_discogs_token",
-            database_url_discogs=None,
-        )
-
-        with patch("core.dependencies.asyncpg.create_pool", new_callable=AsyncMock) as mock_create:
-            service = await get_discogs_service(settings)
-
-            mock_create.assert_not_called()
-            assert service is not None
-            assert service.cache_service is None
-
-    @pytest.mark.asyncio
-    async def test_pool_closed_on_shutdown(self):
-        """Test that asyncpg pool is closed when closing discogs service."""
-        import core.dependencies as deps
-
-        mock_pool = AsyncMock()
-        mock_service = AsyncMock()
-        deps._discogs_pool = mock_pool
-        deps._discogs_service = mock_service
-
-        await close_discogs_service()
-
-        mock_pool.close.assert_called_once()
-        assert deps._discogs_pool is None
-        assert deps._discogs_service is None
-
-    @pytest.mark.asyncio
-    async def test_pool_creation_failure_continues_without_cache(self):
-        """Test that pool creation failure logs warning and continues without cache."""
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_discogs_token",
-            database_url_discogs="postgresql://jake@localhost:5432/discogs",
-        )
-
-        with patch(
-            "core.dependencies.asyncpg.create_pool",
-            new_callable=AsyncMock,
-            side_effect=Exception("Connection refused"),
-        ):
-            service = await get_discogs_service(settings)
-
-            # Service should still be created, but without cache
-            assert service is not None
-            assert service.cache_service is None
-
-    @pytest.mark.asyncio
-    async def test_reuses_existing_pool(self):
-        """Test that existing pool is reused on subsequent calls."""
-        import core.dependencies as deps
-
-        settings = Settings(
-            groq_api_key="test_key",
-            discogs_token="test_discogs_token",
-            database_url_discogs="postgresql://jake@localhost:5432/discogs",
-        )
-
-        mock_pool = AsyncMock()
-        with patch("core.dependencies.asyncpg.create_pool", new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = mock_pool
-
-            service1 = await get_discogs_service(settings)
-            assert service1 is not None
-
-            # Reset the service but keep the pool
-            deps._discogs_service = None
-
-            service2 = await get_discogs_service(settings)
-            assert service2 is not None
-
-            # Pool should only be created once
-            mock_create.assert_called_once()

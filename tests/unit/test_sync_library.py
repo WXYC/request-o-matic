@@ -301,9 +301,9 @@ class TestSyncLibraryScript:
             text=True,
         )
         commit_message = result.stdout.strip()
-        assert commit_message.startswith("Update library catalog"), (
-            f"Commit message should start with 'Update library catalog', got: {commit_message}"
-        )
+        assert commit_message.startswith(
+            "Update library catalog"
+        ), f"Commit message should start with 'Update library catalog', got: {commit_message}"
 
         # Verify logged correctly
         log_content = log_file.read_text()
@@ -323,9 +323,9 @@ class TestSyncLibraryScript:
         import re
 
         timestamp_pattern = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"
-        assert re.search(timestamp_pattern, log_content), (
-            f"Log should contain timestamps. Log content: {log_content}"
-        )
+        assert re.search(
+            timestamp_pattern, log_content
+        ), f"Log should contain timestamps. Log content: {log_content}"
 
     def test_script_logs_start_message(self, temp_repo, log_file):
         """Script should log when it starts."""
@@ -368,9 +368,9 @@ class TestSyncLibraryScript:
             text=True,
         )
         committed_files = result.stdout.strip().split("\n")
-        assert committed_files == ["library.db"], (
-            f"Only library.db should be committed, got: {committed_files}"
-        )
+        assert committed_files == [
+            "library.db"
+        ], f"Only library.db should be committed, got: {committed_files}"
 
     def test_error_includes_details_in_notification(self, temp_repo, log_file, tmp_path):
         """Error notifications should include the actual error message."""
@@ -394,9 +394,9 @@ sys.exit(1)
 
         # Verify notification includes error details
         notification = slack_marker.read_text()
-        assert "MySQL is not running" in notification, (
-            f"Notification should include error details, got: {notification}"
-        )
+        assert (
+            "MySQL is not running" in notification
+        ), f"Notification should include error details, got: {notification}"
 
     def test_error_extracts_final_exception_line(self, temp_repo, log_file, tmp_path):
         """Error notification should extract the final exception line, not full traceback."""
@@ -424,16 +424,16 @@ sys.exit(1)
 
         notification = slack_marker.read_text()
         # Should contain the final error line
-        assert "ConnectionRefusedError" in notification, (
-            f"Should include exception type, got: {notification}"
-        )
+        assert (
+            "ConnectionRefusedError" in notification
+        ), f"Should include exception type, got: {notification}"
         # Should NOT contain traceback noise
-        assert "Traceback" not in notification, (
-            f"Should not include traceback header, got: {notification}"
-        )
-        assert 'File "script.py"' not in notification, (
-            f"Should not include file references, got: {notification}"
-        )
+        assert (
+            "Traceback" not in notification
+        ), f"Should not include traceback header, got: {notification}"
+        assert (
+            'File "script.py"' not in notification
+        ), f"Should not include file references, got: {notification}"
 
     def test_slack_notification_sent_on_etl_failure(self, temp_repo, log_file, tmp_path):
         """Slack notification should be sent when ETL fails."""

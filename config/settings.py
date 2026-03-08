@@ -1,7 +1,6 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,26 +13,11 @@ class Settings(BaseSettings):
     groq_api_key: str = Field(..., description="Groq API key for AI parsing")
 
     # API Keys - Optional
-    discogs_token: str | None = Field(None, description="Discogs API token for artwork lookup")
     slack_webhook_url: str | None = Field(None, description="Slack webhook URL for posting results")
     slack_webhook_key_url: str = Field(
         default="https://wxyc-requests-endpoint-production.up.railway.app",
         description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)",
     )
-
-    # Database Configuration
-    # Note: We use a validator to ensure empty strings default to library.db
-    library_db_path: Path = Field(
-        default=Path("library.db"), description="Path to SQLite library database"
-    )
-
-    @property
-    def resolved_library_db_path(self) -> Path:
-        """Get the library database path, handling empty env var case."""
-        # Handle case where env var is set but empty
-        if not str(self.library_db_path) or str(self.library_db_path) == ".":
-            return Path("library.db")
-        return self.library_db_path
 
     # Application Configuration
     host: str = Field(default="0.0.0.0", description="Host to bind the server to")
@@ -42,9 +26,6 @@ class Settings(BaseSettings):
 
     # Feature Flags
     enable_slack_integration: bool = Field(default=True, description="Enable Slack notifications")
-    enable_artwork_lookup: bool = Field(
-        default=True, description="Enable artwork lookup from external APIs"
-    )
     enable_telemetry: bool = Field(default=True, description="Enable PostHog telemetry")
 
     # PostHog Configuration
@@ -58,43 +39,6 @@ class Settings(BaseSettings):
     lookup_service_url: str | None = Field(
         None,
         description="Base URL of library-metadata-lookup service. When set, delegates search to this service.",
-    )
-
-    # Discogs Cache Database Configuration
-    database_url_discogs: str | None = Field(
-        None,
-        description="PostgreSQL connection URL for Discogs cache (e.g., postgresql://user:pass@host:5432/discogs)",
-    )
-
-    # Discogs Cache Configuration
-    discogs_track_cache_ttl: int = Field(
-        default=3600, description="TTL in seconds for Discogs track cache (default: 1 hour)"
-    )
-    discogs_release_cache_ttl: int = Field(
-        default=14400, description="TTL in seconds for Discogs release cache (default: 4 hours)"
-    )
-    discogs_search_cache_ttl: int = Field(
-        default=3600, description="TTL in seconds for Discogs search cache (default: 1 hour)"
-    )
-    discogs_artist_cache_ttl: int = Field(
-        default=86400, description="TTL in seconds for Discogs artist cache (default: 24 hours)"
-    )
-    discogs_label_cache_ttl: int = Field(
-        default=86400, description="TTL in seconds for Discogs label cache (default: 24 hours)"
-    )
-    discogs_cache_maxsize: int = Field(
-        default=1000, description="Maximum entries in Discogs caches"
-    )
-
-    # Discogs Rate Limiting Configuration
-    discogs_rate_limit: int = Field(
-        default=50, description="Max Discogs API requests per minute (stay under 60/min limit)"
-    )
-    discogs_max_concurrent: int = Field(
-        default=5, description="Max concurrent Discogs API requests"
-    )
-    discogs_max_retries: int = Field(
-        default=2, description="Max retry attempts on 429 rate limit errors"
     )
 
     # Application Metadata

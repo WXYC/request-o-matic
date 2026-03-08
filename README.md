@@ -1,12 +1,11 @@
 # Request-O-Matic
 
-A FastAPI service that supplements song requests with structured metadata, album artwork, and library catalog information. Built to enhance music request workflows with automated data enrichment and Slack integration.
+A FastAPI service that processes song requests for WXYC radio. It parses natural language messages using Groq AI, delegates search to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup), and posts enriched results to Slack.
 
 ## Features
 
 - **Smart Song Parsing**: Uses Groq AI to extract structured metadata from natural language song requests
-- **Album Artwork Lookup**: Fetches album artwork from Discogs
-- **Library Catalog Search**: Delegates to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) for full-text search with Discogs cross-referencing
+- **Library and Discogs Search**: Delegates to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) for library catalog search and Discogs cross-referencing
 - **Slack Integration**: Posts enriched song data to Slack with embedded artwork
 - **Fast API**: Built with FastAPI for high performance and automatic API documentation
 
@@ -61,9 +60,7 @@ Then edit `.env` with your actual configuration:
 ```bash
 # Required
 GROQ_API_KEY=your_groq_api_key_here
-
-# Optional - Artwork Lookup
-DISCOGS_TOKEN=your_discogs_token_here
+LOOKUP_SERVICE_URL=https://library-metadata-lookup-staging.up.railway.app/api/v1
 
 # Optional - Slack Integration
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
@@ -78,17 +75,15 @@ PORT=8000
 
 # Feature Flags
 ENABLE_SLACK_INTEGRATION=true
-ENABLE_ARTWORK_LOOKUP=true
 ```
 
 #### Getting API Keys
 
 - **GROQ_API_KEY**: Sign up at [Groq](https://console.groq.com/) (not Grok) to get an API key
-- **DISCOGS_TOKEN**: Create a personal access token at [Discogs Settings](https://www.discogs.com/settings/developers)
 - **SLACK_WEBHOOK_URL**: Create an incoming webhook in your Slack workspace's [App Settings](https://api.slack.com/messaging/webhooks)
 - **POSTHOG_API_KEY**: Optional - Get your project API key from [PostHog](https://posthog.com/) for telemetry tracking
 
-### 4. Run the Application
+### 5. Run the Application
 
 #### Option A: Using Python directly
 
@@ -112,7 +107,7 @@ The application will start on `http://localhost:8000`
 - **Read-Only Docs**: http://localhost:8000/redoc (ReDoc - Beautiful documentation)
 - **Health Check**: http://localhost:8000/health (Detailed service status)
 
-**Note**: All API endpoints (except `/health`) are now versioned under `/api/v1/` prefix.
+**Note**: All API endpoints (except `/health`) are versioned under `/api/v1/` prefix.
 
 ## Docker Setup
 
@@ -125,35 +120,9 @@ docker build -t request-o-matic .
 # Run the container
 docker run -p 8000:8000 \
   -e GROQ_API_KEY=your_groq_api_key \
-  -e DISCOGS_TOKEN=your_discogs_token \
+  -e LOOKUP_SERVICE_URL=https://library-metadata-lookup-staging.up.railway.app/api/v1 \
   -e SLACK_WEBHOOK_URL=your_slack_webhook \
   request-o-matic
-```
-
-### Using Docker Compose
-
-Create a `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  app:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - DISCOGS_TOKEN=${DISCOGS_TOKEN}
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
-    env_file:
-      - .env
-```
-
-Then run:
-
-```bash
-docker-compose up
 ```
 
 ## API Endpoints
@@ -162,11 +131,9 @@ docker-compose up
 
 All endpoints except `/health` are prefixed with `/api/v1`:
 
-- `GET /health` - Health check with service status details
+- `GET /health` - Health check with service status details (groq, lookup, slack)
 - `POST /api/v1/parse` - Parse a natural language song request into structured metadata
-- `POST /api/v1/request` - Full request workflow: parse → delegate search to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) → post to Slack
-- `POST /api/v1/artwork` - Find album artwork for a given song/album/artist
-- `GET /api/v1/library/search` - Search the library catalog
+- `POST /api/v1/request` - Full request workflow: parse -> delegate search to lookup service -> post to Slack
 
 ### Example Requests
 
@@ -174,19 +141,14 @@ All endpoints except `/health` are prefixed with `/api/v1`:
 ```bash
 curl -X POST "http://localhost:8000/api/v1/parse" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Play Bohemian Rhapsody by Queen"}'
+  -d '{"message": "Play la paradoja by Juana Molina"}'
 ```
 
 **Full request workflow:**
 ```bash
 curl -X POST "http://localhost:8000/api/v1/request" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Play Abele Dance (85 remix) by Manu Dibango"}'
-```
-
-**Search library:**
-```bash
-curl "http://localhost:8000/api/v1/library/search?q=Queen+Bohemian&limit=5"
+  -d '{"message": "Play la paradoja by Juana Molina"}'
 ```
 
 **Health check:**
@@ -291,62 +253,37 @@ If Slack integration fails:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GROQ_API_KEY` | Yes | - | API key for Groq AI service |
-| `DISCOGS_TOKEN` | No | - | Personal access token for Discogs API |
+| `LOOKUP_SERVICE_URL` | Yes | - | Base URL of library-metadata-lookup service |
 | `SLACK_WEBHOOK_URL` | No | - | Slack incoming webhook URL (fetches from Railway if not set) |
+| `SLACK_WEBHOOK_KEY_URL` | No | - | Railway endpoint to fetch Slack webhook key |
 | `PORT` | No | 8000 | Port for the application to listen on |
 | `HOST` | No | 0.0.0.0 | Host to bind the server to |
 | `LOG_LEVEL` | No | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `LIBRARY_DB_PATH` | No | library.db | Path to SQLite library database |
 | `ENABLE_SLACK_INTEGRATION` | No | true | Enable/disable Slack notifications |
-| `ENABLE_ARTWORK_LOOKUP` | No | true | Enable/disable artwork lookup from external APIs |
+| `ENABLE_TELEMETRY` | No | true | Enable/disable PostHog telemetry |
 | `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
 | `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
 | `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
-| `LOOKUP_SERVICE_URL` | No | - | Base URL of [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) service for search delegation |
-| `DATABASE_URL_DISCOGS` | No | - | PostgreSQL URL for Discogs cache (see [Discogs Cache Setup](#discogs-cache-setup)) |
-
-## Discogs Cache Setup
-
-The service supports an optional PostgreSQL cache for Discogs data to reduce API calls. When enabled, the service queries the local cache first and falls back to the Discogs API on cache misses.
-
-The cache ETL pipeline (building the database from Discogs data dumps) lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for full setup instructions.
-
-To enable the cache, set the environment variable:
-
-```bash
-DATABASE_URL_DISCOGS=postgresql://user:pass@host:5432/discogs
-```
-
-If `DATABASE_URL_DISCOGS` is not set, the service uses the Discogs API directly (existing behavior).
 
 ## Architecture
 
 ### Key Design Decisions
 
-1. **Dependency Injection**: FastAPI's dependency injection system manages service lifecycle and makes testing easier
-2. **Centralized Configuration**: Pydantic Settings for type-safe, validated configuration
-3. **Modular Structure**: Each feature (artwork, library, parsing) is self-contained
+1. **Service Delegation**: All library search and Discogs cross-referencing is delegated to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) via HTTP
+2. **Dependency Injection**: FastAPI's dependency injection system manages service lifecycle and makes testing easier
+3. **Centralized Configuration**: Pydantic Settings for type-safe, validated configuration
 4. **Async Throughout**: All I/O operations use async/await for optimal performance
 5. **Custom Exceptions**: Domain-specific exceptions for better error handling and debugging
-6. **Comprehensive Logging**: Structured logging at appropriate levels throughout the application
-7. **Hybrid Caching**: Optional PostgreSQL cache built from Discogs data dumps with trigram fuzzy matching, graceful degradation to API-only mode
-8. **Error Tracking**: Sentry integration for production error monitoring with breadcrumbs for debugging
+6. **Error Tracking**: Sentry integration for production error monitoring with breadcrumbs for debugging
 
 ### Service Lifecycle
 
 Services are managed through FastAPI's lifespan context manager:
-- Database connections are established at startup
 - HTTP clients are reused across requests
 - Resources are properly cleaned up at shutdown
 
-## License
+## Deployment
 
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines here]
-
-## Support
-
-For issues and questions, please [open an issue](https://github.com/WXYC/request-o-matic/issues) on GitHub.
+- Hosted on Railway
+- `main` branch auto-deploys to **staging**
+- `prod` branch auto-deploys to **production**

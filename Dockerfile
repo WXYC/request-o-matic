@@ -8,18 +8,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY main.py ./
+COPY models.py ./
 COPY config/ ./config/
 COPY core/ ./core/
-COPY discogs/ ./discogs/
-COPY library/ ./library/
 COPY routers/ ./routers/
 COPY services/ ./services/
 
 # Create logs directory for writable files
 RUN mkdir -p /app/logs
-
-# Copy the SQLite database (same location as original working version)
-COPY library.db .
 
 # Railway sets PORT env var
 ENV PORT=8000

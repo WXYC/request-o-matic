@@ -10,12 +10,8 @@ from fastapi.responses import JSONResponse
 from config.settings import Settings, get_settings
 from core.dependencies import (
     get_cached_slack_webhook_url,
-    get_discogs_service,
     get_http_client,
-    get_library_db,
 )
-from discogs.service import DiscogsService
-from library.db import LibraryDB
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +21,7 @@ router = APIRouter(tags=["health"])
 CHECK_TIMEOUT = 3.0
 
 # Core services whose failure means "unhealthy"
-CORE_SERVICES = {"groq", "database"}
-
-
-async def _check_database(db: LibraryDB) -> str:
-    """Ping the SQLite database."""
-    return "ok" if await db.is_available() else "error"
+CORE_SERVICES = {"groq"}
 
 
 async def _check_groq(settings: Settings, http_client: httpx.AsyncClient) -> str:
@@ -47,18 +38,15 @@ async def _check_groq(settings: Settings, http_client: httpx.AsyncClient) -> str
         return "error"
 
 
-async def _check_discogs_api(discogs_service: DiscogsService | None) -> str:
-    """Ping the Discogs API via the service's own client."""
-    if discogs_service is None:
+async def _check_lookup_service(settings: Settings, http_client: httpx.AsyncClient) -> str:
+    """Check the library-metadata-lookup service health."""
+    if not settings.lookup_service_url:
         return "unavailable"
-    return "ok" if await discogs_service.check_api() else "error"
-
-
-async def _check_discogs_cache(discogs_service: DiscogsService | None) -> str:
-    """Ping the PostgreSQL cache pool."""
-    if discogs_service is None or discogs_service.cache_service is None:
-        return "unavailable"
-    return "ok" if await discogs_service.cache_service.is_available() else "error"
+    try:
+        resp = await http_client.get(f"{settings.lookup_service_url.rstrip('/')}/health")
+        return "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        return "error"
 
 
 async def _check_slack(http_client: httpx.AsyncClient) -> str:
@@ -98,26 +86,20 @@ async def _run_check(coro) -> str:
 )
 async def health_check(
     settings: Settings = Depends(get_settings),
-    db: LibraryDB = Depends(get_library_db),
-    discogs_service: DiscogsService | None = Depends(get_discogs_service),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ):
     """Health check with real connectivity probes for every dependency."""
 
     results = await asyncio.gather(
         _run_check(_check_groq(settings, http_client)),
-        _run_check(_check_database(db)),
-        _run_check(_check_discogs_api(discogs_service)),
-        _run_check(_check_discogs_cache(discogs_service)),
+        _run_check(_check_lookup_service(settings, http_client)),
         _run_check(_check_slack(http_client)),
     )
 
     services = {
         "groq": results[0],
-        "database": results[1],
-        "discogs_api": results[2],
-        "discogs_cache": results[3],
-        "slack": results[4],
+        "lookup": results[1],
+        "slack": results[2],
     }
 
     # Determine overall status
