@@ -13,5 +13,4 @@ logs/
 .mypy_cache/
 .coverage
 htmlcov/
-library/*.db
-discogs-xml2db/
+library.db

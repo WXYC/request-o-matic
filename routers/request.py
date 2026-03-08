@@ -23,8 +23,7 @@ from core.dependencies import (
     get_slack_service,
 )
 from core.telemetry import RequestTelemetry, get_cache_stats, init_cache_stats
-from discogs.models import DiscogsSearchResult
-from library.models import LibraryItem
+from models import DiscogsSearchResult, LibraryItem
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks

@@ -272,7 +272,7 @@ class TestLookupModels:
 
     def test_lookup_result_item_without_artwork(self):
         """LookupResultItem works without artwork."""
-        from library.models import LibraryItem
+        from models import LibraryItem
 
         item = LookupResultItem(library_item=LibraryItem(id=1, title="Test", artist="Test Artist"))
         assert item.artwork is None

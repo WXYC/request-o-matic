@@ -5,8 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from discogs.models import DiscogsSearchResult
-from library.models import LibraryItem
+from models import DiscogsSearchResult, LibraryItem
 from services.slack import (
     build_simple_slack_blocks,
     build_slack_blocks,
@@ -39,6 +38,7 @@ def sample_discogs_result():
         album="A Night at the Opera",
         artwork_url="https://example.com/artwork.jpg",
         release_id=12345,
+        release_url="https://www.discogs.com/release/12345",
     )
 
 

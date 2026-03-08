@@ -3,8 +3,7 @@
 import httpx
 from pydantic import BaseModel
 
-from discogs.models import DiscogsSearchResult
-from library.models import LibraryItem
+from models import DiscogsSearchResult, LibraryItem
 
 
 class LookupRequest(BaseModel):

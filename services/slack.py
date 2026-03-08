@@ -4,8 +4,7 @@ from typing import Any
 import httpx
 
 from config.settings import get_settings
-from discogs.models import DiscogsSearchResult
-from library.models import LibraryItem
+from models import DiscogsSearchResult, LibraryItem
 
 logger = logging.getLogger(__name__)
 

@@ -16,10 +16,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.25.0",
-    "aiosqlite>=0.19.0",
-    "pymysql>=1.1.0",
     "posthog>=3.0.0",
-    "aiolimiter>=1.1.0",
 ]
 
 [project.scripts]
@@ -41,7 +38,7 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["scripts*", "core*", "config*", "routers*", "artwork*", "library*", "discogs*", "services*"]
+include = ["scripts*", "core*", "config*", "routers*", "services*"]
 
 [tool.black]
 line-length = 100
@@ -97,9 +94,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 plugins = ["pydantic.mypy"]
-exclude = [
-    "^discogs-xml2db/",
-]
+exclude = []
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

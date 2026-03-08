@@ -1,13 +1,11 @@
+"""Shared Pydantic models for library and Discogs data.
+
+These DTOs are used to deserialize responses from the library-metadata-lookup
+service. The full library and Discogs modules (search, caching, rate limiting)
+now live exclusively in that service.
+"""
+
 from pydantic import BaseModel, computed_field
-
-
-class LibrarySearchRequest(BaseModel):
-    """Request to search the library catalog."""
-
-    query: str | None = None
-    artist: str | None = None
-    title: str | None = None
-    limit: int = 10
 
 
 class LibraryItem(BaseModel):
@@ -46,9 +44,12 @@ class LibraryItem(BaseModel):
         return f"http://www.wxyc.info/wxycdb/libraryRelease?id={self.id}"
 
 
-class LibrarySearchResponse(BaseModel):
-    """Response containing library search results."""
+class DiscogsSearchResult(BaseModel):
+    """A single result from Discogs search."""
 
-    results: list[LibraryItem]
-    total: int
-    query: str | None = None
+    album: str | None = None
+    artist: str | None = None
+    release_id: int
+    artwork_url: str | None = None
+    confidence: float = 0.0
+    release_url: str = ""

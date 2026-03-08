@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Request-O-Matic is a FastAPI service for WXYC radio that processes song requests. It parses natural language messages, searches a local library catalog, fetches album artwork, and posts enriched results to Slack.
+Request-O-Matic is a FastAPI service for WXYC radio that processes song requests. It parses natural language messages, delegates search to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup), and posts enriched results to Slack.
 
 ## Architecture
 
@@ -13,39 +13,16 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 4. **Slack**: Post enriched results with artwork to Slack
 
 ### Key Files
+- `models.py` - Shared DTOs: `LibraryItem`, `DiscogsSearchResult`
 - `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
+- `routers/health.py` - Health check endpoint (groq, lookup, slack services)
 - `services/parser.py` - Groq AI message parsing
 - `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
-- `library/db.py` - SQLite full-text search with FTS5 (used by library router)
-- `discogs/service.py` - Discogs API service with optional PostgreSQL cache (used by Discogs router)
-- `discogs/cache_service.py` - PostgreSQL cache for Discogs data (reduces API calls)
-- `discogs/memory_cache.py` - In-memory TTL cache for API responses
-- `core/matching.py` - Shared text normalization, compilation detection, confidence scoring, and track validation
+- `services/slack.py` - Slack message formatting and posting
+- `core/dependencies.py` - FastAPI dependency injection (HTTP client, Groq, Slack, PostHog)
 - `core/sentry.py` - Sentry error tracking integration
-- `core/telemetry.py` - PostHog telemetry with cache stats tracking
-### Discogs Cache (Optional)
-The service supports an optional PostgreSQL cache for Discogs data to reduce API calls:
-
-**Cache Strategy:**
-1. Query local PostgreSQL cache first
-2. On cache miss, query Discogs API
-3. Write API results back to cache for future queries
-4. Gracefully degrade to API-only if cache unavailable
-
-**Cache Service (`discogs/cache_service.py`):**
-- Uses asyncpg for async PostgreSQL connections
-- Trigram similarity (pg_trgm) for fuzzy text matching
-- `CacheUnavailableError` exception for connection failures
-
-**Enabling the Cache:**
-Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. If not set, the service uses Discogs API directly (existing behavior).
-
-**Setting Up the Cache Database:**
-The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
-
-### Library ETL
-
-The library ETL pipeline (`sync-library.sh`, `export_to_sqlite.py`) lives in [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup). See that repo's CLAUDE.md for details.
+- `core/telemetry.py` - PostHog telemetry tracking
+- `config/settings.py` - Pydantic Settings configuration
 
 ## Development Workflow
 
@@ -70,13 +47,13 @@ The library ETL pipeline (`sync-library.sh`, `export_to_sqlite.py`) lives in [li
 | Performance | `tests/performance/` | Real APIs | Response time benchmarks |
 
 ### Unit Tests
-Use mocks for all external services (Groq, Discogs, database). Run frequently during development:
+Use mocks for all external services (Groq, lookup service). Run frequently during development:
 ```bash
 venv/bin/python -m pytest tests/unit/ -v
 ```
 
 ### Integration Tests
-Hit real Discogs/Groq APIs using staging environment variables from Railway. The `conftest.py` automatically loads staging env vars when the Railway CLI is available:
+Hit real Groq API using staging environment variables from Railway. The `conftest.py` automatically loads staging env vars when the Railway CLI is available:
 ```bash
 # Requires RAILWAY_TOKEN_STAGING env var or Railway CLI login
 venv/bin/python -m pytest tests/integration/ -v -m integration
@@ -85,7 +62,7 @@ venv/bin/python -m pytest tests/integration/ -v -m integration
 ./test-integration.sh -v
 ```
 
-Integration tests are skipped if required env vars (`DISCOGS_TOKEN`, `GROQ_API_KEY`) are missing.
+Integration tests are skipped if required env vars (`GROQ_API_KEY`) are missing.
 
 ### Test Environment Configuration
 Use `TEST_ENV` to control which server integration and performance tests hit:
@@ -123,7 +100,7 @@ venv/bin/python scripts/repl.py --local
 **Note:** Integration and performance tests with `TEST_ENV=local` automatically start and stop the local server, so you don't need to manually run uvicorn first. The test fixture detects if a server is already running and skips startup if so.
 
 ### Manual Testing Tools
-- **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`). Shows Discogs URLs for each library result.
+- **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`).
 - **`scripts/repl.py`** - Interactive REPL with command history, server switching (`:local`/`:prod`)
 - **`scripts/create_posthog_dashboard.py`** - Creates PostHog dashboard for telemetry visualization (requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`)
 
@@ -132,10 +109,6 @@ venv/bin/python scripts/repl.py --local
 1. Create a **unit test** in `tests/unit/` that reproduces the bug with mocked data
 2. Create an **integration test** in `tests/integration/` that verifies the fix against real APIs
 3. The integration test should assert that false positives are excluded AND correct results are included
-
-Example (from Sugar Plant bug fix):
-- Unit test: `test_search_releases_filters_invalid_compilations` - mocks Discogs responses
-- Integration test: `test_sugar_plant_excludes_unrelated_compilations` - hits real API
 
 ## Deployment
 
@@ -152,14 +125,16 @@ Search logic (artist matching, ambiguous format handling, compilation search) li
 
 Required:
 - `GROQ_API_KEY` - For AI parsing
+- `LOOKUP_SERVICE_URL` - Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). All search is delegated to this service. If unset, song requests return HTTP 503.
 
 Optional:
-- `DISCOGS_TOKEN` - For artwork and track lookup
 - `SLACK_WEBHOOK_URL` - For posting results
+- `SLACK_WEBHOOK_KEY_URL` - Railway endpoint to fetch Slack webhook key
 - `SENTRY_DSN` - For error tracking (Sentry)
-- `DATABASE_URL_DISCOGS` - PostgreSQL URL for Discogs cache (e.g., `postgresql://user:pass@host:5432/discogs`)
-- `LOOKUP_SERVICE_URL` - **Required.** Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). All search is delegated to this service. If unset, song requests return HTTP 503. Errors propagate as 502.
-
+- `POSTHOG_API_KEY` - PostHog project API key for telemetry
+- `POSTHOG_HOST` - PostHog host URL (default: `https://us.i.posthog.com`)
+- `ENABLE_SLACK_INTEGRATION` - Enable/disable Slack notifications (default: `true`)
+- `ENABLE_TELEMETRY` - Enable/disable PostHog telemetry (default: `true`)
 
 ## Code Style
 

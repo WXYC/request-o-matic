@@ -2,7 +2,6 @@
 
 import logging
 
-import asyncpg
 import httpx
 from fastapi import Depends
 from groq import Groq
@@ -10,18 +9,12 @@ from posthog import Posthog
 
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
-from discogs.cache_service import DiscogsCacheService
-from discogs.service import DiscogsService
-from library.db import LibraryDB
 from services.lookup_client import LookupServiceClient
 
 logger = logging.getLogger(__name__)
 
 # Module-level instances for lifecycle management
 _http_client: httpx.AsyncClient | None = None
-_library_db: LibraryDB | None = None
-_discogs_service: DiscogsService | None = None
-_discogs_pool: asyncpg.Pool | None = None
 _posthog_client: Posthog | None = None
 _slack_webhook_url: str | None = None
 
@@ -61,98 +54,6 @@ def get_groq_client(settings: Settings = Depends(get_settings)) -> Groq:
     if not settings.groq_api_key:
         raise ServiceInitializationError("GROQ_API_KEY not configured")
     return Groq(api_key=settings.groq_api_key)
-
-
-async def get_library_db(settings: Settings = Depends(get_settings)) -> LibraryDB:
-    """Get library database instance.
-
-    Args:
-        settings: Application settings
-
-    Returns:
-        LibraryDB: Connected library database instance
-
-    Raises:
-        ServiceInitializationError: If database initialization fails
-    """
-    global _library_db
-
-    if _library_db is None:
-        try:
-            db_path = settings.resolved_library_db_path
-            _library_db = LibraryDB(db_path=db_path)
-            await _library_db.connect()
-            logger.info(f"Library database connected: {db_path}")
-        except Exception as e:
-            logger.error(f"Failed to initialize library database: {e}")
-            raise ServiceInitializationError(f"Database initialization failed: {e}") from e
-
-    return _library_db
-
-
-async def close_library_db() -> None:
-    """Close library database connection."""
-    global _library_db
-    if _library_db:
-        await _library_db.close()
-        _library_db = None
-
-
-async def get_discogs_service(
-    settings: Settings = Depends(get_settings),
-) -> DiscogsService | None:
-    """Get Discogs service instance with optional PostgreSQL cache.
-
-    When DATABASE_URL_DISCOGS is configured, creates an asyncpg connection pool
-    and wires up DiscogsCacheService for local caching of Discogs data.
-
-    Args:
-        settings: Application settings
-
-    Returns:
-        Optional[DiscogsService]: Discogs service if configured, None otherwise
-    """
-    global _discogs_service
-    global _discogs_pool
-
-    if not settings.discogs_token:
-        logger.debug("DISCOGS_TOKEN not set - Discogs service disabled")
-        return None
-
-    if _discogs_service is None:
-        cache_service = None
-
-        if settings.database_url_discogs and _discogs_pool is None:
-            try:
-                _discogs_pool = await asyncpg.create_pool(
-                    settings.database_url_discogs, min_size=1, max_size=5
-                )
-                logger.info("Discogs cache pool connected")
-            except Exception as e:
-                logger.warning(f"Failed to create Discogs cache pool: {type(e).__name__}: {e}")
-
-        if _discogs_pool is not None:
-            cache_service = DiscogsCacheService(_discogs_pool)
-            logger.info("Discogs cache service enabled")
-
-        _discogs_service = DiscogsService(settings.discogs_token, cache_service=cache_service)
-        logger.info(
-            f"Discogs service initialized (cache: {'enabled' if cache_service else 'disabled'})"
-        )
-
-    return _discogs_service
-
-
-async def close_discogs_service() -> None:
-    """Close Discogs service, its HTTP client, and the cache pool."""
-    global _discogs_service
-    global _discogs_pool
-    if _discogs_service:
-        await _discogs_service.close()
-        _discogs_service = None
-    if _discogs_pool:
-        await _discogs_pool.close()
-        _discogs_pool = None
 
 
 async def get_lookup_client(

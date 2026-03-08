@@ -34,7 +34,6 @@ class TestAppConfiguration:
             # Check for versioned API routes
             assert any("/api/v1/request" in route for route in routes)
             assert any("/api/v1/parse" in route for route in routes)
-            assert any("/api/v1/library" in route for route in routes)
 
     def test_app_has_legacy_routes(self):
         """Test that app has legacy (non-versioned) routes for backwards compatibility."""

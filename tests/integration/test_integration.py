@@ -6,13 +6,10 @@ Skip with: pytest tests/ -m "not integration"
 """
 
 import os
-from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
 
-from discogs.service import DiscogsService
-from library.db import LibraryDB
 from tests.scenarios import (
     AMPS_FOR_CHRIST_AMBIGUOUS,
     BIOSPHERE_ALBUM_FILTER,
@@ -23,13 +20,12 @@ from tests.scenarios import (
     LAID_BACK_ARTIST_VS_TITLE,
     LIVING_COLOR_SPELLING,
     LUSH_TRACK_FILTER,
-    MANU_DIBANGO_COMPILATION,
     MEET_ME_IN_CITY,
     MI_AMI_COMMA_FORMAT,
     PLUG_ALIAS,
     QUIXOTIC_SPECIAL_CHARS,
-    SOME_PHIL_COLLINS_FILLER,
     SNEAKER_PIMPS_TRACK_VALIDATION,
+    SOME_PHIL_COLLINS_FILLER,
     SPOONFUL_DASH_FORMAT,
     SUGAR_PLANT_FALSE_POSITIVE,
     TOY_WORD_BOUNDARY,
@@ -41,498 +37,11 @@ load_dotenv()
 # Mark all tests in this file as integration tests
 pytestmark = pytest.mark.integration
 
-# Skip if required env vars not set
-DISCOGS_TOKEN = os.getenv("DISCOGS_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# library.db is in project root, not tests/ directory
-LIBRARY_DB_PATH = Path(__file__).parent.parent.parent / "library.db"
-
-skip_if_no_token = pytest.mark.skipif(
-    not DISCOGS_TOKEN, reason="DISCOGS_TOKEN not set - skipping integration tests"
-)
-
-skip_if_no_db = pytest.mark.skipif(
-    not LIBRARY_DB_PATH.exists(), reason="library.db not found - skipping integration tests"
-)
 
 skip_if_no_groq = pytest.mark.skipif(
     not GROQ_API_KEY, reason="GROQ_API_KEY not set - skipping parser integration tests"
 )
-
-
-class TestDiscogsIntegration:
-    """Test against the real Discogs API."""
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    async def test_manu_dibango_compilation_search(self):
-        """Test the actual Manu Dibango compilation search scenario."""
-        assert DISCOGS_TOKEN is not None
-        service = DiscogsService(DISCOGS_TOKEN)
-        s = MANU_DIBANGO_COMPILATION
-
-        # Test the real scenario
-        response = await service.search_releases_by_track(f"{s.song} (85 Remix)", s.artist)
-
-        print(f"\n✅ Found {len(response.releases)} releases on Discogs:")
-        for i, release in enumerate(response.releases[:5], 1):
-            print(f"  {i}. {release.artist} - {release.album}")
-
-        # Verify we get results with valid structure
-        # Note: Discogs results can change over time, so we only verify
-        # that results have the expected structure
-        assert len(response.releases) >= 0, "Should return a list of releases"
-
-        for release in response.releases[:5]:
-            assert hasattr(release, "artist"), "Release should have artist"
-            assert hasattr(release, "album"), "Release should have album"
-
-        # Note if compilation is in results (informational, not required)
-        album_titles = [r.album for r in response.releases]
-        has_compilation = any(
-            "change" in album.lower() and "beat" in album.lower() for album in album_titles
-        )
-
-        if has_compilation:
-            print("  ✅ Found 'Change The Beat' compilation!")
-        else:
-            print("  ⚠️  Compilation not in top results (this is OK - Discogs data varies)")
-            print(f"     All albums: {album_titles[:5]}")
-
-        await service.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    async def test_sugar_plant_filters_false_positive_compilations(self):
-        """
-        Test that searching for 'Simple' by 'Sugar Plant' filters out false positives.
-
-        Bug: Discogs was returning "22 Explosive Hits, Vol 2" because it contains
-        "A Simple Man" by "Sugar Bears (2)" - partial matches on track and artist.
-
-        Expected: The tracklist validation should filter out compilations that don't
-        actually contain "Simple" by "Sugar Plant".
-        """
-        from discogs.lookup import lookup_releases_by_track
-
-        s = SUGAR_PLANT_FALSE_POSITIVE
-        assert s.song is not None and s.artist is not None
-        releases = await lookup_releases_by_track(s.song, s.artist)
-
-        print(f"\n✅ Found {len(releases)} releases on Discogs:")
-        for i, (artist, album) in enumerate(releases[:10], 1):
-            print(f"  {i}. {artist} - {album}")
-
-        # Should NOT include "22 Explosive Hits" or similar false positives
-        for _artist, album in releases:
-            album_lower = album.lower()
-            assert "explosive" not in album_lower, (
-                f"Should not include '{album}' - it contains 'A Simple Man' by "
-                f"'Sugar Bears', not 'Simple' by 'Sugar Plant'"
-            )
-
-        # If we have results, they should be actual Sugar Plant releases
-        # or verified compilations (Various Artists that passed tracklist validation)
-        for artist, _album in releases:
-            artist_lower = artist.lower()
-            is_sugar_plant = "sugar plant" in artist_lower
-            is_compilation = "various" in artist_lower
-            assert is_sugar_plant or is_compilation, (
-                f"Expected Sugar Plant or verified compilation, got '{artist}'"
-            )
-
-        print("\n✅ Tracklist validation correctly filtered false positives!")
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    async def test_plug_me_and_mr_jones_lookup(self):
-        """Test that Discogs returns releases for 'Me And Mr Jones' by 'Plug'.
-
-        "Plug" is an alias for "Luke Vibert" on Discogs. The API resolves the alias
-        and returns releases by Luke Vibert that contain the track.
-        """
-        from discogs.lookup import lookup_releases_by_track
-
-        releases = await lookup_releases_by_track("Me And Mr Jones", "Plug")
-
-        print(f"\n✅ Found {len(releases)} releases for 'Me And Mr Jones' by 'Plug':")
-        for i, (artist, album) in enumerate(releases[:5], 1):
-            print(f"  {i}. {artist} - {album}")
-
-        assert len(releases) > 0, (
-            "Discogs should return releases for 'Me And Mr Jones' by 'Plug' (alias for Luke Vibert)"
-        )
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    async def test_discogs_rate_limiting(self):
-        """Test that we handle rate limits gracefully."""
-        assert DISCOGS_TOKEN is not None
-        service = DiscogsService(DISCOGS_TOKEN)
-
-        # Make multiple rapid requests
-        results = []
-        for i in range(3):
-            response = await service.search_releases_by_track(f"Test Track {i}", "Test Artist")
-            results.append(response)
-
-        # Should complete without errors (even if rate limited)
-        assert len(results) == 3
-
-        await service.close()
-
-
-class TestLibraryIntegration:
-    """Test against the real library.db database."""
-
-    @pytest.mark.asyncio
-    @skip_if_no_db
-    async def test_celluloid_compilation_in_library(self):
-        """Test that the Celluloid compilation exists in the library."""
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        # Search for the compilation
-        results = await db.search(query="Celluloid change beat", limit=5)
-
-        print(f"\n✅ Found {len(results)} results in library:")
-        for result in results:
-            print(f"  - {result.artist} - {result.title}")
-            print(f"    Call: {result.call_number}")
-
-        # Verify we found it
-        assert len(results) > 0, "Should find Celluloid compilation"
-
-        # Check for exact match
-        found_exact = any(
-            "celluloid" in (result.title or "").lower()
-            and "change" in (result.title or "").lower()
-            and "beat" in (result.title or "").lower()
-            for result in results
-        )
-
-        assert found_exact, "Should find exact Celluloid compilation"
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_db
-    async def test_fuzzy_search_with_special_chars(self):
-        """Test fuzzy search with real data."""
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        # Test with special characters (should use fallback)
-        results = await db.search(query="Richard D. James Album = リチャード", limit=5)
-
-        print(f"\n✅ Found {len(results)} results with special chars:")
-        for result in results[:3]:
-            print(f"  - {result.artist} - {result.title}")
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_db
-    async def test_various_artists_search(self):
-        """Test searching for Various Artists releases."""
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        # Search for soundtracks and compilations
-        results = await db.search(query="Various Artists", limit=10)
-
-        print(f"\n✅ Found {len(results)} Various Artists releases:")
-        for result in results[:5]:
-            print(f"  - {result.title}")
-            print(f"    Artist: {result.artist}")
-
-        assert len(results) > 0, "Should find Various Artists releases"
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_db
-    async def test_artist_only_search_echo_and_the_bunnymen(self):
-        """Test artist-only search returns results.
-
-        Bug: After refactoring to support multiple albums, artist-only searches
-        (with no song or album) would return no results because the search
-        condition required albums_for_search OR song to be present.
-
-        Expected: Searching for just an artist name should return their albums.
-        """
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        s = ECHO_BUNNYMEN_ARTIST_ONLY
-        results = await db.search(query=s.artist, limit=5)
-
-        print(f"\n✅ Found {len(results)} results for '{s.artist}':")
-        for result in results:
-            print(f"  - {result.artist} - {result.title}")
-            print(f"    Call: {result.call_number}")
-
-        assert len(results) > 0, "Should find Echo and the Bunnymen albums"
-
-        # Verify they're actually by Echo and the Bunnymen
-        for result in results:
-            assert result.artist is not None, "Result should have artist"
-            assert "echo" in result.artist.lower(), (
-                f"Result should be by Echo and the Bunnymen, got {result.artist}"
-            )
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_db
-    async def test_dj_blaqstarr_in_library(self):
-        """Test that DJ Blaqstarr's release exists in the library.
-
-        Expected: "Shake It To The Ground" should be in the library
-        with catalog ID "Hiphop cd DJ 70/1"
-
-        Note: This test depends on specific library content and may be
-        skipped if the release is not present.
-        """
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        # Search for the artist
-        results = await db.search(query="DJ Blaqstarr", limit=5)
-
-        print(f"\n✅ Found {len(results)} results for DJ Blaqstarr:")
-        for result in results:
-            print(f"  - {result.artist} - {result.title}")
-            print(f"    Call: {result.call_number}")
-
-        # Skip if content not in library (library content changes over time)
-        if len(results) == 0:
-            await db.close()
-            pytest.skip("DJ Blaqstarr not in library - content may have changed")
-
-        # Check for expected catalog structure (DJ 70/1 in Hiphop)
-        found_expected = any(
-            result.call_letters == "DJ" and result.artist_call_number == 70 for result in results
-        )
-
-        if found_expected:
-            print("  ✅ Found DJ Blaqstarr with expected catalog ID (DJ 70)")
-
-        await db.close()
-
-
-class TestEndToEndIntegration:
-    """Test the full workflow: Discogs -> Library matching."""
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    @skip_if_no_db
-    async def test_full_compilation_search_workflow(self):
-        """
-        Test the complete workflow:
-        1. Search Discogs for track
-        2. Get list of releases
-        3. Check each against library
-        4. Find the compilation
-
-        Note: This test depends on both Discogs data and library content,
-        which can change over time.
-        """
-        # Step 1: Search Discogs
-        assert DISCOGS_TOKEN is not None
-        service = DiscogsService(DISCOGS_TOKEN)
-        s = MANU_DIBANGO_COMPILATION
-        response = await service.search_releases_by_track(f"{s.song} (85 Remix)", s.artist)
-
-        print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
-
-        # Skip if Discogs returns no results
-        if len(response.releases) == 0:
-            await service.close()
-            pytest.skip("No Discogs results found - API data may have changed")
-
-        # Step 2: Check library for each
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        found_in_library = []
-        print("\n🔍 Step 2: Checking library for each release...")
-
-        for release in response.releases[:10]:  # Check first 10
-            # Try exact match first
-            results = await db.search(query=release.album, limit=1)
-
-            # Try fuzzy match if exact fails
-            if not results:
-                # Extract keywords
-                import re
-
-                words = re.sub(r"[^\w\s]", " ", release.album.lower()).split()
-                significant = [w for w in words if len(w) > 3][:3]
-
-                if significant:
-                    fuzzy_query = " ".join(significant)
-                    results = await db.search(query=fuzzy_query, limit=1)
-
-            if results:
-                found_in_library.append((release.album, results[0]))
-                print(f"  ✅ Found: {results[0].title}")
-
-        # Step 3: Report results
-        print(f"\n🎉 Found {len(found_in_library)} matches in library!")
-
-        # Skip if no matches found (library content may have changed)
-        if len(found_in_library) == 0:
-            await service.close()
-            await db.close()
-            pytest.skip("No library matches found - library content may have changed")
-
-        # Check if we found the compilation (informational)
-        has_compilation = any(
-            item.title is not None
-            and ("celluloid" in item.title.lower() or "change" in item.title.lower())
-            for _, item in found_in_library
-        )
-
-        if has_compilation:
-            print("  ✅ Successfully matched compilation!")
-        else:
-            print("  ⚠️  Compilation not found (this is OK - library content varies)")
-
-        await service.close()
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    @skip_if_no_db
-    async def test_keyword_fallback_search(self):
-        """
-        Test that keyword fallback works when searching by artist + album keywords.
-        This tests the logic added in routers/request.py.
-        """
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        # Simulate the keyword extraction logic with an album that exists
-        import re
-
-        # Use an album we know exists: "Selected Ambient works vol 2" by Aphex Twin
-        song = "ambient works"  # Keywords from actual album title
-        artist = "Aphex Twin"
-
-        # Extract significant words (matching routers/request.py logic)
-        artist_words = re.sub(r"[^\w\s]", " ", artist.lower()).split()
-        song_words = re.sub(r"[^\w\s]", " ", song.lower()).split()
-
-        all_words = artist_words + song_words
-        significant = [
-            w
-            for w in all_words
-            if len(w) > 3
-            and w not in {"the", "and", "with", "from", "that", "this", "play", "song", "remix"}
-        ]
-
-        keyword_query = " ".join(significant[:3])
-        print(f"\n🔍 Testing keyword search: '{keyword_query}'")
-
-        results = await db.search(query=keyword_query, limit=3)
-
-        print(f"✅ Found {len(results)} results:")
-        for result in results:
-            print(f"  - {result.artist} - {result.title}")
-
-        # Verify we find something relevant
-        assert len(results) > 0, "Keyword search should find results"
-
-        # Check if we found Aphex Twin albums
-        has_aphex = any(
-            result.artist is not None and "aphex" in result.artist.lower() for result in results
-        )
-
-        assert has_aphex, "Should find Aphex Twin album with keyword search"
-        print("  ✅ Keyword search found Aphex Twin album!")
-
-        await db.close()
-
-    @pytest.mark.asyncio
-    @skip_if_no_token
-    @skip_if_no_db
-    async def test_dj_blaqstarr_shake_it_to_the_ground(self):
-        """
-        Test the complete workflow for "Shake It To The Ground" by DJ Blaqstarr.
-
-        Expected outcome:
-        - Discogs should find the track
-        - Library should have one matching release (catalog: Hiphop cd DJ 70/1)
-
-        Note: This test depends on both Discogs data and library content,
-        which can change over time.
-        """
-        # Step 1: Search Discogs for the track
-        assert DISCOGS_TOKEN is not None
-        service = DiscogsService(DISCOGS_TOKEN)
-        response = await service.search_releases_by_track("Shake It To The Ground", "DJ Blaqstarr")
-
-        print(f"\n📀 Step 1: Found {len(response.releases)} releases on Discogs")
-        for i, release in enumerate(response.releases[:5], 1):
-            print(f"  {i}. {release.artist} - {release.album}")
-
-        # Step 2: Check library for matches
-        db = LibraryDB(db_path=LIBRARY_DB_PATH)
-        await db.connect()
-
-        found_in_library = []
-        print("\n🔍 Step 2: Checking library for each release...")
-
-        for release in response.releases[:10]:
-            # Try exact match
-            results = await db.search(query=release.album, limit=1)
-
-            # Try fuzzy match if exact fails
-            if not results:
-                import re
-
-                words = re.sub(r"[^\w\s]", " ", release.album.lower()).split()
-                significant = [w for w in words if len(w) > 3][:3]
-
-                if significant:
-                    fuzzy_query = " ".join(significant)
-                    results = await db.search(query=fuzzy_query, limit=1)
-
-            if results:
-                found_in_library.append((release.album, results[0]))
-                print(f"  ✅ Found: {results[0].title} ({results[0].call_number})")
-
-        # Step 3: Also search library directly for DJ Blaqstarr
-        print("\n🔍 Step 3: Direct library search for DJ Blaqstarr...")
-        direct_results = await db.search(query="DJ Blaqstarr", limit=5)
-
-        for result in direct_results:
-            print(f"  - {result.title} ({result.call_number})")
-            # Add to found list if not already there
-            if not any(item.id == result.id for _, item in found_in_library):
-                found_in_library.append(("Direct search", result))
-
-        print(f"\n🎉 Total found: {len(found_in_library)} matches in library!")
-
-        # Skip if content not in library (library content changes over time)
-        if len(found_in_library) == 0 and len(direct_results) == 0:
-            await service.close()
-            await db.close()
-            pytest.skip("DJ Blaqstarr not found in library - content may have changed")
-
-        # Check for expected catalog ID (DJ 70/1)
-        all_results = [item for _, item in found_in_library] + direct_results
-        has_expected_catalog = any(
-            result.call_letters == "DJ" and result.artist_call_number == 70
-            for result in all_results
-        )
-
-        if has_expected_catalog:
-            print("  ✅ Found release with expected catalog ID (DJ 70/1)!")
-
-        await service.close()
-        await db.close()
 
 
 class TestParserIntegration:
@@ -562,12 +71,12 @@ class TestParserIntegration:
         assert result.artist is not None
 
         # The key assertion: asterisks should be preserved
-        assert "*" in result.artist, (
-            f"Expected asterisks to be preserved in artist name, got: {result.artist}"
-        )
-        assert result.artist.lower().replace("*", "") == "quixotic", (
-            f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
-        )
+        assert (
+            "*" in result.artist
+        ), f"Expected asterisks to be preserved in artist name, got: {result.artist}"
+        assert (
+            result.artist.lower().replace("*", "") == "quixotic"
+        ), f"Expected artist to be 'Quix*o*tic' (or similar), got: {result.artist}"
 
         print(f"  ✅ Asterisks preserved: {result.artist}")
 
@@ -593,9 +102,9 @@ class TestParserIntegration:
 
             assert result.artist is not None, f"Expected artist for '{message}'"
             # Check special char is preserved (case-insensitive check on base name)
-            assert special_char in result.artist or special_char in result.artist.lower(), (
-                f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
-            )
+            assert (
+                special_char in result.artist or special_char in result.artist.lower()
+            ), f"Expected '{special_char}' in artist name for '{message}', got: {result.artist}"
 
             print(f"  ✅ Special char '{special_char}' preserved")
 
@@ -626,12 +135,12 @@ class TestParserIntegration:
         assert result.is_request is True, "Should recognize as a request"
         assert result.song is not None, "Should extract song title"
         assert result.artist is not None, "Should extract artist name"
-        assert "man" in result.song.lower() and "house" in result.song.lower(), (
-            f"Expected song '{s.song}', got: {result.song}"
-        )
-        assert "mi ami" in result.artist.lower(), (
-            f"Expected artist '{s.artist}', got: {result.artist}"
-        )
+        assert (
+            "man" in result.song.lower() and "house" in result.song.lower()
+        ), f"Expected song '{s.song}', got: {result.song}"
+        assert (
+            "mi ami" in result.artist.lower()
+        ), f"Expected artist '{s.artist}', got: {result.artist}"
 
         print("  ✅ Correctly parsed comma-separated format!")
 
@@ -657,17 +166,17 @@ class TestParserIntegration:
         print(f"  Artist: {result.artist}")
         print(f"  Is Request: {result.is_request}")
 
-        assert result.is_request is True, (
-            f"Should recognize as a request, got message_type={result.message_type}"
-        )
+        assert (
+            result.is_request is True
+        ), f"Should recognize as a request, got message_type={result.message_type}"
         assert result.song is not None, "Should extract 'I Love Acid' as song title"
         assert result.artist is not None, "Should extract 'Luke Vibert' as artist"
-        assert "love" in result.song.lower() and "acid" in result.song.lower(), (
-            f"Expected song containing 'Love' and 'Acid', got: {result.song}"
-        )
-        assert "vibert" in result.artist.lower(), (
-            f"Expected artist containing 'Vibert', got: {result.artist}"
-        )
+        assert (
+            "love" in result.song.lower() and "acid" in result.song.lower()
+        ), f"Expected song containing 'Love' and 'Acid', got: {result.song}"
+        assert (
+            "vibert" in result.artist.lower()
+        ), f"Expected artist containing 'Vibert', got: {result.artist}"
 
         print("  ✅ Correctly parsed song with common words in comma format!")
 
@@ -703,18 +212,18 @@ class TestParserIntegration:
 
         # Artist should be exactly what the listener wrote, not a hallucination
         assert result.artist is not None, "Should extract artist"
-        assert result.artist.lower() == s.artist.lower(), (
-            f"Expected artist '{s.artist}' (from message), got: {result.artist}"
-        )
-        assert "eternalux" not in (result.artist or "").lower(), (
-            "Artist 'Eternalux' is hallucinated -- not in the original message"
-        )
+        assert (
+            result.artist.lower() == s.artist.lower()
+        ), f"Expected artist '{s.artist}' (from message), got: {result.artist}"
+        assert (
+            "eternalux" not in (result.artist or "").lower()
+        ), "Artist 'Eternalux' is hallucinated -- not in the original message"
 
         # Song should contain "mind" and "odyssey"
         assert result.song is not None, "Should extract song title"
-        assert "mind" in result.song.lower() and "odyssey" in result.song.lower(), (
-            f"Expected song 'Mind Odyssey', got: {result.song}"
-        )
+        assert (
+            "mind" in result.song.lower() and "odyssey" in result.song.lower()
+        ), f"Expected song 'Mind Odyssey', got: {result.song}"
 
         # Album should be null (not "By Eternal")
         assert result.album is None, f"Expected album to be null, got: {result.album}"
@@ -749,9 +258,9 @@ class TestParserIntegration:
 
         artist = result.artist
         assert artist is not None, "Should extract artist"
-        assert artist.lower() == (s.artist or "").lower(), (
-            f"Expected artist '{s.artist}', got: {artist}"
-        )
+        assert (
+            artist.lower() == (s.artist or "").lower()
+        ), f"Expected artist '{s.artist}', got: {artist}"
 
         song = result.song
         assert song is not None, "Should extract song title"
@@ -789,12 +298,12 @@ class TestParserIntegration:
 
         assert result.is_request is True, "Should recognize as a request"
         assert result.artist is not None, "Should extract artist"
-        assert "collins" in result.artist.lower(), (
-            f"Expected artist 'Phil Collins', got: {result.artist}"
-        )
-        assert result.song is None, (
-            f"Expected song to be null ('some' is a filler word), got: {result.song}"
-        )
+        assert (
+            "collins" in result.artist.lower()
+        ), f"Expected artist 'Phil Collins', got: {result.artist}"
+        assert (
+            result.song is None
+        ), f"Expected song to be null ('some' is a filler word), got: {result.song}"
 
         print("  ✅ Filler word 'some' correctly ignored!")
 
@@ -832,9 +341,9 @@ class TestFullRequestIntegration:
 
         # Check parsing
         parsed = data.get("parsed", {})
-        assert parsed.get("artist") == s.artist, (
-            f"Should parse artist as '{s.artist}', got {parsed.get('artist')}"
-        )
+        assert (
+            parsed.get("artist") == s.artist
+        ), f"Should parse artist as '{s.artist}', got {parsed.get('artist')}"
 
         # Check results
         results = data.get("library_results", [])
@@ -842,9 +351,9 @@ class TestFullRequestIntegration:
 
         # Verify all results are by Echo and the Bunnymen
         for result in results:
-            assert "echo" in result.get("artist", "").lower(), (
-                f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
-            )
+            assert (
+                "echo" in result.get("artist", "").lower()
+            ), f"Result should be by Echo and the Bunnymen, got {result.get('artist')}"
 
         print(f"\n✅ Artist-only search returned {len(results)} results:")
         for r in results:
@@ -937,9 +446,9 @@ class TestFullRequestIntegration:
 
         # Should NOT include Lovelife (which doesn't have Thoughtforms)
         titles = [r.get("title", "").lower() for r in results]
-        assert "lovelife" not in titles, (
-            "Lovelife should NOT be in results because it doesn't have Thoughtforms"
-        )
+        assert (
+            "lovelife" not in titles
+        ), "Lovelife should NOT be in results because it doesn't have Thoughtforms"
 
         # Should include albums that actually have Thoughtforms
         # (According to Discogs: Mad Love, Scar, Gala, etc.)
@@ -993,9 +502,9 @@ class TestFullRequestIntegration:
 
         # Should NOT include Stator (which doesn't have The Things I Tell You)
         titles = [r.get("title", "").lower() for r in results]
-        assert "stator" not in titles, (
-            "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
-        )
+        assert (
+            "stator" not in titles
+        ), "Stator should NOT be in results because it doesn't have 'The Things I Tell You'"
 
         # Should include albums that actually have the track
         # (According to Discogs: Substrata, Wireless)
@@ -1038,9 +547,9 @@ class TestFullRequestIntegration:
         # Should NOT include Young Black Teenagers
         for r in results:
             artist = r.get("artist", "").lower()
-            assert "young black teenagers" not in artist, (
-                "'Young Black Teenagers' should not match 'Young Gov' search"
-            )
+            assert (
+                "young black teenagers" not in artist
+            ), "'Young Black Teenagers' should not match 'Young Gov' search"
 
         print("\n✅ Correctly excluded 'Young Black Teenagers' from 'Young Gov' search!")
 
@@ -1080,18 +589,18 @@ class TestFullRequestIntegration:
             r for r in results if "various artists" in r.get("artist", "").lower()
         ]
 
-        assert len(various_artists_results) == 0, (
-            f"Should not return Various Artists compilations: {various_artists_results}"
-        )
+        assert (
+            len(various_artists_results) == 0
+        ), f"Should not return Various Artists compilations: {various_artists_results}"
 
         # Check that results contain "laid back" in either artist or title
         for r in results:
             artist = r.get("artist", "").lower()
             title = r.get("title", "").lower()
 
-            assert s.artist.lower() in artist or s.artist.lower() in title, (
-                f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
-            )
+            assert (
+                s.artist.lower() in artist or s.artist.lower() in title
+            ), f"Unrelated result: '{r.get('artist')}' - '{r.get('title')}'"
 
         print("\n✅ No Various Artists false positives!")
 
@@ -1161,18 +670,18 @@ class TestFullRequestIntegration:
         # Should NOT include Edward Bear
         for r in results:
             artist = r.get("artist", "").lower()
-            assert "edward bear" not in artist, (
-                "'Edward Bear' should not match 'Amps for Christ' search"
-            )
+            assert (
+                "edward bear" not in artist
+            ), "'Edward Bear' should not match 'Amps for Christ' search"
 
         # If we have results, they should be by Amps for Christ
         if results:
             has_amps = any(
                 r.get("artist", "").lower().startswith("amps for christ") for r in results
             )
-            assert has_amps, (
-                f"Expected 'Amps for Christ' albums, got: {[r.get('artist') for r in results]}"
-            )
+            assert (
+                has_amps
+            ), f"Expected 'Amps for Christ' albums, got: {[r.get('artist') for r in results]}"
 
         print("\n✅ Correctly excluded 'Edward Bear' from 'Amps for Christ' search!")
 
@@ -1255,21 +764,21 @@ class TestFullRequestIntegration:
             print(f"  - {r.get('artist')} - {r.get('title')}")
 
         # Should be recognized as a request
-        assert parsed.get("is_request") is True, (
-            "Should recognize 'song, artist' format as a request"
-        )
+        assert (
+            parsed.get("is_request") is True
+        ), "Should recognize 'song, artist' format as a request"
 
         # Should have results
         assert len(results) > 0, "Should find results for Mi Ami"
 
         # Should return Watersports
         first_result = results[0]
-        assert "watersports" in first_result.get("title", "").lower(), (
-            f"Expected 'Watersports' album, got '{first_result.get('title')}'"
-        )
-        assert "mi ami" in first_result.get("artist", "").lower(), (
-            f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
-        )
+        assert (
+            "watersports" in first_result.get("title", "").lower()
+        ), f"Expected 'Watersports' album, got '{first_result.get('title')}'"
+        assert (
+            "mi ami" in first_result.get("artist", "").lower()
+        ), f"Expected artist 'Mi Ami', got '{first_result.get('artist')}'"
 
         print("\n✅ Correctly returned 'Watersports' by Mi Ami!")
 
@@ -1310,9 +819,9 @@ class TestFullRequestIntegration:
 
         # All results should be by Living Colour
         for r in results:
-            assert "living colour" in r.get("artist", "").lower(), (
-                f"Expected 'Living Colour', got '{r.get('artist')}'"
-            )
+            assert (
+                "living colour" in r.get("artist", "").lower()
+            ), f"Expected 'Living Colour', got '{r.get('artist')}'"
 
         print("\n✅ Correctly corrected 'Living Color' to 'Living Colour'!")
 
@@ -1366,9 +875,9 @@ class TestFullRequestIntegration:
             # Either by Sugar Plant directly, or a verified compilation
             is_sugar_plant = "sugar plant" in artist
             is_valid_compilation = "various" in artist
-            assert is_sugar_plant or is_valid_compilation, (
-                f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
-            )
+            assert (
+                is_sugar_plant or is_valid_compilation
+            ), f"Expected Sugar Plant or verified compilation, got '{r.get('artist')}'"
 
         print("\n✅ Correctly excluded unrelated compilations!")
 
@@ -1407,9 +916,9 @@ class TestFullRequestIntegration:
 
             # Check all library URLs are unique
             library_urls = [r.get("library_url") for r in results]
-            assert len(library_urls) == len(set(library_urls)), (
-                f"Duplicate library URLs found in results for '{query}': {library_urls}"
-            )
+            assert len(library_urls) == len(
+                set(library_urls)
+            ), f"Duplicate library URLs found in results for '{query}': {library_urls}"
 
             if len(results) > 1:
                 found_multi_result = True
@@ -1450,15 +959,15 @@ class TestFullRequestIntegration:
 
             # Check all IDs are unique
             ids = [r.get("id") for r in results]
-            assert len(ids) == len(set(ids)), (
-                f"Duplicate IDs found for '{query}' ({description}): {ids}"
-            )
+            assert len(ids) == len(
+                set(ids)
+            ), f"Duplicate IDs found for '{query}' ({description}): {ids}"
 
             # Check no duplicate (artist, title) pairs
             artist_title_pairs = [(r.get("artist"), r.get("title")) for r in results]
-            assert len(artist_title_pairs) == len(set(artist_title_pairs)), (
-                f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
-            )
+            assert len(artist_title_pairs) == len(
+                set(artist_title_pairs)
+            ), f"Duplicate artist/title pairs for '{query}' ({description}): {artist_title_pairs}"
 
             if len(results) > 1:
                 found_multi_result = True
@@ -1514,24 +1023,24 @@ class TestFullRequestIntegration:
 
         # All results should be by Sneaker Pimps
         for r in results:
-            assert "sneaker pimps" in r.get("artist", "").lower(), (
-                f"Expected Sneaker Pimps, got {r.get('artist')}"
-            )
+            assert (
+                "sneaker pimps" in r.get("artist", "").lower()
+            ), f"Expected Sneaker Pimps, got {r.get('artist')}"
 
         # Should NOT include Kiss & Swallow (which doesn't have 6 Underground)
         titles = [r.get("title", "").lower() for r in results]
-        assert "kiss & swallow" not in titles, (
-            "Kiss & Swallow should NOT be in results because it doesn't have '6 Underground'"
-        )
+        assert (
+            "kiss & swallow" not in titles
+        ), "Kiss & Swallow should NOT be in results because it doesn't have '6 Underground'"
 
         # Should include Becoming X (which has 6 Underground)
         has_becoming_x = any("becoming x" in title for title in titles)
         assert has_becoming_x, f"Expected 'Becoming X' (which has 6 Underground), but got: {titles}"
 
         # Should NOT say "not on any album" since it IS on Becoming X
-        assert song_not_found is False, (
-            "song_not_found should be False since 6 Underground is on Becoming X"
-        )
+        assert (
+            song_not_found is False
+        ), "song_not_found should be False since 6 Underground is on Becoming X"
 
         print("\n✅ Correctly returned only albums with the requested track!")
 
@@ -1615,9 +1124,9 @@ class TestFullRequestIntegration:
 
         print(f"\n📊 Cache stats with skip_cache=True: {cache_stats}")
 
-        assert memory_hits == 0, (
-            f"Expected 0 memory cache hits with skip_cache=True, got {memory_hits}"
-        )
+        assert (
+            memory_hits == 0
+        ), f"Expected 0 memory cache hits with skip_cache=True, got {memory_hits}"
         assert pg_hits == 0, f"Expected 0 PG cache hits with skip_cache=True, got {pg_hits}"
 
         print("✅ skip_cache=True correctly bypassed all caches")
@@ -1660,9 +1169,9 @@ class TestFullRequestIntegration:
 
         # Artist should NOT be corrected to Plugz
         for r in results:
-            assert "plugz" not in r.get("artist", "").lower(), (
-                f"Should not return Plugz albums, got '{r.get('artist')}'"
-            )
+            assert (
+                "plugz" not in r.get("artist", "").lower()
+            ), f"Should not return Plugz albums, got '{r.get('artist')}'"
 
         print("\n✅ Correctly avoided false correction of 'Plug' to 'Plugz'!")
 
