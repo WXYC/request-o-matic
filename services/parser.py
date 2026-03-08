@@ -48,6 +48,7 @@ Guidelines:
 - Dashes (with or without spaces) are delimiters separating song, artist, and album. "Song-Artist-Album" or "Song - Artist - Album" should be split into three fields. For example, "Spoonful-Cream-Wheels of Fire lp" means song="Spoonful", artist="Cream", album="Wheels of Fire".
 - Words like "lp", "cd", "vinyl", "7\"", "12\"", "45" at the end of a message are physical format descriptors, not album names. Ignore them. For example, in "Spoonful-Cream-Wheels of Fire lp", "lp" is a format descriptor and "Wheels of Fire" is the album.
 - Words like "some", "any", "a little", "a bit of", "more" before an artist name are filler/determiners meaning "play [some quantity of] artist", NOT song titles. For example, "Some phil collins please" means play some Phil Collins -- "some" is not a song title. Set song to null in these cases.
+- When the message is just a name like "MJ Lenderman" or "Radiohead" with no song or album context, it's an artist request. Set artist to the name and song to null.
 - When in doubt about whether something is a song title or album, prefer treating it as a song title
 
 Respond with valid JSON only, no markdown formatting."""

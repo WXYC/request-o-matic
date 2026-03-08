@@ -22,6 +22,7 @@ from tests.scenarios import (
     LUSH_TRACK_FILTER,
     MEET_ME_IN_CITY,
     MI_AMI_COMMA_FORMAT,
+    MJ_LENDERMAN_BARE_ARTIST,
     PLUG_ALIAS,
     QUIXOTIC_SPECIAL_CHARS,
     SNEAKER_PIMPS_TRACK_VALIDATION,
@@ -306,6 +307,41 @@ class TestParserIntegration:
         )
 
         print("  ✅ Filler word 'some' correctly ignored!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_bare_artist_name_parsed_as_artist(self):
+        """Test that a bare artist name like 'MJ Lenderman' is parsed as artist, not song.
+
+        Bug: "MJ Lenderman" was parsed as song="MJ Lenderman", artist=null.
+        When a listener sends just an artist name, they want to hear that artist.
+
+        Expected: artist="MJ Lenderman", song=null.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = MJ_LENDERMAN_BARE_ARTIST
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None, "Should extract artist name"
+        assert "lenderman" in result.artist.lower(), (
+            f"Expected artist containing 'Lenderman', got: {result.artist}"
+        )
+        assert result.song is None, (
+            f"Expected song to be null (bare name is an artist), got: {result.song}"
+        )
+
+        print("  ✅ Bare artist name correctly parsed as artist!")
 
 
 class TestFullRequestIntegration:

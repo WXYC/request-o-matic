@@ -256,6 +256,15 @@ SOME_PHIL_COLLINS_FILLER = _register(
     tags=frozenset({"parser", "filler_word"}),
 )
 
+MJ_LENDERMAN_BARE_ARTIST = _register(
+    id="mj_lenderman_bare_artist",
+    description="Bare artist name 'MJ Lenderman' should parse as artist, not song",
+    raw_message="MJ Lenderman",
+    artist="MJ Lenderman",
+    bug="Parser classified bare artist name as song title instead of artist",
+    tags=frozenset({"parser", "bare_name"}),
+)
+
 FLOW_COMA_808_STATE = _register(
     id="flow_coma_808_state",
     description="Flow Coma by 808 State should not match unrelated '808 State' album",
