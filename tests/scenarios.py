@@ -265,6 +265,16 @@ MJ_LENDERMAN_BARE_ARTIST = _register(
     tags=frozenset({"parser", "bare_name"}),
 )
 
+SARA_FLEETWOOD_MAC_GREETING = _register(
+    id="sara_fleetwood_mac_greeting",
+    description="Greeting 'Good Morning' is not a song title; 'Sarah from Fleetwood Mac' means song=Sara, artist=Fleetwood Mac",
+    raw_message="Good Mirning i would live to hear Sarah from Fleetwod Mac",
+    artist="Fleetwood Mac",
+    song="Sara",
+    bug="Parser treated greeting 'Good Morning' as song title and 'Sarah from Fleetwood Mac' as artist name",
+    tags=frozenset({"parser", "greeting"}),
+)
+
 FLOW_COMA_808_STATE = _register(
     id="flow_coma_808_state",
     description="Flow Coma by 808 State should not match unrelated '808 State' album",

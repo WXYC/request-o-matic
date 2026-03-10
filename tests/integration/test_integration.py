@@ -25,6 +25,7 @@ from tests.scenarios import (
     MJ_LENDERMAN_BARE_ARTIST,
     PLUG_ALIAS,
     QUIXOTIC_SPECIAL_CHARS,
+    SARA_FLEETWOOD_MAC_GREETING,
     SNEAKER_PIMPS_TRACK_VALIDATION,
     SOME_PHIL_COLLINS_FILLER,
     SPOONFUL_DASH_FORMAT,
@@ -342,6 +343,41 @@ class TestParserIntegration:
         )
 
         print("  ✅ Bare artist name correctly parsed as artist!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_greeting_not_parsed_as_song_title(self):
+        """Test that greetings like 'Good Morning' are not treated as song titles.
+
+        Bug: "Good Mirning i would live to hear Sarah from Fleetwod Mac" was parsed
+        as song="Good Morning", artist="Sarah from Fleetwood Mac". The greeting should
+        be ignored, "Sara" is the song, and "Fleetwood Mac" is the artist.
+
+        Expected: artist="Fleetwood Mac", song="Sara".
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = SARA_FLEETWOOD_MAC_GREETING
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None, "Should extract artist name"
+        assert "fleetwood" in result.artist.lower(), (
+            f"Expected artist containing 'Fleetwood', got: {result.artist}"
+        )
+        assert result.song is not None, "Should extract song name"
+        assert "sara" in result.song.lower(), f"Expected song containing 'Sara', got: {result.song}"
+
+        print("  ✅ Greeting ignored, song and artist correctly extracted!")
 
 
 class TestFullRequestIntegration:
