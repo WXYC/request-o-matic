@@ -256,6 +256,15 @@ SOME_PHIL_COLLINS_FILLER = _register(
     tags=frozenset({"parser", "filler_word"}),
 )
 
+SOMETHING_BY_HELDEN_FILLER = _register(
+    id="something_by_helden_filler",
+    description="'something by helden' - 'something' is a filler word, not a song title",
+    raw_message="something by helden",
+    artist="Helden",
+    bug="Parser interpreted 'something' as a song title instead of recognizing it as a filler word",
+    tags=frozenset({"parser", "filler_word"}),
+)
+
 MJ_LENDERMAN_BARE_ARTIST = _register(
     id="mj_lenderman_bare_artist",
     description="Bare artist name 'MJ Lenderman' should parse as artist, not song",
