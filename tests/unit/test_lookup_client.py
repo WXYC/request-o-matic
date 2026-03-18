@@ -331,9 +331,7 @@ class TestLookupRetry:
 
         client = _make_client(handler)
         with pytest.raises(httpx.ConnectError):
-            await client.lookup(
-                LookupRequest(artist="Stereolab", raw_message="play stereolab")
-            )
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
         assert len(calls) == 2
 
     @pytest.mark.asyncio
@@ -347,9 +345,7 @@ class TestLookupRetry:
 
         client = _make_client(handler)
         with pytest.raises(httpx.ReadTimeout):
-            await client.lookup(
-                LookupRequest(artist="Cat Power", raw_message="play cat power")
-            )
+            await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
         assert len(calls) == 2
 
     @pytest.mark.asyncio
@@ -363,9 +359,7 @@ class TestLookupRetry:
 
         client = _make_client(handler)
         with pytest.raises(httpx.HTTPStatusError):
-            await client.lookup(
-                LookupRequest(artist="Stereolab", raw_message="play stereolab")
-            )
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
         assert len(calls) == 1
 
     @pytest.mark.asyncio
@@ -379,9 +373,7 @@ class TestLookupRetry:
 
         client = _make_client(handler)
         with pytest.raises(httpx.HTTPStatusError):
-            await client.lookup(
-                LookupRequest(artist="Stereolab", raw_message="play stereolab")
-            )
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
         assert len(calls) == 1
 
     @pytest.mark.asyncio
