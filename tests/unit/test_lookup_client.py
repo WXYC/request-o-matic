@@ -13,11 +13,13 @@ from services.lookup_client import (
 )
 
 
-def _make_client(handler) -> LookupServiceClient:
+def _make_client(handler, retry_delay=0, **kwargs) -> LookupServiceClient:
     """Create a LookupServiceClient with a mock transport."""
     transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(transport=transport)
-    return LookupServiceClient("http://test-service/api/v1", http_client)
+    return LookupServiceClient(
+        "http://test-service/api/v1", http_client, retry_delay=retry_delay, **kwargs
+    )
 
 
 SAMPLE_RESPONSE = {
@@ -277,3 +279,123 @@ class TestLookupModels:
         item = LookupResultItem(library_item=LibraryItem(id=1, title="Test", artist="Test Artist"))
         assert item.artwork is None
         assert item.library_item.id == 1
+
+
+class TestLookupRetry:
+    """Tests for retry logic in LookupServiceClient."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_connect_error_then_success(self):
+        """First call raises ConnectError, second succeeds."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            if len(calls) == 1:
+                raise httpx.ConnectError("Connection refused")
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        response = await client.lookup(
+            LookupRequest(artist="Stereolab", raw_message="play stereolab")
+        )
+        assert len(calls) == 2
+        assert isinstance(response, LookupResponse)
+
+    @pytest.mark.asyncio
+    async def test_retry_on_timeout_then_success(self):
+        """First call raises ReadTimeout, second succeeds."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            if len(calls) == 1:
+                raise httpx.ReadTimeout("Read timed out")
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        response = await client.lookup(
+            LookupRequest(artist="Cat Power", raw_message="play cat power")
+        )
+        assert len(calls) == 2
+        assert isinstance(response, LookupResponse)
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted_connect_error(self):
+        """Both calls raise ConnectError. Exception propagates."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            raise httpx.ConnectError("Connection refused")
+
+        client = _make_client(handler)
+        with pytest.raises(httpx.ConnectError):
+            await client.lookup(
+                LookupRequest(artist="Stereolab", raw_message="play stereolab")
+            )
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted_timeout(self):
+        """Both calls raise ReadTimeout. Exception propagates."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            raise httpx.ReadTimeout("Read timed out")
+
+        client = _make_client(handler)
+        with pytest.raises(httpx.ReadTimeout):
+            await client.lookup(
+                LookupRequest(artist="Cat Power", raw_message="play cat power")
+            )
+        assert len(calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_http_status_error(self):
+        """HTTP 500 raises immediately, no retry."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(500, json={"detail": "Internal server error"})
+
+        client = _make_client(handler)
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.lookup(
+                LookupRequest(artist="Stereolab", raw_message="play stereolab")
+            )
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_http_422(self):
+        """HTTP 422 raises immediately, no retry."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(422, json={"detail": "Validation error"})
+
+        client = _make_client(handler)
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.lookup(
+                LookupRequest(artist="Stereolab", raw_message="play stereolab")
+            )
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_successful_request_no_retry(self):
+        """Successful first call, no retry attempted."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        response = await client.lookup(
+            LookupRequest(artist="Jessica Pratt", raw_message="play jessica pratt")
+        )
+        assert len(calls) == 1
+        assert isinstance(response, LookupResponse)
