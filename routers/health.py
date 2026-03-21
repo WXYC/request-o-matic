@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -43,7 +44,9 @@ async def _check_lookup_service(settings: Settings, http_client: httpx.AsyncClie
     if not settings.lookup_service_url:
         return "unavailable"
     try:
-        resp = await http_client.get(f"{settings.lookup_service_url.rstrip('/')}/health")
+        parsed = urlparse(settings.lookup_service_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        resp = await http_client.get(f"{base_url}/health")
         return "ok" if resp.status_code == 200 else "error"
     except Exception:
         return "error"

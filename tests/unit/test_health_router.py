@@ -231,6 +231,40 @@ class TestHealthCheck:
         assert "features" not in data
 
     @pytest.mark.asyncio
+    async def test_lookup_health_check_uses_base_url(self):
+        """Health check should hit /health at the host root, not under /api/v1."""
+        settings = _make_settings(
+            lookup_service_url="https://lookup.example.com/api/v1",
+        )
+        client = AsyncMock()
+        captured_urls = []
+
+        async def _get(url, **kwargs):
+            captured_urls.append(url)
+            resp = Mock()
+            resp.status_code = 200
+            return resp
+
+        async def _post(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 400
+            return resp
+
+        client.get = _get
+        client.post = _post
+        app = _make_app(settings, client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                await c.get("/health")
+
+        lookup_urls = [u for u in captured_urls if "lookup" in u]
+        assert lookup_urls == ["https://lookup.example.com/health"]
+
+    @pytest.mark.asyncio
     async def test_multiple_optional_services_down(self):
         """Multiple optional services failing -> degraded, not unhealthy."""
         settings = _make_settings(
