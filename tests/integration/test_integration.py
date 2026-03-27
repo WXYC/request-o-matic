@@ -24,6 +24,7 @@ from tests.scenarios import (
     MI_AMI_COMMA_FORMAT,
     MJ_LENDERMAN_BARE_ARTIST,
     PLUG_ALIAS,
+    PLUG_COMMA_FORMAT,
     QUIXOTIC_SPECIAL_CHARS,
     SARA_FLEETWOOD_MAC_GREETING,
     SNEAKER_PIMPS_TRACK_VALIDATION,
@@ -414,6 +415,52 @@ class TestParserIntegration:
         assert "sara" in result.song.lower(), f"Expected song containing 'Sara', got: {result.song}"
 
         print("  ✅ Greeting ignored, song and artist correctly extracted!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_does_not_substitute_known_artist_for_explicit_artist(self):
+        """Test that 'me and mr jones, plug' parses Plug as artist, not Loudon Wainwright III.
+
+        Bug: "me and mr jones, plug" was parsed as artist="Loudon Wainwright III"
+        because the LLM recognized "Me and Mr. Jones" as a known song and substituted
+        a famous performer, ignoring the explicitly provided artist name "plug".
+
+        Expected: artist="Plug", song="Me And Mr Jones". The parser must use the
+        artist name from the message, not substitute a known performer.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = PLUG_COMMA_FORMAT
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Artist: {result.artist}")
+        print(f"  Song: {result.song}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+
+        # Artist must be Plug -- not a substitution like Loudon Wainwright III or Amy Winehouse
+        assert result.artist is not None, "Should extract artist"
+        assert result.artist.lower() == "plug", (
+            f"Expected artist 'Plug' (from message), got: {result.artist}"
+        )
+        assert "wainwright" not in (result.artist or "").lower(), (
+            "Artist 'Loudon Wainwright III' is substituted -- not what the listener wrote"
+        )
+        assert "winehouse" not in (result.artist or "").lower(), (
+            "Artist 'Amy Winehouse' is substituted -- not what the listener wrote"
+        )
+
+        # Song should be Me And Mr Jones
+        assert result.song is not None, "Should extract song title"
+        assert "jones" in result.song.lower(), f"Expected song containing 'Jones', got: {result.song}"
+
+        print("  ✅ Parser used explicit artist name, no substitution!")
 
 
 class TestFullRequestIntegration:

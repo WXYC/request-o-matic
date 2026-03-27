@@ -75,6 +75,16 @@ PLUG_ALIAS = _register(
     tags=frozenset({"alias", "spelling_correction"}),
 )
 
+PLUG_COMMA_FORMAT = _register(
+    id="plug_comma_format",
+    description="'me and mr jones, plug' should parse Plug as artist, not substitute Loudon Wainwright III",
+    raw_message="me and mr jones, plug",
+    artist="Plug",
+    song="Me And Mr Jones",
+    bug="Parser substituted Loudon Wainwright III (a known performer of 'Me and Mr. Jones') instead of using the explicitly provided artist 'plug'",
+    tags=frozenset({"parser", "artist_substitution", "comma_format"}),
+)
+
 SNEAKER_PIMPS_TRACK_VALIDATION = _register(
     id="sneaker_pimps_track_validation",
     description="6 Underground is on Becoming X but not Kiss & Swallow",
