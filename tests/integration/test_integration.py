@@ -337,9 +337,7 @@ class TestParserIntegration:
 
         assert result.is_request is True, "Should recognize as a request"
         assert result.artist is not None, "Should extract artist"
-        assert "helden" in result.artist.lower(), (
-            f"Expected artist 'Helden', got: {result.artist}"
-        )
+        assert "helden" in result.artist.lower(), f"Expected artist 'Helden', got: {result.artist}"
         assert result.song is None, (
             f"Expected song to be null ('something' is a filler word), got: {result.song}"
         )
@@ -458,7 +456,9 @@ class TestParserIntegration:
 
         # Song should be Me And Mr Jones
         assert result.song is not None, "Should extract song title"
-        assert "jones" in result.song.lower(), f"Expected song containing 'Jones', got: {result.song}"
+        assert "jones" in result.song.lower(), (
+            f"Expected song containing 'Jones', got: {result.song}"
+        )
 
         print("  ✅ Parser used explicit artist name, no substitution!")
 
