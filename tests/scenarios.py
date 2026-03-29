@@ -306,3 +306,13 @@ FLOW_COMA_808_STATE = _register(
     ),
     tags=frozenset({"album_filter", "title_mismatch"}),
 )
+
+MONK_WELL_YOU_NEEDNT = _register(
+    id="monk_well_you_neednt",
+    description="'well, you needn't by thelonious monk' - 'well' is part of song title, not filler",
+    raw_message="well, you needn't by thelonious monk",
+    artist="Thelonious Monk",
+    song="Well, You Needn't",
+    bug="Parser treated 'well' as conversational filler and failed to extract the full song title",
+    tags=frozenset({"parser", "filler_word", "song_title"}),
+)

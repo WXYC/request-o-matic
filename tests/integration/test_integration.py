@@ -23,6 +23,7 @@ from tests.scenarios import (
     MEET_ME_IN_CITY,
     MI_AMI_COMMA_FORMAT,
     MJ_LENDERMAN_BARE_ARTIST,
+    MONK_WELL_YOU_NEEDNT,
     PLUG_ALIAS,
     PLUG_COMMA_FORMAT,
     QUIXOTIC_SPECIAL_CHARS,
@@ -461,6 +462,40 @@ class TestParserIntegration:
         )
 
         print("  ✅ Parser used explicit artist name, no substitution!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_parses_song_title_with_well_prefix(self):
+        """Test that 'well, you needn't by thelonious monk' extracts the song title.
+
+        Bug: The parser treated 'well' as conversational filler and dropped it,
+        resulting in no song title being extracted.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = MONK_WELL_YOU_NEEDNT
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None, "Should extract artist"
+        assert "monk" in result.artist.lower(), (
+            f"Expected Thelonious Monk, got: {result.artist}"
+        )
+        assert result.song is not None, "Should extract song title 'Well, You Needn't'"
+        assert "needn" in result.song.lower(), (
+            f"Expected song containing \"needn't\", got: {result.song}"
+        )
+
+        print("  ✅ Correctly parsed song title with 'well' prefix!")
 
 
 class TestFullRequestIntegration:
