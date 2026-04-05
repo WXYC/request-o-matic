@@ -316,3 +316,13 @@ MONK_WELL_YOU_NEEDNT = _register(
     bug="Parser treated 'well' as conversational filler and failed to extract the full song title",
     tags=frozenset({"parser", "filler_word", "song_title"}),
 )
+
+BECK_EDITORIAL_ALBUM = _register(
+    id="beck_editorial_album",
+    description="'Beck's best album: Stereopathic Soulmanuer' - editorial commentary is not the album title",
+    raw_message="Beck's best album: Stereopathic Soulmanuer. It's AMAZING.",
+    artist="Beck",
+    album="Stereopathic Soulmanure",
+    bug="Parser treated editorial phrase 'Beck's best album' as album title and the actual album name as song title",
+    tags=frozenset({"parser", "editorial_commentary"}),
+)
