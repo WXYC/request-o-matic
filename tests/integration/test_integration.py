@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from tests.scenarios import (
     AMPS_FOR_CHRIST_AMBIGUOUS,
+    BECK_EDITORIAL_ALBUM,
     BIOSPHERE_ALBUM_FILTER,
     ECHO_BUNNYMEN_ARTIST_ONLY,
     ETERNAL_HALLUCINATION,
@@ -496,6 +497,42 @@ class TestParserIntegration:
         )
 
         print("  ✅ Correctly parsed song title with 'well' prefix!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_parses_editorial_commentary_as_album_request(self):
+        """Test that 'Beck's best album: Stereopathic Soulmanuer' treats the name after the colon as the album.
+
+        Bug: The parser treated editorial phrase 'Beck's best album' as the album title
+        and the actual album name 'Stereopathic Soulmanure' as a song title.
+        """
+        from groq import Groq
+
+        from services.parser import parse_request
+
+        client = Groq(api_key=GROQ_API_KEY)
+        s = BECK_EDITORIAL_ALBUM
+
+        result = parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Artist: {result.artist}")
+        print(f"  Album: {result.album}")
+        print(f"  Song: {result.song}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None, "Should extract artist"
+        assert "beck" in result.artist.lower(), f"Expected Beck, got: {result.artist}"
+        assert result.album is not None, "Should extract album title"
+        assert "stereopathic" in result.album.lower(), (
+            f"Expected album 'Stereopathic Soulmanure', got: {result.album}"
+        )
+        assert result.song is None, (
+            f"Should not extract a song title, got: {result.song}"
+        )
+
+        print("  ✅ Correctly parsed editorial commentary as album request!")
 
 
 class TestFullRequestIntegration:
