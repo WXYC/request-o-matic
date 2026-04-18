@@ -6,7 +6,7 @@ import logging
 import httpx
 from pydantic import BaseModel
 
-from models import DiscogsSearchResult, LibraryItem
+from models import LibraryItem, ReleaseMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class LookupResultItem(BaseModel):
     """A single lookup result: library item paired with optional artwork."""
 
     library_item: LibraryItem
-    artwork: DiscogsSearchResult | None = None
+    artwork: ReleaseMetadata | None = None
 
 
 class LookupResponse(BaseModel):

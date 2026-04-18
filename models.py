@@ -1,4 +1,4 @@
-"""Shared Pydantic models for library and Discogs data.
+"""Shared Pydantic models for library and release metadata.
 
 These DTOs are used to deserialize responses from the library-metadata-lookup
 service. The full library and Discogs modules (search, caching, rate limiting)
@@ -44,8 +44,11 @@ class LibraryItem(BaseModel):
         return f"http://www.wxyc.info/wxycdb/libraryRelease?id={self.id}"
 
 
-class DiscogsSearchResult(BaseModel):
-    """A single result from Discogs search."""
+class ReleaseMetadata(BaseModel):
+    """Metadata for a release: Discogs info, artwork, and streaming links.
+
+    Deserialized from the ``artwork`` field of library-metadata-lookup responses.
+    """
 
     album: str | None = None
     artist: str | None = None
@@ -53,3 +56,22 @@ class DiscogsSearchResult(BaseModel):
     artwork_url: str | None = None
     confidence: float = 0.0
     release_url: str = ""
+    spotify_url: str | None = None
+    apple_music_url: str | None = None
+    youtube_music_url: str | None = None
+    bandcamp_url: str | None = None
+    soundcloud_url: str | None = None
+
+    @property
+    def preview_url(self) -> str | None:
+        """First available streaming URL in priority order."""
+        for url in (
+            self.spotify_url,
+            self.apple_music_url,
+            self.youtube_music_url,
+            self.bandcamp_url,
+            self.soundcloud_url,
+        ):
+            if url:
+                return url
+        return None

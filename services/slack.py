@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 from config.settings import get_settings
-from models import DiscogsSearchResult, LibraryItem
+from models import LibraryItem, ReleaseMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def shutdown_slack_service():
 
 def build_slack_blocks(
     message: str,
-    items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]],
+    items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]],
     context: str | None = None,
 ) -> list[dict]:
     """Build Slack message blocks from library results with artwork."""
@@ -65,7 +65,10 @@ def build_slack_blocks(
             f"_{item.call_number}_",
         ]
         if artwork and artwork.release_url:
-            text_lines.append(f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>")
+            links = f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>"
+            if artwork.preview_url:
+                links += f" | <{artwork.preview_url}|Preview>"
+            text_lines.append(links)
 
         block: dict = {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(text_lines)}}
 
