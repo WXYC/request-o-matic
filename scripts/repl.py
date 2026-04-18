@@ -99,6 +99,19 @@ def print_result(data: dict) -> None:
             print(f"  Discogs:    {artwork.get('release_url')}")
         print(f"  Confidence: {artwork.get('confidence', 0):.2f}")
 
+        streaming_links = [
+            ("Bandcamp", artwork.get("bandcamp_url")),
+            ("Spotify", artwork.get("spotify_url")),
+            ("Apple Music", artwork.get("apple_music_url")),
+            ("YouTube Music", artwork.get("youtube_music_url")),
+            ("SoundCloud", artwork.get("soundcloud_url")),
+        ]
+        available = [(name, url) for name, url in streaming_links if url]
+        if available:
+            print(f"\n  {'Streaming':-^50}")
+            for name, url in available:
+                print(f"  {name + ':':16s}{url}")
+
     print()
 
 

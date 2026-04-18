@@ -163,6 +163,19 @@ def print_library_results(
         print(f"  Source:     {artwork.get('source')}")
         print(f"  Confidence: {artwork.get('confidence', 0):.2f}")
 
+        streaming_links = [
+            ("Bandcamp", artwork.get("bandcamp_url")),
+            ("Spotify", artwork.get("spotify_url")),
+            ("Apple Music", artwork.get("apple_music_url")),
+            ("YouTube Music", artwork.get("youtube_music_url")),
+            ("SoundCloud", artwork.get("soundcloud_url")),
+        ]
+        available = [(name, url) for name, url in streaming_links if url]
+        if available:
+            print_section("Streaming")
+            for name, url in available:
+                print(f"  {name + ':':16s}{url}")
+
 
 def print_cache_stats(cache_stats: dict) -> None:
     """Print Discogs cache statistics."""
