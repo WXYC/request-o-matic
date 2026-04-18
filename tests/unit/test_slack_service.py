@@ -132,14 +132,15 @@ class TestBuildSlackBlocks:
     )
     def test_builds_blocks_with_preview_link(self, sample_library_item, streaming_field):
         """Test that a Preview link appears when a streaming URL is available."""
-        artwork = ReleaseMetadata(
-            artist="Stereolab",
-            album="Aluminum Tunes",
-            artwork_url="https://example.com/artwork.jpg",
-            release_id=99999,
-            release_url="https://www.discogs.com/release/99999",
-            **{streaming_field: "https://example.com/stream"},
-        )
+        fields = {
+            "artist": "Stereolab",
+            "album": "Aluminum Tunes",
+            "artwork_url": "https://example.com/artwork.jpg",
+            "release_id": 99999,
+            "release_url": "https://www.discogs.com/release/99999",
+            streaming_field: "https://example.com/stream",
+        }
+        artwork = ReleaseMetadata.model_validate(fields)
 
         blocks = build_slack_blocks(
             message="Result:",
