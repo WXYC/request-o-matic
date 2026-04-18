@@ -45,23 +45,7 @@ Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. 
 The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
 
 ### Library ETL
-The `library.db` SQLite database is synced daily from the WXYC MySQL database:
-
-- **`scripts/sync-library.sh`** - Orchestrates ETL, commits changes, and pushes to staging
-- **`scripts/export_to_sqlite.py`** - Connects via SSH to remote MySQL, exports to SQLite with FTS5
-
-The sync runs daily at 7 AM via launchd (`~/Library/LaunchAgents/com.wxyc.request-o-matic-etl.plist`).
-
-**Manual sync:**
-```bash
-# Run ETL (no Slack notifications)
-./scripts/sync-library.sh
-
-# Run with Slack error notifications
-./scripts/sync-library.sh --notify
-```
-
-**Logs:** `~/Library/Logs/request-o-matic-etl.log`
+The `library.db` SQLite database is synced daily from the WXYC MySQL database by the ETL pipeline in [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). The pipeline builds `library.db` via `wxyc-export-to-sqlite` (from [WXYC/wxyc-catalog](https://github.com/WXYC/wxyc-catalog)), enriches it with streaming links from `streaming_availability.db` (in library-metadata-lookup), and uploads the result to the LML staging and production services via `POST /admin/upload-library-db`. See `discogs-cache/scripts/sync-library.sh` and `discogs-cache/.github/workflows/sync-library.yml` for details.
 
 ## Development Workflow
 
