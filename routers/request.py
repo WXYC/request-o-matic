@@ -23,7 +23,7 @@ from core.dependencies import (
     get_slack_service,
 )
 from core.telemetry import RequestTelemetry, get_cache_stats, init_cache_stats
-from models import DiscogsSearchResult, LibraryItem
+from models import LibraryItem, ReleaseMetadata
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks
@@ -54,7 +54,7 @@ class UnifiedResponse(BaseModel):
     """Combined response from parsing, artwork lookup, and library search."""
 
     parsed: ParsedRequest
-    artwork: DiscogsSearchResult | None = None
+    artwork: ReleaseMetadata | None = None
     library_results: list[LibraryItem] = []
     # Search metadata
     search_type: str = "none"
@@ -68,7 +68,7 @@ async def post_results_to_slack(
     slack_service: SlackService | None,
     message: str,
     parsed: ParsedRequest,
-    items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]],
+    items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]],
     context: str | None = None,
 ) -> None:
     """Post formatted results to Slack.
@@ -194,7 +194,7 @@ async def handle_request(
             raise HTTPException(status_code=503, detail="Search service not configured")
 
         library_results: list[LibraryItem] = []
-        items_with_artwork: list[tuple[LibraryItem, DiscogsSearchResult | None]] = []
+        items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]] = []
         song_not_found = False
         found_on_compilation = False
         context: str | None = None

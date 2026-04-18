@@ -13,7 +13,7 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 4. **Slack**: Post enriched results with artwork to Slack
 
 ### Key Files
-- `models.py` - Shared DTOs: `LibraryItem`, `DiscogsSearchResult`
+- `models.py` - Shared DTOs: `LibraryItem`, `ReleaseMetadata`
 - `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
 - `routers/health.py` - Health check endpoint (groq, lookup, slack services)
 - `services/parser.py` - Groq AI message parsing

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from models import DiscogsSearchResult, LibraryItem
+from models import LibraryItem, ReleaseMetadata
 from services.slack import (
     build_simple_slack_blocks,
     build_slack_blocks,
@@ -33,7 +33,7 @@ def sample_library_item():
 @pytest.fixture
 def sample_discogs_result():
     """Create a sample Discogs search result."""
-    return DiscogsSearchResult(
+    return ReleaseMetadata(
         artist="Queen",
         album="A Night at the Opera",
         artwork_url="https://example.com/artwork.jpg",
@@ -125,6 +125,60 @@ class TestBuildSlackBlocks:
         assert "Discogs" in text
         assert "WXYC" in text
         assert "discogs.com" in text
+
+    @pytest.mark.parametrize(
+        "streaming_field",
+        ["spotify_url", "apple_music_url", "youtube_music_url", "bandcamp_url", "soundcloud_url"],
+    )
+    def test_builds_blocks_with_preview_link(self, sample_library_item, streaming_field):
+        """Test that a Preview link appears when a streaming URL is available."""
+        artwork = ReleaseMetadata(
+            artist="Stereolab",
+            album="Aluminum Tunes",
+            artwork_url="https://example.com/artwork.jpg",
+            release_id=99999,
+            release_url="https://www.discogs.com/release/99999",
+            **{streaming_field: "https://example.com/stream"},
+        )
+
+        blocks = build_slack_blocks(
+            message="Result:",
+            items_with_artwork=[(sample_library_item, artwork)],
+        )
+
+        text = blocks[1]["text"]["text"]
+        assert "<https://example.com/stream|Preview>" in text
+
+    def test_preview_link_priority_order(self, sample_library_item):
+        """Test that Preview link uses the first available URL in priority order."""
+        artwork = ReleaseMetadata(
+            artist="Stereolab",
+            album="Aluminum Tunes",
+            release_id=99999,
+            release_url="https://www.discogs.com/release/99999",
+            spotify_url="https://open.spotify.com/search/stereolab",
+            youtube_music_url="https://music.youtube.com/search?q=stereolab",
+        )
+
+        blocks = build_slack_blocks(
+            message="Result:",
+            items_with_artwork=[(sample_library_item, artwork)],
+        )
+
+        text = blocks[1]["text"]["text"]
+        assert "<https://open.spotify.com/search/stereolab|Preview>" in text
+
+    def test_no_preview_link_without_streaming_urls(
+        self, sample_library_item, sample_discogs_result
+    ):
+        """Test that no Preview link appears when no streaming URLs are set."""
+        blocks = build_slack_blocks(
+            message="Result:",
+            items_with_artwork=[(sample_library_item, sample_discogs_result)],
+        )
+
+        text = blocks[1]["text"]["text"]
+        assert "Preview" not in text
 
     def test_builds_blocks_handles_missing_artist(self):
         """Test building blocks when artist is None."""

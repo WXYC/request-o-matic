@@ -13,7 +13,7 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
-from models import DiscogsSearchResult, LibraryItem
+from models import LibraryItem, ReleaseMetadata
 from routers.request import router
 from services.lookup_client import LookupResponse, LookupResultItem, LookupServiceClient
 from tests.conftest import make_parsed_request
@@ -43,7 +43,7 @@ def sample_lookup_response():
                     genre="Rock",
                     format="CD",
                 ),
-                artwork=DiscogsSearchResult(
+                artwork=ReleaseMetadata(
                     album="The Game",
                     artist="Queen",
                     release_id=123,
@@ -285,7 +285,7 @@ class TestDelegationBranch:
                         genre="Rock",
                         format="CD",
                     ),
-                    artwork=DiscogsSearchResult(
+                    artwork=ReleaseMetadata(
                         album="A Night at the Opera",
                         artist="Queen",
                         release_id=100,
@@ -432,9 +432,9 @@ class TestDelegatedCacheStats:
         data = response.json()
         cache_stats = data["cache_stats"]
         # At least one of these must be non-zero
-        assert (cache_stats["pg_hits"] + cache_stats["pg_misses"] + cache_stats["api_calls"]) > 0, (
-            "Delegated cache stats should not be all zeros when lookup service reports activity"
-        )
+        assert (
+            cache_stats["pg_hits"] + cache_stats["pg_misses"] + cache_stats["api_calls"]
+        ) > 0, "Delegated cache stats should not be all zeros when lookup service reports activity"
 
     @pytest.mark.asyncio
     async def test_fallback_to_local_stats_when_lookup_returns_none(
