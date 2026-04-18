@@ -66,10 +66,10 @@ class ReleaseMetadata(BaseModel):
     def preview_url(self) -> str | None:
         """First available streaming URL in priority order."""
         for url in (
+            self.bandcamp_url,
             self.spotify_url,
             self.apple_music_url,
             self.youtube_music_url,
-            self.bandcamp_url,
             self.soundcloud_url,
         ):
             if url:
