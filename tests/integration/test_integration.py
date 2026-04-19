@@ -60,14 +60,14 @@ class TestParserIntegration:
 
         The artist "Quix*o*tic" should NOT be normalized to "Quixotic".
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = QUIXOTIC_SPECIAL_CHARS
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
@@ -90,11 +90,11 @@ class TestParserIntegration:
     @skip_if_no_groq
     async def test_preserves_special_chars_in_various_artists(self):
         """Test preservation of special characters in well-known artist names."""
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
 
         test_cases = [
             ("play something by P!nk", "P!nk", "!"),
@@ -102,7 +102,7 @@ class TestParserIntegration:
         ]
 
         for message, _expected_contains, special_char in test_cases:
-            result = parse_request(message, client)
+            result = await parse_request(message, client)
 
             print(f"\n📝 '{message}' -> Artist: {result.artist}")
 
@@ -124,14 +124,14 @@ class TestParserIntegration:
 
         Expected: Should extract song and artist from comma-separated format.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = MI_AMI_COMMA_FORMAT
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -159,13 +159,13 @@ class TestParserIntegration:
         an emotional expression, but "I Love Acid" is a song by Luke Vibert.
         The comma-separated format should take priority.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
 
-        result = parse_request("I love acid, luke vibert", client)
+        result = await parse_request("I love acid, luke vibert", client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -198,15 +198,15 @@ class TestParserIntegration:
         Expected: artist should be "Eternal" (what the listener wrote), song should
         be "Mind Odyssey", album should be null.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = ETERNAL_HALLUCINATION
         assert s.artist is not None and s.song is not None
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
@@ -245,14 +245,14 @@ class TestParserIntegration:
         song title and 'lp' as the album, instead of splitting on dashes to get
         song=Spoonful, artist=Cream, album=Wheels of Fire.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = SPOONFUL_DASH_FORMAT
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -288,14 +288,14 @@ class TestParserIntegration:
 
         Expected: artist="Phil Collins", song=null.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = SOME_PHIL_COLLINS_FILLER
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -323,14 +323,14 @@ class TestParserIntegration:
 
         Expected: artist="Helden", song=null.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = SOMETHING_BY_HELDEN_FILLER
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -356,14 +356,14 @@ class TestParserIntegration:
 
         Expected: artist="MJ Lenderman", song=null.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = MJ_LENDERMAN_BARE_ARTIST
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -392,14 +392,14 @@ class TestParserIntegration:
 
         Expected: artist="Fleetwood Mac", song="Sara".
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = SARA_FLEETWOOD_MAC_GREETING
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -428,14 +428,14 @@ class TestParserIntegration:
         Expected: artist="Plug", song="Me And Mr Jones". The parser must use the
         artist name from the message, not substitute a known performer.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = PLUG_COMMA_FORMAT
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
@@ -472,14 +472,14 @@ class TestParserIntegration:
         Bug: The parser treated 'well' as conversational filler and dropped it,
         resulting in no song title being extracted.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = MONK_WELL_YOU_NEEDNT
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Song: {result.song}")
@@ -504,14 +504,14 @@ class TestParserIntegration:
         Bug: The parser treated editorial phrase 'Beck's best album' as the album title
         and the actual album name 'Stereopathic Soulmanure' as a song title.
         """
-        from groq import Groq
+        from groq import AsyncGroq
 
         from services.parser import parse_request
 
-        client = Groq(api_key=GROQ_API_KEY)
+        client = AsyncGroq(api_key=GROQ_API_KEY)
         s = BECK_EDITORIAL_ALBUM
 
-        result = parse_request(s.raw_message, client)
+        result = await parse_request(s.raw_message, client)
 
         print("\n📝 Parsed result:")
         print(f"  Artist: {result.artist}")
