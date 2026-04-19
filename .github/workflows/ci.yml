@@ -96,17 +96,17 @@ jobs:
 
       - name: Smoke test
         run: |
-          curl -sf https://request-o-matic-staging.up.railway.app/health | python3 -c "
+          curl -sf https://request-o-matic-staging.up.railway.app/health/ready | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           services = data['services']
           errors = []
           if services['groq'] != 'ok':
               errors.append(f\"groq: {services['groq']}\")
-          if services['database'] != 'ok':
-              errors.append(f\"database: {services['database']}\")
-          if services['discogs_api'] != 'ok':
-              errors.append(f\"discogs_api: {services['discogs_api']}\")
+          if services['lookup'] not in ('ok', 'unavailable'):
+              errors.append(f\"lookup: {services['lookup']}\")
+          if services['slack'] not in ('ok', 'unavailable'):
+              errors.append(f\"slack: {services['slack']}\")
           if errors:
               print('Smoke test FAILED:', ', '.join(errors))
               sys.exit(1)
@@ -157,17 +157,17 @@ jobs:
 
       - name: Smoke test
         run: |
-          curl -sf https://request-o-matic-production.up.railway.app/health | python3 -c "
+          curl -sf https://request-o-matic-production.up.railway.app/health/ready | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
           services = data['services']
           errors = []
           if services['groq'] != 'ok':
               errors.append(f\"groq: {services['groq']}\")
-          if services['database'] != 'ok':
-              errors.append(f\"database: {services['database']}\")
-          if services['discogs_api'] != 'ok':
-              errors.append(f\"discogs_api: {services['discogs_api']}\")
+          if services['lookup'] not in ('ok', 'unavailable'):
+              errors.append(f\"lookup: {services['lookup']}\")
+          if services['slack'] not in ('ok', 'unavailable'):
+              errors.append(f\"slack: {services['slack']}\")
           if errors:
               print('Smoke test FAILED:', ', '.join(errors))
               sys.exit(1)

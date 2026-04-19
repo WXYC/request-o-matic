@@ -80,14 +80,27 @@ async def _run_check(coro) -> str:
 
 @router.get(
     "/health",
-    summary="Health check",
-    description="Check the health status of the application and its services",
+    summary="Liveness check",
+    description="Shallow liveness probe. Returns 200 immediately with no external calls. Used by Railway's healthcheckPath to mark the container as routable.",
+    responses={
+        200: {"description": "Service is alive"},
+    },
+)
+async def liveness_check():
+    """Shallow liveness probe -- no external calls, instant response."""
+    return JSONResponse(content={"status": "ok"})
+
+
+@router.get(
+    "/health/ready",
+    summary="Readiness check",
+    description="Deep readiness probe. Checks connectivity to Groq, lookup service, and Slack.",
     responses={
         200: {"description": "Service is healthy or degraded"},
         503: {"description": "Service is unhealthy (core dependency down)"},
     },
 )
-async def health_check(
+async def readiness_check(
     settings: Settings = Depends(get_settings),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ):

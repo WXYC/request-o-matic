@@ -59,8 +59,37 @@ def mock_http_client():
     return client
 
 
-class TestHealthCheck:
-    """Tests for the health check endpoint."""
+class TestLivenessCheck:
+    """Tests for the shallow /health liveness endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_returns_ok(self):
+        """Liveness check returns 200 immediately with no dependencies."""
+        settings = _make_settings()
+        app = _make_app(settings)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.get("/health")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_no_external_calls(self):
+        """Liveness check must not make any HTTP calls."""
+        settings = _make_settings()
+        client = AsyncMock()
+        app = _make_app(settings, client)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.get("/health")
+
+        client.get.assert_not_called()
+        client.post.assert_not_called()
+
+
+class TestReadinessCheck:
+    """Tests for the deep /health/ready readiness endpoint."""
 
     @pytest.mark.asyncio
     async def test_all_services_healthy(self, mock_http_client):
@@ -75,7 +104,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
@@ -109,7 +138,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 503
         data = response.json()
@@ -140,7 +169,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
@@ -158,7 +187,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
@@ -172,7 +201,7 @@ class TestHealthCheck:
 
         with patch("routers.health.get_cached_slack_webhook_url", return_value=None):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
@@ -208,7 +237,7 @@ class TestHealthCheck:
             patch("routers.health.CHECK_TIMEOUT", 0.05),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 503
         data = response.json()
@@ -225,7 +254,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         data = response.json()
         assert "features" not in data
@@ -259,7 +288,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                await c.get("/health")
+                await c.get("/health/ready")
 
         lookup_urls = [u for u in captured_urls if "lookup" in u]
         assert lookup_urls == ["https://lookup.example.com/health"]
@@ -294,7 +323,7 @@ class TestHealthCheck:
             return_value="https://hooks.slack.com/test",
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                response = await c.get("/health")
+                response = await c.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
