@@ -11,7 +11,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from groq import AsyncGroq
+from groq import AsyncGroq, RateLimitError
 from posthog import Posthog
 from pydantic import BaseModel
 
@@ -276,6 +276,9 @@ async def handle_request(
 
     except HTTPException:
         raise
+    except RateLimitError as e:
+        logger.warning(f"Groq rate limit exceeded: {e}")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded, please retry") from e
     except ValueError as e:
         logger.error(f"Parsing error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e

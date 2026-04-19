@@ -53,7 +53,7 @@ def get_groq_client(settings: Settings = Depends(get_settings)) -> AsyncGroq:
     """
     if not settings.groq_api_key:
         raise ServiceInitializationError("GROQ_API_KEY not configured")
-    return AsyncGroq(api_key=settings.groq_api_key)
+    return AsyncGroq(api_key=settings.groq_api_key, max_retries=4)
 
 
 async def get_lookup_client(
