@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -86,6 +87,25 @@ class TestParseEndpoint:
 
         assert response.status_code == 400
         assert "Message cannot be empty" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_parse_rate_limit_returns_429(self, app, mock_groq_client):
+        """Test that Groq rate limit returns 429."""
+        from groq import RateLimitError
+
+        resp = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/test"))
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
+            mock_parse.side_effect = RateLimitError(
+                message="Rate limit exceeded", response=resp, body=None
+            )
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/api/v1/parse", json={"message": "some message"})
+
+            assert response.status_code == 429
+            assert "Rate limit exceeded" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_parse_value_error_returns_500(self, app, mock_groq_client):

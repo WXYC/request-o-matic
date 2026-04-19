@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from groq import AsyncGroq
+from groq import AsyncGroq, RateLimitError
 from pydantic import BaseModel
 
 from core.dependencies import get_groq_client
@@ -58,6 +58,9 @@ async def parse(
         result = await parse_request(request.message, client)
         logger.info(f"Parsed request: is_request={result.is_request}, type={result.message_type}")
         return result
+    except RateLimitError as e:
+        logger.warning(f"Groq rate limit exceeded: {e}")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded, please retry") from e
     except ValueError as e:
         logger.error(f"Parsing error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
