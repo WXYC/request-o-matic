@@ -170,6 +170,28 @@ class TestDelegationBranch:
         assert data["parsed"]["artist"] == "Living Colour"
 
     @pytest.mark.asyncio
+    async def test_groq_rate_limit_returns_429(self, app, mock_lookup_client):
+        """Groq rate limit returns 429 instead of 500."""
+        from groq import RateLimitError
+
+        resp = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/test"))
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            side_effect=RateLimitError(message="Rate limit exceeded", response=resp, body=None),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play queen", "skip_slack": True},
+                )
+
+        assert response.status_code == 429
+        assert "Rate limit exceeded" in response.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_http_error_returns_502(self, app, mock_lookup_client):
         """HTTP error from lookup service returns 502."""
         mock_response = Mock()
