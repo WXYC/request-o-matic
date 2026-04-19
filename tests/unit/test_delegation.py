@@ -96,7 +96,9 @@ class TestDelegationBranch:
         """Delegation returns results from lookup service, skipping inline pipeline."""
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -130,7 +132,9 @@ class TestDelegationBranch:
             corrected_artist=None,
         )
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -153,7 +157,7 @@ class TestDelegationBranch:
         parsed = make_parsed_request(artist="Living Color", raw_message="play living color")
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -175,7 +179,9 @@ class TestDelegationBranch:
             "Internal Server Error", request=mock_response.request, response=mock_response
         )
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -192,7 +198,9 @@ class TestDelegationBranch:
         """Connection error to lookup service returns 502."""
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("Connection refused")
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -209,7 +217,9 @@ class TestDelegationBranch:
         """Timeout from lookup service returns 502."""
         mock_lookup_client.lookup.side_effect = httpx.TimeoutException("Read timed out")
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -226,7 +236,9 @@ class TestDelegationBranch:
         """skip_cache=True is forwarded to the lookup service."""
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -254,7 +266,9 @@ class TestDelegationBranch:
             found_on_compilation=False,
         )
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -310,7 +324,9 @@ class TestDelegationBranch:
             search_type="artist_search",
         )
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -340,7 +356,7 @@ class TestDelegationBranch:
             raw_message="play bohemian rhapsody by queen",
         )
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -384,7 +400,9 @@ class TestDelegatedCacheStats:
         sample_lookup_response.cache_stats = remote_stats
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -420,7 +438,9 @@ class TestDelegatedCacheStats:
         sample_lookup_response.cache_stats = remote_stats
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -444,7 +464,9 @@ class TestDelegatedCacheStats:
         sample_lookup_response.cache_stats = None
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
-        with patch("routers.request.parse_request", return_value=SAMPLE_PARSED):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:

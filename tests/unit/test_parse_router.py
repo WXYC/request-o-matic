@@ -1,6 +1,6 @@
 """Unit tests for routers/parse.py."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -48,7 +48,7 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_successful(self, app, mock_groq_client, sample_parsed_request):
         """Test successful message parsing."""
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = sample_parsed_request
 
             async with AsyncClient(
@@ -90,7 +90,7 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_value_error_returns_500(self, app, mock_groq_client):
         """Test that ValueError from parser returns 500."""
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.side_effect = ValueError("Invalid message format")
 
             async with AsyncClient(
@@ -104,7 +104,7 @@ class TestParseEndpoint:
     @pytest.mark.asyncio
     async def test_parse_unexpected_error_returns_500(self, app, mock_groq_client):
         """Test that unexpected exceptions return 500 with generic message."""
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.side_effect = RuntimeError("Unexpected error")
 
             async with AsyncClient(
@@ -124,7 +124,7 @@ class TestParseEndpoint:
             raw_message="Thanks for listening!",
         )
 
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = non_request
 
             async with AsyncClient(
@@ -151,7 +151,7 @@ class TestParseEndpoint:
             raw_message="Love the show!",
         )
 
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = feedback
 
             async with AsyncClient(
@@ -193,7 +193,7 @@ class TestParseEndpoint:
             raw_message="Play Stairway to Heaven by Led Zeppelin",
         )
 
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = request
 
             async with AsyncClient(
@@ -219,7 +219,7 @@ class TestParseEndpoint:
             raw_message="Play something by The Beatles",
         )
 
-        with patch("routers.parse.parse_request") as mock_parse:
+        with patch("routers.parse.parse_request", new_callable=AsyncMock) as mock_parse:
             mock_parse.return_value = request
 
             async with AsyncClient(

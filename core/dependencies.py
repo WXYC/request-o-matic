@@ -4,7 +4,7 @@ import logging
 
 import httpx
 from fastapi import Depends
-from groq import Groq
+from groq import AsyncGroq
 from posthog import Posthog
 
 from config.settings import Settings, get_settings
@@ -39,21 +39,21 @@ async def close_http_client() -> None:
         _http_client = None
 
 
-def get_groq_client(settings: Settings = Depends(get_settings)) -> Groq:
+def get_groq_client(settings: Settings = Depends(get_settings)) -> AsyncGroq:
     """Get Groq client instance.
 
     Args:
         settings: Application settings
 
     Returns:
-        Groq: Groq client instance
+        AsyncGroq: Async Groq client instance
 
     Raises:
         ServiceInitializationError: If Groq API key is not configured
     """
     if not settings.groq_api_key:
         raise ServiceInitializationError("GROQ_API_KEY not configured")
-    return Groq(api_key=settings.groq_api_key)
+    return AsyncGroq(api_key=settings.groq_api_key)
 
 
 async def get_lookup_client(

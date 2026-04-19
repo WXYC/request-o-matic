@@ -1,6 +1,6 @@
 """Tests for early return when parser classifies a message as not a request."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -52,7 +52,7 @@ class TestNonRequestEarlyReturn:
             raw_message="love the show!",
         )
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -80,7 +80,7 @@ class TestNonRequestEarlyReturn:
             raw_message="I love acid, luke vibert",
         )
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -104,7 +104,7 @@ class TestNonRequestEarlyReturn:
             raw_message="you guys are great, keep it up",
         )
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
@@ -127,7 +127,7 @@ class TestNonRequestEarlyReturn:
             raw_message="play bohemian rhapsody by queen",
         )
 
-        with patch("routers.request.parse_request", return_value=parsed):
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:

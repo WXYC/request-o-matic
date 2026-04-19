@@ -104,7 +104,7 @@ class TestGetGroqClient:
 
     def test_creates_client_with_api_key(self, mock_settings):
         """Test that get_groq_client creates client when API key is set."""
-        with patch("core.dependencies.Groq") as mock_groq:
+        with patch("core.dependencies.AsyncGroq") as mock_groq:
             get_groq_client(mock_settings)
             mock_groq.assert_called_once_with(api_key="test_groq_key")
 
