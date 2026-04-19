@@ -15,7 +15,7 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 ### Key Files
 - `models.py` - Shared DTOs: `LibraryItem`, `ReleaseMetadata`
 - `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
-- `routers/health.py` - Health check endpoint (groq, lookup, slack services)
+- `routers/health.py` - Health check endpoints: `GET /health` (shallow liveness probe, no external calls) and `GET /health/ready` (deep readiness check: groq, lookup, slack services). Railway's `healthcheckPath` uses `/health` so the container becomes routable immediately on boot.
 - `services/parser.py` - Groq AI message parsing
 - `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
 - `services/slack.py` - Slack message formatting and posting

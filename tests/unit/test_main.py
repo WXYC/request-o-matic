@@ -28,8 +28,9 @@ class TestAppConfiguration:
 
             routes = [route.path for route in app.routes if hasattr(route, "path")]
 
-            # Check for health endpoint
+            # Check for health endpoints
             assert "/health" in routes
+            assert "/health/ready" in routes
 
             # Check for versioned API routes
             assert any("/api/v1/request" in route for route in routes)
