@@ -42,10 +42,10 @@ The service supports an optional PostgreSQL cache for Discogs data to reduce API
 Set `DATABASE_URL_DISCOGS` environment variable to a PostgreSQL connection URL. If not set, the service uses Discogs API directly (existing behavior).
 
 **Setting Up the Cache Database:**
-The cache ETL pipeline lives in a separate repo: [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). See that repo for setup instructions. The SQL schema files in `discogs-cache/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
+The cache ETL pipeline lives in a separate repo: [WXYC/discogs-etl](https://github.com/WXYC/discogs-etl). See that repo for setup instructions. The SQL schema files in `discogs-etl/schema/` define the shared contract between the ETL pipeline and this service's `cache_service.py`.
 
 ### Library ETL
-The `library.db` SQLite database is synced daily from the WXYC MySQL database by the ETL pipeline in [WXYC/discogs-cache](https://github.com/WXYC/discogs-cache). The pipeline builds `library.db` via `wxyc-export-to-sqlite` (from [WXYC/wxyc-catalog](https://github.com/WXYC/wxyc-catalog)), enriches it with streaming links from `streaming_availability.db` (in library-metadata-lookup), and uploads the result to the LML staging and production services via `POST /admin/upload-library-db`. See `discogs-cache/scripts/sync-library.sh` and `discogs-cache/.github/workflows/sync-library.yml` for details.
+The `library.db` SQLite database is synced daily from the WXYC MySQL database by the ETL pipeline in [WXYC/discogs-etl](https://github.com/WXYC/discogs-etl). The pipeline builds `library.db` via `wxyc-export-to-sqlite` (from [WXYC/wxyc-catalog](https://github.com/WXYC/wxyc-catalog)), enriches it with streaming links from `streaming_availability.db` (in library-metadata-lookup), and uploads the result to the LML staging and production services via `POST /admin/upload-library-db`. See `discogs-etl/scripts/sync-library.sh` and `discogs-etl/.github/workflows/sync-library.yml` for details.
 
 ## Development Workflow
 
