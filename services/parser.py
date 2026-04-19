@@ -2,7 +2,7 @@ import json
 import logging
 from enum import StrEnum
 
-from groq import Groq
+from groq import AsyncGroq
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -63,12 +63,12 @@ USER_PROMPT_TEMPLATE = """Parse this message:
 {message}"""
 
 
-def parse_request(message: str, client: Groq) -> ParsedRequest:
+async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
     """Parse a listener message and extract song request metadata."""
     logger.info(f"Parsing message: {message[:100]}...")
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from groq import Groq
+from groq import AsyncGroq
 from pydantic import BaseModel
 
 from core.dependencies import get_groq_client
@@ -48,14 +48,14 @@ class ParseRequestBody(BaseModel):
 )
 async def parse(
     request: ParseRequestBody,
-    client: Groq = Depends(get_groq_client),
+    client: AsyncGroq = Depends(get_groq_client),
 ):
     """Parse a listener message and extract song request metadata."""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     try:
-        result = parse_request(request.message, client)
+        result = await parse_request(request.message, client)
         logger.info(f"Parsed request: is_request={result.is_request}, type={result.message_type}")
         return result
     except ValueError as e:

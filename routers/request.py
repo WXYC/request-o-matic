@@ -11,7 +11,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from groq import Groq
+from groq import AsyncGroq
 from posthog import Posthog
 from pydantic import BaseModel
 
@@ -147,7 +147,7 @@ async def post_results_to_slack(
 )
 async def handle_request(
     request: RequestBody,
-    groq_client: Groq = Depends(get_groq_client),
+    groq_client: AsyncGroq = Depends(get_groq_client),
     slack_service: SlackService | None = Depends(get_slack_service),
     posthog_client: Posthog | None = Depends(get_posthog_client),
     lookup_client: LookupServiceClient | None = Depends(get_lookup_client),
@@ -173,7 +173,7 @@ async def handle_request(
         # Step 1: Parse the message
         with telemetry.track_step("parse"):
             telemetry.record_api_call("groq")
-            parsed = parse_request(request.message, groq_client)
+            parsed = await parse_request(request.message, groq_client)
             logger.info(
                 f"Parsed request: is_request={parsed.is_request}, type={parsed.message_type}"
             )
