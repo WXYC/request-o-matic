@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 from config.settings import get_settings
-from models import LibraryItem, ReleaseMetadata
+from models import LibraryItem, ReleaseMetadata, preview_url
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,8 @@ def build_slack_blocks(
         ]
         if artwork and artwork.release_url:
             links = f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>"
-            if artwork.preview_url:
-                links += f" | <{artwork.preview_url}|Preview>"
+            if (preview := preview_url(artwork)) is not None:
+                links += f" | <{preview}|Preview>"
             text_lines.append(links)
 
         block: dict = {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(text_lines)}}

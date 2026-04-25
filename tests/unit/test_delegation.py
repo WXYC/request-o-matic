@@ -13,10 +13,11 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
-from models import LibraryItem, ReleaseMetadata
+from generated.api_models import SearchType
 from routers.request import router
 from services.lookup_client import LookupResponse, LookupResultItem, LookupServiceClient
 from tests.conftest import make_parsed_request
+from tests.factories import make_library_item, make_release_metadata
 
 # -- Fixtures -----------------------------------------------------------------
 
@@ -33,26 +34,22 @@ def sample_lookup_response():
     return LookupResponse(
         results=[
             LookupResultItem(
-                library_item=LibraryItem(
+                library_item=make_library_item(
                     id=42,
-                    title="The Game",
-                    artist="Queen",
-                    call_letters="Q",
-                    artist_call_number=1,
+                    title="Aluminum Tunes",
+                    artist="Stereolab",
                     release_call_number=2,
-                    genre="Rock",
-                    format="CD",
                 ),
-                artwork=ReleaseMetadata(
-                    album="The Game",
-                    artist="Queen",
+                artwork=make_release_metadata(
                     release_id=123,
+                    album="Aluminum Tunes",
+                    artist="Stereolab",
                     artwork_url="https://img.discogs.com/test.jpg",
                     confidence=0.95,
                 ),
             )
         ],
-        search_type="direct",
+        search_type=SearchType.direct,
         song_not_found=False,
         found_on_compilation=False,
         context_message=None,
@@ -79,9 +76,9 @@ def app(mock_lookup_client):
 
 
 SAMPLE_PARSED = make_parsed_request(
-    song="Crazy Little Thing Called Love",
-    artist="Queen",
-    raw_message="play crazy little thing called love by queen",
+    song="la paradoja",
+    artist="Juana Molina",
+    raw_message="play la paradoja by juana molina",
 )
 
 
@@ -115,7 +112,7 @@ class TestDelegationBranch:
         assert data["search_type"] == "direct"
         assert len(data["library_results"]) == 1
         assert data["library_results"][0]["id"] == 42
-        assert data["library_results"][0]["artist"] == "Queen"
+        assert data["library_results"][0]["artist"] == "Stereolab"
         assert data["artwork"]["artwork_url"] == "https://img.discogs.com/test.jpg"
         assert data["song_not_found"] is False
         assert data["found_on_compilation"] is False
@@ -125,7 +122,7 @@ class TestDelegationBranch:
         """All LookupResponse metadata fields map to UnifiedResponse correctly."""
         mock_lookup_client.lookup.return_value = LookupResponse(
             results=[],
-            search_type="compilation",
+            search_type=SearchType.compilation,
             song_not_found=True,
             found_on_compilation=True,
             context_message='Found "Abele Dance" by Manu Dibango on:',
@@ -283,7 +280,7 @@ class TestDelegationBranch:
         """Empty results from lookup service are handled correctly."""
         mock_lookup_client.lookup.return_value = LookupResponse(
             results=[],
-            search_type="none",
+            search_type=SearchType.none,
             song_not_found=True,
             found_on_compilation=False,
         )
@@ -311,39 +308,30 @@ class TestDelegationBranch:
         mock_lookup_client.lookup.return_value = LookupResponse(
             results=[
                 LookupResultItem(
-                    library_item=LibraryItem(
+                    library_item=make_library_item(
                         id=1,
-                        title="A Night at the Opera",
-                        artist="Queen",
-                        call_letters="Q",
-                        artist_call_number=1,
-                        release_call_number=1,
-                        genre="Rock",
-                        format="CD",
+                        title="Aluminum Tunes",
+                        artist="Stereolab",
                     ),
-                    artwork=ReleaseMetadata(
-                        album="A Night at the Opera",
-                        artist="Queen",
+                    artwork=make_release_metadata(
                         release_id=100,
-                        artwork_url="https://img.discogs.com/opera.jpg",
+                        album="Aluminum Tunes",
+                        artist="Stereolab",
+                        artwork_url="https://img.discogs.com/aluminum.jpg",
                         confidence=0.9,
                     ),
                 ),
                 LookupResultItem(
-                    library_item=LibraryItem(
+                    library_item=make_library_item(
                         id=2,
-                        title="The Game",
-                        artist="Queen",
-                        call_letters="Q",
-                        artist_call_number=1,
+                        title="Dots and Loops",
+                        artist="Stereolab",
                         release_call_number=2,
-                        genre="Rock",
-                        format="CD",
                     ),
                     artwork=None,
                 ),
             ],
-            search_type="artist_search",
+            search_type=SearchType.fallback,
         )
 
         with patch(
@@ -362,7 +350,7 @@ class TestDelegationBranch:
         assert data["library_results"][0]["id"] == 1
         assert data["library_results"][1]["id"] == 2
         # First artwork (non-null) is used as the top-level artwork
-        assert data["artwork"]["artwork_url"] == "https://img.discogs.com/opera.jpg"
+        assert data["artwork"]["artwork_url"] == "https://img.discogs.com/aluminum.jpg"
 
     @pytest.mark.asyncio
     async def test_lookup_request_built_from_parsed(
@@ -372,10 +360,10 @@ class TestDelegationBranch:
         mock_lookup_client.lookup.return_value = sample_lookup_response
 
         parsed = make_parsed_request(
-            song="Bohemian Rhapsody",
-            album="A Night at the Opera",
-            artist="Queen",
-            raw_message="play bohemian rhapsody by queen",
+            song="la paradoja",
+            album="DOGA",
+            artist="Juana Molina",
+            raw_message="play la paradoja by juana molina",
         )
 
         with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
@@ -385,16 +373,16 @@ class TestDelegationBranch:
                 await client.post(
                     "/api/v1/request",
                     json={
-                        "message": "play bohemian rhapsody by queen",
+                        "message": "play la paradoja by juana molina",
                         "skip_slack": True,
                     },
                 )
 
         lookup_req = mock_lookup_client.lookup.call_args[0][0]
-        assert lookup_req.artist == "Queen"
-        assert lookup_req.song == "Bohemian Rhapsody"
-        assert lookup_req.album == "A Night at the Opera"
-        assert lookup_req.raw_message == "play bohemian rhapsody by queen"
+        assert lookup_req.artist == "Juana Molina"
+        assert lookup_req.song == "la paradoja"
+        assert lookup_req.album == "DOGA"
+        assert lookup_req.raw_message == "play la paradoja by juana molina"
 
 
 class TestDelegatedCacheStats:

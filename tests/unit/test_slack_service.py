@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from models import LibraryItem, ReleaseMetadata
+from models import ReleaseMetadata
 from services.slack import (
     build_simple_slack_blocks,
     build_slack_blocks,
@@ -13,32 +13,21 @@ from services.slack import (
     post_to_slack,
     shutdown_slack_service,
 )
+from tests.factories import make_library_item, make_release_metadata
 
 
 @pytest.fixture
 def sample_library_item():
     """Create a sample library item."""
-    return LibraryItem(
-        id=1,
-        artist="Queen",
-        title="A Night at the Opera",
-        call_letters="Q",
-        artist_call_number=1,
-        release_call_number=1,
-        genre="Rock",
-        format="CD",
-    )
+    return make_library_item()
 
 
 @pytest.fixture
 def sample_discogs_result():
     """Create a sample Discogs search result."""
-    return ReleaseMetadata(
-        artist="Queen",
-        album="A Night at the Opera",
-        artwork_url="https://example.com/artwork.jpg",
+    return make_release_metadata(
         release_id=12345,
-        release_url="https://www.discogs.com/release/12345",
+        artwork_url="https://example.com/artwork.jpg",
     )
 
 
@@ -58,8 +47,8 @@ class TestBuildSlackBlocks:
 
         # Check item block has artist and title
         item_block = blocks[1]
-        assert "Queen" in item_block["text"]["text"]
-        assert "A Night at the Opera" in item_block["text"]["text"]
+        assert "Stereolab" in item_block["text"]["text"]
+        assert "Aluminum Tunes" in item_block["text"]["text"]
 
         # Check artwork is included
         assert "accessory" in item_block
@@ -91,15 +80,12 @@ class TestBuildSlackBlocks:
 
     def test_builds_blocks_with_multiple_items(self, sample_library_item):
         """Test building blocks with multiple items."""
-        item2 = LibraryItem(
+        item2 = make_library_item(
             id=2,
-            artist="Queen",
-            title="The Game",
-            call_letters="Q",
-            artist_call_number=1,
+            artist="Cat Power",
+            title="Moon Pix",
+            call_letters="C",
             release_call_number=2,
-            genre="Rock",
-            format="CD",
         )
 
         blocks = build_slack_blocks(
@@ -183,13 +169,13 @@ class TestBuildSlackBlocks:
 
     def test_builds_blocks_handles_missing_artist(self):
         """Test building blocks when artist is None."""
-        item = LibraryItem(
+        item = make_library_item(
             id=1,
             artist=None,
             title="Unknown Album",
             call_letters="X",
-            artist_call_number=1,
-            release_call_number=1,
+            genre=None,
+            format=None,
         )
 
         blocks = build_slack_blocks(
