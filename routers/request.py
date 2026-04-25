@@ -220,12 +220,14 @@ async def handle_request(
         if lookup_response.corrected_artist:
             parsed.artist = lookup_response.corrected_artist
 
-        # Extract results for Slack posting
-        library_results = [item.library_item for item in lookup_response.results]
-        items_with_artwork = [(item.library_item, item.artwork) for item in lookup_response.results]
-        search_type = lookup_response.search_type
-        song_not_found = lookup_response.song_not_found
-        found_on_compilation = lookup_response.found_on_compilation
+        # Extract results for Slack posting. Generated LookupResponse fields
+        # are nullable in the schema; coerce to non-null defaults for callers.
+        results = lookup_response.results or []
+        library_results = [item.library_item for item in results]
+        items_with_artwork = [(item.library_item, item.artwork) for item in results]
+        search_type = str(lookup_response.search_type or "none")
+        song_not_found = bool(lookup_response.song_not_found)
+        found_on_compilation = bool(lookup_response.found_on_compilation)
         context = lookup_response.context_message
 
         # Prefer the lookup service's cache stats over local counters,

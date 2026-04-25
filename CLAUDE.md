@@ -13,7 +13,9 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 4. **Slack**: Post enriched results with artwork to Slack
 
 ### Key Files
-- `models.py` - Shared DTOs: `LibraryItem`, `ReleaseMetadata`
+- `models.py` - Re-exports `LibraryItem` (alias for `LibraryCatalogItem`) and `ReleaseMetadata` (alias for `DiscogsMatchResult`) from `generated.api_models`, plus the `preview_url(metadata)` helper for streaming-priority logic.
+- `generated/api_models.py` - Pydantic v2 models generated from `wxyc-shared/api.yaml`. Do not edit by hand; regenerate via `bash scripts/generate_api_models.sh`. The script prefers a sibling `wxyc-shared/` directory and falls back to downloading `api.yaml` from GitHub.
+- `tests/factories.py` - `make_library_item` / `make_release_metadata` factories that supply the now-required `call_number`, `library_url`, and `release_url` fields with sensible defaults.
 - `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
 - `routers/health.py` - Health check endpoints: `GET /health` (shallow liveness probe, no external calls) and `GET /health/ready` (deep readiness check: groq, lookup, slack services). Railway's `healthcheckPath` uses `/health` so the container becomes routable immediately on boot.
 - `services/parser.py` - Groq AI message parsing

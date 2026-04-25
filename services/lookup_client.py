@@ -4,39 +4,12 @@ import asyncio
 import logging
 
 import httpx
-from pydantic import BaseModel
 
-from models import LibraryItem, ReleaseMetadata
+from generated.api_models import LookupRequest, LookupResponse, LookupResultItem
+
+__all__ = ["LookupRequest", "LookupResponse", "LookupResultItem", "LookupServiceClient"]
 
 logger = logging.getLogger(__name__)
-
-
-class LookupRequest(BaseModel):
-    """Request body for the lookup service."""
-
-    artist: str | None = None
-    song: str | None = None
-    album: str | None = None
-    raw_message: str
-
-
-class LookupResultItem(BaseModel):
-    """A single lookup result: library item paired with optional artwork."""
-
-    library_item: LibraryItem
-    artwork: ReleaseMetadata | None = None
-
-
-class LookupResponse(BaseModel):
-    """Response from the lookup service."""
-
-    results: list[LookupResultItem] = []
-    search_type: str = "none"
-    song_not_found: bool = False
-    found_on_compilation: bool = False
-    context_message: str | None = None
-    corrected_artist: str | None = None
-    cache_stats: dict | None = None
 
 
 class LookupServiceClient:

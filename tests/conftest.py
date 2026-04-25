@@ -13,8 +13,8 @@ import httpx
 import pytest
 
 from config.settings import Settings
-from models import LibraryItem
 from services.parser import MessageType
+from tests.factories import make_library_item
 
 # =============================================================================
 # Environment Configuration
@@ -224,41 +224,20 @@ def mock_slack_service():
 @pytest.fixture
 def sample_library_item():
     """Create a sample library item for testing."""
-    return LibraryItem(
-        id=1,
-        artist="Stereolab",
-        title="Aluminum Tunes",
-        call_letters="S",
-        artist_call_number=1,
-        release_call_number=1,
-        genre="Rock",
-        format="CD",
-    )
+    return make_library_item()
 
 
 @pytest.fixture
 def sample_library_items():
     """Create multiple sample library items for testing."""
     return [
-        LibraryItem(
-            id=1,
-            artist="Stereolab",
-            title="Aluminum Tunes",
-            call_letters="S",
-            artist_call_number=1,
-            release_call_number=1,
-            genre="Rock",
-            format="CD",
-        ),
-        LibraryItem(
+        make_library_item(),
+        make_library_item(
             id=2,
             artist="Cat Power",
             title="Moon Pix",
             call_letters="C",
-            artist_call_number=1,
             release_call_number=2,
-            genre="Rock",
-            format="CD",
         ),
     ]
 

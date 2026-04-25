@@ -27,17 +27,19 @@ SAMPLE_RESPONSE = {
         {
             "library_item": {
                 "id": 42,
-                "title": "The Game",
-                "artist": "Queen",
-                "call_letters": "Q",
+                "title": "Aluminum Tunes",
+                "artist": "Stereolab",
+                "call_letters": "S",
                 "artist_call_number": 1,
                 "release_call_number": 2,
                 "genre": "Rock",
                 "format": "CD",
+                "call_number": "Rock CD S 1/2",
+                "library_url": "http://www.wxyc.info/wxycdb/libraryRelease?id=42",
             },
             "artwork": {
-                "album": "The Game",
-                "artist": "Queen",
+                "album": "Aluminum Tunes",
+                "artist": "Stereolab",
                 "release_id": 123,
                 "release_url": "https://discogs.com/release/123",
                 "artwork_url": "https://img.discogs.com/test.jpg",
@@ -65,25 +67,26 @@ class TestLookupServiceClient:
             assert request.url.path == "/api/v1/lookup"
             assert request.method == "POST"
             body = json.loads(request.content)
-            assert body["artist"] == "Queen"
-            assert body["song"] == "Crazy Little Thing Called Love"
-            assert body["raw_message"] == "play crazy little thing called love by queen"
+            assert body["artist"] == "Stereolab"
+            assert body["song"] == "Ping Pong"
+            assert body["raw_message"] == "play ping pong by stereolab"
             assert "album" not in body  # exclude_none=True
             return httpx.Response(200, json=SAMPLE_RESPONSE)
 
         client = _make_client(handler)
         response = await client.lookup(
             LookupRequest(
-                artist="Queen",
-                song="Crazy Little Thing Called Love",
-                raw_message="play crazy little thing called love by queen",
+                artist="Stereolab",
+                song="Ping Pong",
+                raw_message="play ping pong by stereolab",
             )
         )
 
         assert isinstance(response, LookupResponse)
+        assert response.results is not None
         assert len(response.results) == 1
         assert response.results[0].library_item.id == 42
-        assert response.results[0].library_item.artist == "Queen"
+        assert response.results[0].library_item.artist == "Stereolab"
         assert response.results[0].artwork is not None
         assert response.results[0].artwork.artwork_url == "https://img.discogs.com/test.jpg"
         assert response.search_type == "direct"
@@ -96,18 +99,18 @@ class TestLookupServiceClient:
 
         async def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
-            assert body["artist"] == "Queen"
-            assert body["song"] == "Bohemian Rhapsody"
-            assert body["album"] == "A Night at the Opera"
+            assert body["artist"] == "Juana Molina"
+            assert body["song"] == "la paradoja"
+            assert body["album"] == "DOGA"
             return httpx.Response(200, json=SAMPLE_RESPONSE)
 
         client = _make_client(handler)
         await client.lookup(
             LookupRequest(
-                artist="Queen",
-                song="Bohemian Rhapsody",
-                album="A Night at the Opera",
-                raw_message="play bohemian rhapsody",
+                artist="Juana Molina",
+                song="la paradoja",
+                album="DOGA",
+                raw_message="play la paradoja",
             )
         )
 
@@ -160,7 +163,7 @@ class TestLookupServiceClient:
 
         client = _make_client(handler)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
         assert exc_info.value.response.status_code == 500
 
     @pytest.mark.asyncio
@@ -172,7 +175,7 @@ class TestLookupServiceClient:
 
         client = _make_client(handler)
         with pytest.raises(httpx.HTTPStatusError):
-            await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
 
     @pytest.mark.asyncio
     async def test_connection_error_propagates(self):
@@ -183,7 +186,7 @@ class TestLookupServiceClient:
 
         client = _make_client(handler)
         with pytest.raises(httpx.ConnectError):
-            await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
 
     @pytest.mark.asyncio
     async def test_timeout_propagates(self):
@@ -194,7 +197,7 @@ class TestLookupServiceClient:
 
         client = _make_client(handler)
         with pytest.raises(httpx.ReadTimeout):
-            await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
+            await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
 
     @pytest.mark.asyncio
     async def test_base_url_trailing_slash_stripped(self):
@@ -220,7 +223,7 @@ class TestLookupServiceClient:
 
         client = _make_client(handler)
         await client.lookup(
-            LookupRequest(artist="Queen", raw_message="play queen"),
+            LookupRequest(artist="Stereolab", raw_message="play stereolab"),
             skip_cache=True,
         )
 
@@ -241,7 +244,7 @@ class TestLookupModels:
 
     def test_lookup_request_exclude_none(self):
         """LookupRequest excludes None fields when dumped."""
-        req = LookupRequest(artist="Queen", raw_message="play queen")
+        req = LookupRequest(artist="Stereolab", raw_message="play stereolab")
         dumped = req.model_dump(exclude_none=True)
         assert "artist" in dumped
         assert "raw_message" in dumped
@@ -251,13 +254,13 @@ class TestLookupModels:
     def test_lookup_request_all_fields(self):
         """LookupRequest includes all fields when set."""
         req = LookupRequest(
-            artist="Queen", song="Bohemian Rhapsody", album="Opera", raw_message="msg"
+            artist="Juana Molina", song="la paradoja", album="DOGA", raw_message="msg"
         )
         dumped = req.model_dump(exclude_none=True)
         assert dumped == {
-            "artist": "Queen",
-            "song": "Bohemian Rhapsody",
-            "album": "Opera",
+            "artist": "Juana Molina",
+            "song": "la paradoja",
+            "album": "DOGA",
             "raw_message": "msg",
         }
 
@@ -274,9 +277,9 @@ class TestLookupModels:
 
     def test_lookup_result_item_without_artwork(self):
         """LookupResultItem works without artwork."""
-        from models import LibraryItem
+        from tests.factories import make_library_item
 
-        item = LookupResultItem(library_item=LibraryItem(id=1, title="Test", artist="Test Artist"))
+        item = LookupResultItem(library_item=make_library_item(id=1))
         assert item.artwork is None
         assert item.library_item.id == 1
 
