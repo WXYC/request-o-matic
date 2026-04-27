@@ -73,7 +73,7 @@ The `library.db` SQLite database is synced daily from the WXYC MySQL database (K
 
 ### Marker scheme
 
-Markers follow the canonical "architecture A" vocabulary defined in `wiki/plans/test-patterns.md` Section 3. Markers route CI by infrastructure; tier (unit / integration / performance) is documented by directory layout. The set of markers used by this repo:
+Markers follow the canonical "architecture A" vocabulary defined in [the WXYC wiki test-patterns doc](https://github.com/WXYC/wiki/blob/main/plans/test-patterns.md), Section 3. Markers route CI by infrastructure; tier (unit / integration / performance) is documented by directory layout. The set of markers used by this repo:
 
 - **`external_api`** — needs network egress and real third-party API keys (Groq, Slack). Default `pytest` deselects them; opt in with `-m "external_api"`.
 - **`slow`** — orthogonal cost dimension, takes more than ~10s. Used together with `external_api` on the performance suite. Opted out from the marker-sync check (`# ci-sync-skip: slow ...` in `pyproject.toml`) because the performance suite is run manually against staging/production with `TEST_ENV` set.
