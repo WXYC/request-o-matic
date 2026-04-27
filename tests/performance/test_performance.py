@@ -1,7 +1,7 @@
 """
 Performance tests to measure query response times.
 
-Run with: pytest tests/performance/ -v -m integration --tb=short -s
+Run with: pytest tests/performance/ -v -m "external_api and slow" --tb=short -s
 
 Set TEST_ENV to control which server to test against:
     TEST_ENV=local pytest ...      # localhost:8000 (default)
@@ -40,7 +40,9 @@ from conftest import TestEnvironment, get_test_environment
 
 load_dotenv()
 
-pytestmark = pytest.mark.integration
+# Performance tests hit the real Groq API and run many requests, so they are
+# both external_api (need a real API key + network) and slow (~minutes).
+pytestmark = [pytest.mark.external_api, pytest.mark.slow]
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 

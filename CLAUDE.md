@@ -65,11 +65,21 @@ The `library.db` SQLite database is synced daily from the WXYC MySQL database (K
 
 ### Test Types
 
-| Type | Location | External Services | Purpose |
-|------|----------|-------------------|---------|
-| Unit | `tests/unit/` | Mocked | Fast, isolated component tests |
-| Integration | `tests/integration/` | Real APIs | End-to-end verification |
-| Performance | `tests/performance/` | Real APIs | Response time benchmarks |
+| Type | Location | Marker(s) | External Services | Purpose |
+|------|----------|-----------|-------------------|---------|
+| Unit | `tests/unit/` | (none) | Mocked | Fast, isolated component tests |
+| Integration | `tests/integration/` | `external_api` | Real Groq API | End-to-end verification |
+| Performance | `tests/performance/` | `external_api`, `slow` | Real Groq API | Response time benchmarks |
+
+### Marker scheme
+
+Markers follow the canonical "architecture A" vocabulary defined in `wiki/plans/test-patterns.md` Section 3. Markers route CI by infrastructure; tier (unit / integration / performance) is documented by directory layout. The set of markers used by this repo:
+
+- **`external_api`** — needs network egress and real third-party API keys (Groq, Slack). Default `pytest` deselects them; opt in with `-m "external_api"`.
+- **`slow`** — orthogonal cost dimension, takes more than ~10s. Used together with `external_api` on the performance suite. Opted out from the marker-sync check (`# ci-sync-skip: slow ...` in `pyproject.toml`) because the performance suite is run manually against staging/production with `TEST_ENV` set.
+- **`contract`** — per-repo addition (legitimate per Section 3, "What is NOT in the marker namespace"). Reserved for tests that verify the *shape* of an external API contract (Slack, Groq) rather than just calling it. Currently no tests use it; the marker is declared so that future contract tests have a stable name. Opted out from the marker-sync check because, by design, it is manual-only.
+
+The reusable check at `WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml` is wired into `ci.yml` as the `marker-sync` job. It guards the invariant that every marker actually used by a test is either selected by some CI invocation or explicitly opted out.
 
 ### Unit Tests
 Use mocks for all external services (Groq, lookup service). Run frequently during development:
@@ -77,30 +87,30 @@ Use mocks for all external services (Groq, lookup service). Run frequently durin
 venv/bin/python -m pytest tests/unit/ -v
 ```
 
-### Integration Tests
-Hit real Groq API using staging environment variables from Railway. The `conftest.py` automatically loads staging env vars when the Railway CLI is available:
+### External-API Tests
+Hit the real Groq API using staging environment variables from Railway. The `conftest.py` automatically loads staging env vars when the Railway CLI is available:
 ```bash
 # Requires RAILWAY_TOKEN_STAGING env var or Railway CLI login
-venv/bin/python -m pytest tests/integration/ -v -m integration
+venv/bin/python -m pytest tests/integration/ -v -m external_api
 
 # Or use the helper script
 ./test-integration.sh -v
 ```
 
-Integration tests are skipped if required env vars (`GROQ_API_KEY`) are missing.
+External-API tests are skipped if required env vars (`GROQ_API_KEY`) are missing.
 
 ### Test Environment Configuration
-Use `TEST_ENV` to control which server integration and performance tests hit:
+Use `TEST_ENV` to control which server external-API and performance tests hit:
 
 ```bash
 # Test against local server (default) - requires running uvicorn locally
-TEST_ENV=local venv/bin/python -m pytest tests/integration/ -v -m integration
+TEST_ENV=local venv/bin/python -m pytest tests/integration/ -v -m external_api
 
 # Test against staging server on Railway
-TEST_ENV=staging venv/bin/python -m pytest tests/integration/ -v -m integration
+TEST_ENV=staging venv/bin/python -m pytest tests/integration/ -v -m external_api
 
 # Test against production server on Railway
-TEST_ENV=production venv/bin/python -m pytest tests/integration/ -v -m integration
+TEST_ENV=production venv/bin/python -m pytest tests/integration/ -v -m external_api
 ```
 
 | TEST_ENV | URL |
@@ -122,7 +132,7 @@ venv/bin/python scripts/lookup.py --local "song request here"
 venv/bin/python scripts/repl.py --local
 ```
 
-**Note:** Integration and performance tests with `TEST_ENV=local` automatically start and stop the local server, so you don't need to manually run uvicorn first. The test fixture detects if a server is already running and skips startup if so.
+**Note:** External-API and performance tests with `TEST_ENV=local` automatically start and stop the local server, so you don't need to manually run uvicorn first. The test fixture detects if a server is already running and skips startup if so.
 
 ### Manual Testing Tools
 - **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`).
@@ -132,7 +142,7 @@ venv/bin/python scripts/repl.py --local
 ### Bug Fix Protocol
 **For every request bug where a lookup fails to find the correct release:**
 1. Create a **unit test** in `tests/unit/` that reproduces the bug with mocked data
-2. Create an **integration test** in `tests/integration/` that verifies the fix against real APIs
+2. Create an **integration test** in `tests/integration/` (`@pytest.mark.external_api`) that verifies the fix against real APIs
 3. The integration test should assert that false positives are excluded AND correct results are included
 
 ## Deployment

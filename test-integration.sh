@@ -10,4 +10,4 @@ if [ -z "$RAILWAY_TOKEN" ]; then
   exit 1
 fi
 
-railway run pytest tests/integration/ "$@"
+railway run pytest tests/integration/ -m external_api "$@"
