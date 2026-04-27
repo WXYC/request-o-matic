@@ -108,13 +108,27 @@ init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
 
+# Pytest marker scheme follows the canonical vocabulary defined in
+# wiki/plans/test-patterns.md Section 3 ("architecture A"). The canonical
+# operational markers are: pg, mysql, external_api, stack, slow.
+#
+# This repo has no PostgreSQL or MySQL service of its own (search and any
+# Discogs/library cache live in library-metadata-lookup), so the only infra
+# marker we need is `external_api` (real Groq, real Slack). `slow` is the
+# orthogonal cost dimension. `contract` is preserved as a per-repo addition
+# that the spec explicitly allows (Section 3, "What is NOT in the marker
+# namespace"): contract tests verify the *shape* of an external API contract
+# and are run manually against staging/production.
+#
+# ci-sync-skip: contract reason: manual-only; verifies external Slack/Groq API contract shape against deployed staging/production
+# ci-sync-skip: slow reason: only the performance suite is slow and it is run manually against staging/production with TEST_ENV set
 [tool.pytest.ini_options]
 markers = [
-    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "contract: marks tests as contract parity tests (deselect with '-m \"not contract\"')",
+    "external_api: needs network egress + a real third-party API key (Groq, Slack)",
+    "slow: takes longer than ~10s (orthogonal to infra)",
+    "contract: per-repo marker; verifies external API contract shape (Slack, Groq) — manual only",
 ]
-addopts = "-m 'not integration and not contract'"
+addopts = "-m 'not external_api and not slow and not contract'"
 console_output_style = "progress"
 testpaths = ["tests"]
 pythonpath = ["."]

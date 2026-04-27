@@ -196,9 +196,14 @@ pytest
 pytest tests/unit/
 ```
 
-**Run integration tests:**
+**Run integration tests (real Groq API):**
 ```bash
-pytest tests/integration/ -m integration
+pytest tests/integration/ -m external_api
+```
+
+**Run performance suite (slow, real Groq API):**
+```bash
+pytest tests/performance/ -m "external_api and slow"
 ```
 
 **Run with coverage:**

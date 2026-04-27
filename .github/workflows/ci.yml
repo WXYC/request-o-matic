@@ -113,8 +113,10 @@ jobs:
           print('Smoke test passed:', json.dumps(services))
           "
 
-  integration:
-    name: Integration Tests
+  external_api:
+    # Tests in tests/integration/ that hit the real Groq API. Marker name
+    # mirrors the canonical vocabulary (plans/test-patterns.md Section 3).
+    name: External API Tests
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [deploy-staging]
@@ -132,12 +134,21 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio pytest-httpx
 
-      - name: Run integration tests
+      - name: Run external_api tests
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
           TEST_ENV: staging
-        run: pytest tests/integration/ -v -m integration
+        run: pytest tests/integration/ -v -m "external_api"
+
+  marker-sync:
+    # Verifies the pytest marker scheme stays in sync with this file. See
+    # plans/test-patterns.md Section 3 ("Sync-check") for the invariant.
+    uses: WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml@main
+    with:
+      repo-path: "."
+      workflows-dir: ".github/workflows"
+      tests-dir: "tests"
 
   deploy-production:
     name: Deploy to Production

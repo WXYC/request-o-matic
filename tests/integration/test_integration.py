@@ -1,8 +1,8 @@
 """
 Integration tests against production services.
 
-Run with: pytest tests/test_integration.py -v
-Skip with: pytest tests/ -m "not integration"
+Run with: pytest tests/integration/ -v -m external_api
+Skip with: pytest tests/ -m "not external_api"
 """
 
 import os
@@ -40,8 +40,9 @@ from tests.scenarios import (
 
 load_dotenv()
 
-# Mark all tests in this file as integration tests
-pytestmark = pytest.mark.integration
+# Mark all tests in this file as external_api: they hit the real Groq API.
+# See plans/test-patterns.md Section 3 for the marker vocabulary.
+pytestmark = pytest.mark.external_api
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 

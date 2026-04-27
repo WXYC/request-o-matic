@@ -65,9 +65,10 @@ def pytest_configure(config):
     if "GROQ_API_KEY" not in os.environ:
         os.environ["GROQ_API_KEY"] = "test_groq_key_for_unit_tests"
 
-    # Check if we're running integration tests
+    # Check if we're running tests that hit the real Groq API (external_api).
+    # Backwards compatible with the legacy "integration" marker name.
     markexpr = config.getoption("-m", default="")
-    if "integration" not in markexpr:
+    if "external_api" not in markexpr and "integration" not in markexpr:
         return
 
     # Check if RAILWAY_TOKEN_STAGING is set
