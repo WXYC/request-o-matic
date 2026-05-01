@@ -11,6 +11,7 @@ COPY main.py ./
 COPY models.py ./
 COPY config/ ./config/
 COPY core/ ./core/
+COPY generated/ ./generated/
 COPY routers/ ./routers/
 COPY services/ ./services/
 
