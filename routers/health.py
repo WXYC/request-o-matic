@@ -41,10 +41,14 @@ async def _check_groq(settings: Settings, http_client: httpx.AsyncClient) -> str
 async def _check_lookup_service(settings: Settings, http_client: httpx.AsyncClient) -> str:
     """Check the library-metadata-lookup lookup endpoint with auth.
 
-    POSTs an empty-payload request to ``{lookup_service_url}/lookup`` carrying
-    the Bearer token (when ``LML_API_KEY`` is set). This is the same endpoint
-    /request hits, so a 401/403 from auth misconfig surfaces here instead of
-    silently passing a /health connectivity ping.
+    POSTs a ``raw_message``-only request to ``{lookup_service_url}/lookup``
+    carrying the Bearer token (when ``LML_API_KEY`` is set). This is the same
+    endpoint /request hits, so a 401/403 from auth misconfig surfaces here
+    instead of silently passing a /health connectivity ping.
+
+    LML's ``LookupRequest`` makes every field optional, so ``raw_message``
+    alone validates and the orchestrator returns ``200`` with empty results --
+    cheap enough to run on every readiness check.
     """
     if not settings.lookup_service_url:
         return "unavailable"
