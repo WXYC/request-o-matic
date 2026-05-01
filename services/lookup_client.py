@@ -18,6 +18,9 @@ class LookupServiceClient:
     Args:
         base_url: Base URL of the lookup service (e.g. ``http://host:8080/api/v1``)
         http_client: Shared ``httpx.AsyncClient``
+        api_key: Optional ``LML_API_KEY``. When set, every request includes
+            ``Authorization: Bearer <api_key>``. Required when LML has
+            ``LML_REQUIRE_AUTH=true``.
         max_attempts: Total attempts per lookup (1 = no retry, 2 = one retry)
         retry_delay: Seconds to wait between retries
         per_attempt_timeout: Per-attempt timeout in seconds (overrides the client default)
@@ -30,15 +33,20 @@ class LookupServiceClient:
         base_url: str,
         http_client: httpx.AsyncClient,
         *,
+        api_key: str | None = None,
         max_attempts: int = 2,
         retry_delay: float = 1.0,
         per_attempt_timeout: float = 10.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
+        self.api_key = api_key
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
         self.per_attempt_timeout = per_attempt_timeout
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
     async def lookup(self, request: LookupRequest, skip_cache: bool = False) -> LookupResponse:
         """Call the lookup service and return parsed response.
@@ -67,6 +75,7 @@ class LookupServiceClient:
                     f"{self.base_url}/lookup",
                     json=request.model_dump(exclude_none=True),
                     params=params,
+                    headers=self._auth_headers(),
                     timeout=self.per_attempt_timeout,
                 )
                 response.raise_for_status()

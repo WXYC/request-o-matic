@@ -41,7 +41,7 @@ def mock_settings():
 
 @pytest.fixture
 def mock_http_client():
-    """HTTP client that returns 200 for Groq and lookup, 400 for Slack."""
+    """HTTP client that returns 200 for Groq and lookup probes, 400 for Slack."""
     client = AsyncMock()
 
     async def _get(url, **kwargs):
@@ -51,7 +51,8 @@ def mock_http_client():
 
     async def _post(url, **kwargs):
         resp = Mock()
-        resp.status_code = 400  # Slack returns 400 for empty body
+        # Lookup probe expects 200; Slack expects 400 (empty body rejected).
+        resp.status_code = 200 if "lookup" in url else 400
         return resp
 
     client.get = _get
@@ -152,16 +153,16 @@ class TestReadinessCheck:
             lookup_service_url="https://lookup.example.com/api/v1",
         )
 
-        original_get = mock_http_client.get
+        original_post = mock_http_client.post
 
-        async def _get(url, **kwargs):
+        async def _post(url, **kwargs):
             if "lookup" in url:
                 resp = Mock()
                 resp.status_code = 500
                 return resp
-            return await original_get(url, **kwargs)
+            return await original_post(url, **kwargs)
 
-        mock_http_client.get = _get
+        mock_http_client.post = _post
         app = _make_app(settings, mock_http_client)
 
         with patch(
@@ -260,23 +261,29 @@ class TestReadinessCheck:
         assert "features" not in data
 
     @pytest.mark.asyncio
-    async def test_lookup_health_check_uses_base_url(self):
-        """Health check should hit /health at the host root, not under /api/v1."""
+    async def test_lookup_probe_exercises_authenticated_endpoint(self):
+        """Readiness lookup probe POSTs to /api/v1/lookup with a Bearer token.
+
+        This catches LML auth misconfig: a missing or wrong LML_API_KEY produces
+        a 401/403 from the protected route, which the probe must surface.
+        Probing the unprotected /health endpoint would mask the failure.
+        """
         settings = _make_settings(
             lookup_service_url="https://lookup.example.com/api/v1",
+            lml_api_key="probe-token",
         )
         client = AsyncMock()
-        captured_urls = []
+        captured_posts: list[tuple[str, dict]] = []
 
         async def _get(url, **kwargs):
-            captured_urls.append(url)
             resp = Mock()
             resp.status_code = 200
             return resp
 
         async def _post(url, **kwargs):
+            captured_posts.append((url, dict(kwargs.get("headers") or {})))
             resp = Mock()
-            resp.status_code = 400
+            resp.status_code = 200 if "lookup" in url else 400
             return resp
 
         client.get = _get
@@ -290,8 +297,44 @@ class TestReadinessCheck:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
                 await c.get("/health/ready")
 
-        lookup_urls = [u for u in captured_urls if "lookup" in u]
-        assert lookup_urls == ["https://lookup.example.com/health"]
+        lookup_posts = [(u, h) for (u, h) in captured_posts if "lookup" in u]
+        assert lookup_posts, "expected POST to lookup endpoint"
+        url, headers = lookup_posts[0]
+        assert url == "https://lookup.example.com/api/v1/lookup"
+        assert headers.get("Authorization") == "Bearer probe-token"
+
+    @pytest.mark.asyncio
+    async def test_lookup_probe_marks_error_on_401(self):
+        """When LML returns 401 (auth misconfig), probe reports lookup='error'."""
+        settings = _make_settings(
+            lookup_service_url="https://lookup.example.com/api/v1",
+            lml_api_key="wrong-token",
+        )
+        client = AsyncMock()
+
+        async def _get(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 200
+            return resp
+
+        async def _post(url, **kwargs):
+            resp = Mock()
+            resp.status_code = 401 if "lookup" in url else 400
+            return resp
+
+        client.get = _get
+        client.post = _post
+        app = _make_app(settings, client)
+
+        with patch(
+            "routers.health.get_cached_slack_webhook_url",
+            return_value="https://hooks.slack.com/test",
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                response = await c.get("/health/ready")
+
+        data = response.json()
+        assert data["services"]["lookup"] == "error"
 
     @pytest.mark.asyncio
     async def test_multiple_optional_services_down(self):
