@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -40,13 +39,25 @@ async def _check_groq(settings: Settings, http_client: httpx.AsyncClient) -> str
 
 
 async def _check_lookup_service(settings: Settings, http_client: httpx.AsyncClient) -> str:
-    """Check the library-metadata-lookup service health."""
+    """Check the library-metadata-lookup lookup endpoint with auth.
+
+    POSTs an empty-payload request to ``{lookup_service_url}/lookup`` carrying
+    the Bearer token (when ``LML_API_KEY`` is set). This is the same endpoint
+    /request hits, so a 401/403 from auth misconfig surfaces here instead of
+    silently passing a /health connectivity ping.
+    """
     if not settings.lookup_service_url:
         return "unavailable"
+    headers: dict[str, str] = {}
+    if settings.lml_api_key:
+        headers["Authorization"] = f"Bearer {settings.lml_api_key}"
     try:
-        parsed = urlparse(settings.lookup_service_url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
-        resp = await http_client.get(f"{base_url}/health")
+        url = f"{settings.lookup_service_url.rstrip('/')}/lookup"
+        resp = await http_client.post(
+            url,
+            json={"raw_message": "readiness-probe"},
+            headers=headers,
+        )
         return "ok" if resp.status_code == 200 else "error"
     except Exception:
         return "error"

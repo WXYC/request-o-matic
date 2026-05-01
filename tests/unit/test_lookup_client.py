@@ -238,6 +238,43 @@ class TestLookupServiceClient:
         client = _make_client(handler)
         await client.lookup(LookupRequest(artist="Queen", raw_message="play queen"))
 
+    @pytest.mark.asyncio
+    async def test_bearer_header_sent_when_api_key_configured(self):
+        """When api_key is configured, every lookup sends Authorization: Bearer <key>."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers.get("authorization") == "Bearer test-token-abc123"
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler, api_key="test-token-abc123")
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
+    @pytest.mark.asyncio
+    async def test_no_authorization_header_when_api_key_unset(self):
+        """When api_key is None, no Authorization header is sent (back-compat)."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert "authorization" not in {k.lower() for k in request.headers.keys()}
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)  # api_key omitted -> None
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
+    @pytest.mark.asyncio
+    async def test_bearer_header_sent_on_retry(self):
+        """The Authorization header is sent on every attempt, not just the first."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.headers.get("authorization"))
+            if len(calls) == 1:
+                raise httpx.ConnectError("Connection refused")
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler, api_key="retry-token")
+        await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
+        assert calls == ["Bearer retry-token", "Bearer retry-token"]
+
 
 class TestLookupModels:
     """Tests for lookup models."""

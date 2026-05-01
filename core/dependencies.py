@@ -71,7 +71,11 @@ async def get_lookup_client(
     """
     if not settings.lookup_service_url:
         return None
-    return LookupServiceClient(settings.lookup_service_url, http_client)
+    return LookupServiceClient(
+        settings.lookup_service_url,
+        http_client,
+        api_key=settings.lml_api_key,
+    )
 
 
 def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | None:

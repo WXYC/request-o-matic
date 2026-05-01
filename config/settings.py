@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         None,
         description="Base URL of library-metadata-lookup service. When set, delegates search to this service.",
     )
+    lml_api_key: str | None = Field(
+        None,
+        description="Bearer token sent to library-metadata-lookup. Required when LML has LML_REQUIRE_AUTH=true.",
+    )
 
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")

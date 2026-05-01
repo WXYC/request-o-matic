@@ -161,6 +161,7 @@ Search logic (artist matching, ambiguous format handling, compilation search) li
 Required:
 - `GROQ_API_KEY` - For AI parsing
 - `LOOKUP_SERVICE_URL` - Base URL of library-metadata-lookup service (e.g., `https://library-metadata-lookup-staging.up.railway.app/api/v1`). All search is delegated to this service. If unset, song requests return HTTP 503.
+- `LML_API_KEY` - Bearer token sent on every call to LML. Required when LML has `LML_REQUIRE_AUTH=true` (production). Without it, `/lookup` calls 401 and `/request` returns 502.
 
 Optional:
 - `SLACK_WEBHOOK_URL` - For posting results
