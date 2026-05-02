@@ -167,8 +167,8 @@ class TestDelegationBranch:
         assert data["parsed"]["artist"] == "Living Colour"
 
     @pytest.mark.asyncio
-    async def test_groq_rate_limit_returns_429(self, app, mock_lookup_client):
-        """Groq rate limit returns 429 instead of 500."""
+    async def test_groq_rate_limit_falls_back_to_parsing_unavailable(self, app, mock_lookup_client):
+        """Groq rate limit no longer fails the request — it falls back to parsing-unavailable."""
         from groq import RateLimitError
 
         resp = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/test"))
@@ -185,12 +185,12 @@ class TestDelegationBranch:
                     json={"message": "play queen", "skip_slack": True},
                 )
 
-        assert response.status_code == 429
-        assert "Rate limit exceeded" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["degraded_mode"] == "parsing_unavailable"
 
     @pytest.mark.asyncio
-    async def test_http_error_returns_502(self, app, mock_lookup_client):
-        """HTTP error from lookup service returns 502."""
+    async def test_http_error_falls_back_to_search_unavailable(self, app, mock_lookup_client):
+        """HTTP error from lookup service no longer 502s — it degrades to search-unavailable."""
         mock_response = Mock()
         mock_response.status_code = 500
         mock_response.request = Mock()
@@ -209,12 +209,12 @@ class TestDelegationBranch:
                     json={"message": "play queen", "skip_slack": True},
                 )
 
-        assert response.status_code == 502
-        assert "Lookup service unavailable" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["degraded_mode"] == "search_unavailable"
 
     @pytest.mark.asyncio
-    async def test_connect_error_returns_502(self, app, mock_lookup_client):
-        """Connection error to lookup service returns 502."""
+    async def test_connect_error_falls_back_to_search_unavailable(self, app, mock_lookup_client):
+        """Connection error to lookup service no longer 502s — it degrades."""
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("Connection refused")
 
         with patch(
@@ -228,12 +228,12 @@ class TestDelegationBranch:
                     json={"message": "play queen", "skip_slack": True},
                 )
 
-        assert response.status_code == 502
-        assert "Lookup service unavailable" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["degraded_mode"] == "search_unavailable"
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_502(self, app, mock_lookup_client):
-        """Timeout from lookup service returns 502."""
+    async def test_timeout_falls_back_to_search_unavailable(self, app, mock_lookup_client):
+        """Timeout from lookup service no longer 502s — it degrades."""
         mock_lookup_client.lookup.side_effect = httpx.TimeoutException("Read timed out")
 
         with patch(
@@ -247,8 +247,8 @@ class TestDelegationBranch:
                     json={"message": "play queen", "skip_slack": True},
                 )
 
-        assert response.status_code == 502
-        assert "Lookup service unavailable" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["degraded_mode"] == "search_unavailable"
 
     @pytest.mark.asyncio
     async def test_skip_cache_forwarded(self, app, mock_lookup_client, sample_lookup_response):
