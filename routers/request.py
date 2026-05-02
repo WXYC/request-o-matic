@@ -139,11 +139,6 @@ async def _post_degraded_to_slack(
     parsed: ParsedRequest | None,
     note: str,
 ) -> None:
-    """Post a degraded-mode message to Slack.
-
-    The header is the raw listener message; the context line carries the
-    italicized reason and (when available) any parsed fields the DJ can use.
-    """
     if not slack_service:
         logger.info("Slack integration disabled, skipping degraded post")
         return
@@ -210,13 +205,9 @@ async def handle_request(
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Initialize telemetry
     init_cache_stats()
     telemetry = RequestTelemetry()
 
-    # ------------------------------------------------------------------
-    # Step 1: Parse the message. Any failure here -> degraded "parsing" path.
-    # ------------------------------------------------------------------
     try:
         with telemetry.track_step("parse"):
             telemetry.record_api_call("groq")
@@ -261,9 +252,6 @@ async def handle_request(
             degraded_mode=DEGRADED_PARSING,
         )
 
-    # ------------------------------------------------------------------
-    # Non-requests skip the search pipeline entirely.
-    # ------------------------------------------------------------------
     if not parsed.is_request:
         if not request.skip_slack:
             await post_results_to_slack(slack_service, request.message, parsed, [], context=None)
@@ -272,9 +260,6 @@ async def handle_request(
             cache_stats=get_cache_stats(),
         )
 
-    # ------------------------------------------------------------------
-    # Step 2: Search via LML. Failures or missing config -> degraded "search" path.
-    # ------------------------------------------------------------------
     library_results: list[LibraryItem] = []
     items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]] = []
     song_not_found = False
@@ -330,9 +315,6 @@ async def handle_request(
         if lookup_response.cache_stats:
             cache_stats_override = lookup_response.cache_stats
 
-    # ------------------------------------------------------------------
-    # Step 3: Post to Slack (search-success path or search-degraded path).
-    # ------------------------------------------------------------------
     with telemetry.track_step("slack_post"):
         if not request.skip_slack:
             telemetry.record_api_call("slack")
