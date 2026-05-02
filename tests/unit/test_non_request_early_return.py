@@ -119,12 +119,12 @@ class TestNonRequestEarlyReturn:
         assert data["library_results"] == []
 
     @pytest.mark.asyncio
-    async def test_actual_request_returns_503_without_lookup_client(self, app):
-        """An actual request returns 503 when no lookup service is configured."""
+    async def test_actual_request_degrades_without_lookup_client(self, app):
+        """A request with no lookup service configured falls back to search-unavailable."""
         parsed = make_parsed_request(
-            song="Bohemian Rhapsody",
-            artist="Queen",
-            raw_message="play bohemian rhapsody by queen",
+            song="la paradoja",
+            artist="Juana Molina",
+            raw_message="play la paradoja by juana molina",
         )
 
         with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
@@ -133,8 +133,10 @@ class TestNonRequestEarlyReturn:
             ) as client:
                 response = await client.post(
                     "/api/v1/request",
-                    json={"message": "play bohemian rhapsody by queen", "skip_slack": True},
+                    json={"message": "play la paradoja by juana molina", "skip_slack": True},
                 )
 
-        assert response.status_code == 503
-        assert "Search service not configured" in response.json()["detail"]
+        assert response.status_code == 200
+        data = response.json()
+        assert data["degraded_mode"] == "search_unavailable"
+        assert data["library_results"] == []
