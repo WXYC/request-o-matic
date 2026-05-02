@@ -47,11 +47,9 @@ MESSAGE_TYPE_LABELS = {
     MessageType.OTHER: "Other",
 }
 
-# Degraded-mode identifiers surfaced in the response and telemetry.
 DEGRADED_PARSING = "parsing_unavailable"
 DEGRADED_SEARCH = "search_unavailable"
 
-# httpx exceptions that count as an LML outage rather than a programming error.
 _LML_TRANSIENT_ERRORS = (
     httpx.HTTPStatusError,
     httpx.ConnectError,
@@ -81,12 +79,10 @@ class UnifiedResponse(BaseModel):
     found_on_compilation: bool = False
     context_message: str | None = None
     cache_stats: dict | None = None
-    # When set, indicates a degraded path. See DEGRADED_* constants.
     degraded_mode: str | None = None
 
 
 def _parsed_context_parts(parsed: ParsedRequest) -> list[str]:
-    """Build a human-readable summary of parsed fields for Slack context lines."""
     parts: list[str] = []
     if parsed.artist:
         parts.append(f"Artist: {parsed.artist}")
