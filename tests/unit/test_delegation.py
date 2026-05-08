@@ -351,6 +351,11 @@ class TestDelegationBranch:
         assert data["library_results"][1]["id"] == 2
         # First artwork (non-null) is used as the top-level artwork
         assert data["artwork"]["artwork_url"] == "https://img.discogs.com/aluminum.jpg"
+        # Per-item artwork is exposed parallel to library_results so callers can
+        # render each release's Discogs URL alongside its library entry.
+        assert len(data["result_artworks"]) == 2
+        assert data["result_artworks"][0]["release_url"] == "https://www.discogs.com/release/100"
+        assert data["result_artworks"][1] is None
 
     @pytest.mark.asyncio
     async def test_lookup_request_built_from_parsed(
