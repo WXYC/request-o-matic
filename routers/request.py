@@ -73,6 +73,7 @@ class UnifiedResponse(BaseModel):
     parsed: ParsedRequest | None = None
     artwork: ReleaseMetadata | None = None
     library_results: list[LibraryItem] = []
+    result_artworks: list[ReleaseMetadata | None] = []
     # Search metadata
     search_type: str = "none"
     song_not_found: bool = False
@@ -356,6 +357,7 @@ async def handle_request(
         parsed=parsed,
         artwork=artwork,
         library_results=library_results,
+        result_artworks=[art for _, art in items_with_artwork],
         search_type=search_type,
         song_not_found=song_not_found,
         found_on_compilation=found_on_compilation,

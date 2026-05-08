@@ -74,6 +74,7 @@ def print_library_results(
     results: list[dict],
     artwork: dict | None,
     context_message: str | None = None,
+    result_artworks: list[dict | None] | None = None,
 ) -> None:
     """Print library search results."""
     print_section("Library Results")
@@ -87,6 +88,7 @@ def print_library_results(
             print("  No results found in library.")
         return
 
+    artworks = result_artworks or []
     for i, item in enumerate(results, 1):
         title = item.get("title", "")
         artist = item.get("artist", "")
@@ -103,6 +105,9 @@ def print_library_results(
         else:
             print("      Location: (none)")
         print(f"      WXYC:     {item.get('library_url') or '(none)'}")
+        item_artwork = artworks[i - 1] if i - 1 < len(artworks) else None
+        discogs_url = item_artwork.get("release_url") if item_artwork else None
+        print(f"      Discogs:  {discogs_url or '(none)'}")
         print()
 
     if artwork and artwork.get("artwork_url"):
@@ -189,6 +194,7 @@ async def run_lookup(
                 library_results,
                 data.get("artwork"),
                 data.get("context_message"),
+                data.get("result_artworks"),
             )
 
             # Display cache stats if present
