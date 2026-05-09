@@ -63,6 +63,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        # populate_by_name lets fields with a validation_alias (currently just
+        # deployment_environment) still be set by their Python field name —
+        # required for tests that construct Settings(deployment_environment=...)
+        # explicitly, and avoids a mypy "Required dynamic aliases disallowed"
+        # complaint from the pydantic plugin.
         populate_by_name=True,
     )
 
