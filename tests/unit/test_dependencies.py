@@ -41,11 +41,13 @@ def reset_module_state():
     original_http_client = deps._http_client
     original_posthog_client = deps._posthog_client
     original_slack_webhook_url = deps._slack_webhook_url
+    original_warned_missing_posthog_key = deps._warned_missing_posthog_key
 
     # Reset state
     deps._http_client = None
     deps._posthog_client = None
     deps._slack_webhook_url = None
+    deps._warned_missing_posthog_key = False
 
     yield
 
@@ -53,6 +55,7 @@ def reset_module_state():
     deps._http_client = original_http_client
     deps._posthog_client = original_posthog_client
     deps._slack_webhook_url = original_slack_webhook_url
+    deps._warned_missing_posthog_key = original_warned_missing_posthog_key
 
 
 class TestGetHttpClient:
@@ -162,6 +165,7 @@ class TestGetPosthogClient:
             posthog_api_key=None,
         )
 
+        caplog.clear()
         with caplog.at_level("WARNING", logger="core.dependencies"):
             client = get_posthog_client(settings)
 
@@ -173,6 +177,29 @@ class TestGetPosthogClient:
             f"expected a WARNING about POSTHOG_API_KEY, got: {[(r.levelname, r.message) for r in caplog.records]}"
         )
 
+    def test_warning_is_one_shot_per_process(self, caplog):
+        """``get_posthog_client`` is a per-request FastAPI dependency; if the
+        WARN fired on every call it would flood the log stream. Subsequent
+        calls within the same process must stay silent until the module-level
+        ``_warned_missing_posthog_key`` flag is reset (e.g. by a process
+        restart). (#111 review feedback)"""
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_telemetry=True,
+            posthog_api_key=None,
+        )
+
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="core.dependencies"):
+            for _ in range(5):
+                assert get_posthog_client(settings) is None
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, (
+            f"expected exactly one WARNING across 5 calls, got {len(warnings)}: "
+            f"{[r.message for r in warnings]}"
+        )
+
     def test_logs_debug_when_telemetry_explicitly_disabled(self, caplog):
         """When telemetry is explicitly disabled, that's the operator's intent
         — keep the log at DEBUG to avoid noise."""
@@ -181,6 +208,7 @@ class TestGetPosthogClient:
             enable_telemetry=False,
         )
 
+        caplog.clear()
         with caplog.at_level("DEBUG", logger="core.dependencies"):
             client = get_posthog_client(settings)
 
