@@ -151,6 +151,44 @@ class TestGetPosthogClient:
         client = get_posthog_client(settings)
         assert client is None
 
+    def test_logs_warning_when_telemetry_enabled_but_key_missing(self, caplog):
+        """When the operator wanted telemetry (enable_telemetry=True) but the key
+        is missing, that's a misconfiguration — log at WARNING so it shows up in
+        normal log scraping. PostHog telemetry has been silently dead in
+        production for ~2.5 months because this was DEBUG. (#111)"""
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_telemetry=True,
+            posthog_api_key=None,
+        )
+
+        with caplog.at_level("WARNING", logger="core.dependencies"):
+            client = get_posthog_client(settings)
+
+        assert client is None
+        assert any(
+            "POSTHOG_API_KEY" in record.message and record.levelname == "WARNING"
+            for record in caplog.records
+        ), (
+            f"expected a WARNING about POSTHOG_API_KEY, got: {[(r.levelname, r.message) for r in caplog.records]}"
+        )
+
+    def test_logs_debug_when_telemetry_explicitly_disabled(self, caplog):
+        """When telemetry is explicitly disabled, that's the operator's intent
+        — keep the log at DEBUG to avoid noise."""
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_telemetry=False,
+        )
+
+        with caplog.at_level("DEBUG", logger="core.dependencies"):
+            client = get_posthog_client(settings)
+
+        assert client is None
+        # No WARNING-level records should have been emitted by this path.
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings == [], f"unexpected warnings: {[r.message for r in warnings]}"
+
 
 class TestFlushPosthog:
     """Tests for flush_posthog function."""

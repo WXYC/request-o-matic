@@ -94,7 +94,11 @@ def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | 
         return None
 
     if not settings.posthog_api_key:
-        logger.debug("POSTHOG_API_KEY not set - telemetry disabled")
+        logger.warning(
+            "POSTHOG_API_KEY not set but ENABLE_TELEMETRY is true — "
+            "telemetry will not be sent. Set POSTHOG_API_KEY to enable, "
+            "or set ENABLE_TELEMETRY=false to silence this warning."
+        )
         return None
 
     if _posthog_client is None:

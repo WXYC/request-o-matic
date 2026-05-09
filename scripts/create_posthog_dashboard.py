@@ -131,24 +131,10 @@ def build_insights() -> list[dict]:
                         },
                         {
                             "kind": "EventsNode",
-                            "event": "request_album_lookup",
+                            "event": "request_lookup_service",
                             "math": "avg",
                             "math_property": "duration_ms",
-                            "name": "Album Lookup",
-                        },
-                        {
-                            "kind": "EventsNode",
-                            "event": "request_library_search",
-                            "math": "avg",
-                            "math_property": "duration_ms",
-                            "name": "Library Search",
-                        },
-                        {
-                            "kind": "EventsNode",
-                            "event": "request_artwork_fetch",
-                            "math": "avg",
-                            "math_property": "duration_ms",
-                            "name": "Artwork Fetch",
+                            "name": "Lookup Service (LML)",
                         },
                         {
                             "kind": "EventsNode",
