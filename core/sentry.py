@@ -5,6 +5,7 @@ from typing import Any
 
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ def init_sentry(
         release=release,
         integrations=[
             FastApiIntegration(),
+            HttpxIntegration(),
         ],
         # Capture 100% of transactions for performance monitoring
         traces_sample_rate=1.0,
