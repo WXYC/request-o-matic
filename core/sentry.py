@@ -12,14 +12,17 @@ logger = logging.getLogger(__name__)
 
 def init_sentry(
     dsn: str | None,
-    environment: str = "production",
+    environment: str = "local",
     release: str | None = None,
 ) -> None:
     """Initialize Sentry SDK with FastAPI integration.
 
     Args:
         dsn: Sentry DSN (Data Source Name). If None, Sentry is not initialized.
-        environment: Deployment environment (e.g., "production", "staging", "development")
+        environment: Deployment environment tag for Sentry (e.g. ``"production"``,
+            ``"staging"``, ``"local"``). Defaults to ``"local"`` to match
+            ``Settings.deployment_environment`` so a stray call without the arg
+            doesn't pollute the production Sentry stream.
         release: Optional release version string
     """
     if dsn is None:

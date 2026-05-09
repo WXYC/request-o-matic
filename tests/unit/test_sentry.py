@@ -188,3 +188,52 @@ class TestSentrySettingsIntegration:
 
         settings = Settings(_env_file=None)
         assert settings.deployment_environment == "shadow"
+
+    def test_init_sentry_default_environment_is_local(self):
+        """The function-default for ``environment`` must match the
+        ``deployment_environment`` setting default (``local``) so anyone calling
+        ``init_sentry`` without that arg in the future doesn't accidentally
+        pollute the prod Sentry stream."""
+        with patch("sentry_sdk.init") as mock_init:
+            from core.sentry import init_sentry
+
+            init_sentry(dsn="https://test@sentry.io/123")
+
+            assert mock_init.call_args.kwargs["environment"] == "local"
+
+
+class TestSentryWiring:
+    """Tests that ``main.py`` actually plumbs the deployment_environment
+    setting into init_sentry — the bug this PR fixes was purely a wiring miss
+    (the function and the setting were both fine independently)."""
+
+    def test_main_passes_deployment_environment_to_init_sentry(self, monkeypatch):
+        """Importing ``main`` runs ``init_sentry(...)`` at module load with the
+        environment derived from ``Settings.deployment_environment``. Verify
+        the wire by patching ``init_sentry`` and (re)importing main."""
+        import importlib
+        import sys
+
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
+        monkeypatch.setenv("SENTRY_DSN", "https://test@sentry.io/123")
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+        monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+
+        # get_settings is @lru_cache'd; clear it so the new env vars take
+        # effect on this import. Also drop any cached main module so its
+        # module-level init_sentry call re-executes against the patched env.
+        from config import settings as settings_module
+
+        sys.modules.pop("main", None)
+        settings_module.get_settings.cache_clear()
+
+        with patch("core.sentry.init_sentry") as mock_init:
+            importlib.import_module("main")
+
+        assert mock_init.called, "main never called init_sentry on import"
+        kwargs = mock_init.call_args.kwargs
+        assert kwargs["dsn"] == "https://test@sentry.io/123"
+        assert kwargs["environment"] == "staging", (
+            f"expected environment='staging' (from RAILWAY_ENVIRONMENT_NAME), got "
+            f"{kwargs.get('environment')!r}"
+        )
