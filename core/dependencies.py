@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 _http_client: httpx.AsyncClient | None = None
 _posthog_client: Posthog | None = None
 _slack_webhook_url: str | None = None
+# One-shot guard so the missing-POSTHOG_API_KEY warning fires once per process,
+# not once per FastAPI request. See get_posthog_client().
+_warned_missing_posthog_key: bool = False
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -87,18 +90,20 @@ def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | 
     Returns:
         Optional[Posthog]: PostHog client if configured and enabled, None otherwise
     """
-    global _posthog_client
+    global _posthog_client, _warned_missing_posthog_key
 
     if not settings.enable_telemetry:
         logger.debug("Telemetry disabled")
         return None
 
     if not settings.posthog_api_key:
-        logger.warning(
-            "POSTHOG_API_KEY not set but ENABLE_TELEMETRY is true — "
-            "telemetry will not be sent. Set POSTHOG_API_KEY to enable, "
-            "or set ENABLE_TELEMETRY=false to silence this warning."
-        )
+        if not _warned_missing_posthog_key:
+            logger.warning(
+                "POSTHOG_API_KEY not set but ENABLE_TELEMETRY is true — "
+                "telemetry will not be sent. Set POSTHOG_API_KEY to enable, "
+                "or set ENABLE_TELEMETRY=false to silence this warning."
+            )
+            _warned_missing_posthog_key = True
         return None
 
     if _posthog_client is None:
