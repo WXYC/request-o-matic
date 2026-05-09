@@ -38,6 +38,20 @@ class TestSentryInitialization:
             integration_types = [type(i).__name__ for i in integrations]
             assert "FastApiIntegration" in integration_types
 
+    def test_sentry_includes_httpx_integration(self):
+        """HttpxIntegration must be included so outbound calls to LML carry
+        sentry-trace headers — otherwise request-o-matic and LML show up as
+        disconnected traces in the same project."""
+        with patch("sentry_sdk.init") as mock_init:
+            from core.sentry import init_sentry
+
+            init_sentry(dsn="https://test@sentry.io/123")
+
+            call_kwargs = mock_init.call_args.kwargs
+            integrations = call_kwargs.get("integrations", [])
+            integration_types = [type(i).__name__ for i in integrations]
+            assert "HttpxIntegration" in integration_types
+
     def test_sentry_sets_environment(self):
         """Test that environment is set from parameter."""
         with patch("sentry_sdk.init") as mock_init:
@@ -135,3 +149,42 @@ class TestSentrySettingsIntegration:
         # Use _env_file=None to skip .env file and only use env vars
         settings = Settings(_env_file=None)
         assert settings.sentry_dsn is None
+
+    def test_deployment_environment_reads_railway_env_name(self, monkeypatch):
+        """RAILWAY_ENVIRONMENT_NAME (set by Railway) drives the Sentry environment
+        tag. Without this, staging deploys are misreported as 'production' in
+        Sentry — which is why the original Sentry investigation couldn't find
+        any staging traces."""
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+        monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+
+        from config.settings import Settings
+
+        settings = Settings(_env_file=None)
+        assert settings.deployment_environment == "staging"
+
+    def test_deployment_environment_defaults_to_local(self, monkeypatch):
+        """Without Railway env vars present, default to 'local' so devs running
+        the server on their laptop don't pollute the production Sentry stream."""
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
+        monkeypatch.delenv("RAILWAY_ENVIRONMENT_NAME", raising=False)
+        monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+
+        from config.settings import Settings
+
+        settings = Settings(_env_file=None)
+        assert settings.deployment_environment == "local"
+
+    def test_deployment_environment_explicit_override(self, monkeypatch):
+        """DEPLOYMENT_ENVIRONMENT wins over RAILWAY_ENVIRONMENT_NAME for cases
+        where you want to manually pin the value (e.g. running prod code under
+        a debug runner)."""
+        monkeypatch.setenv("GROQ_API_KEY", "test_key")
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
+        monkeypatch.setenv("DEPLOYMENT_ENVIRONMENT", "shadow")
+
+        from config.settings import Settings
+
+        settings = Settings(_env_file=None)
+        assert settings.deployment_environment == "shadow"

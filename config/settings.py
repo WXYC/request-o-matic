@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +34,15 @@ class Settings(BaseSettings):
 
     # Sentry Configuration
     sentry_dsn: str | None = Field(None, description="Sentry DSN for error tracking")
+    deployment_environment: str = Field(
+        default="local",
+        validation_alias=AliasChoices("DEPLOYMENT_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"),
+        description=(
+            "Deployment environment label sent to Sentry. Defaults to RAILWAY_ENVIRONMENT_NAME "
+            "(set automatically by Railway), then falls back to 'local'. Set DEPLOYMENT_ENVIRONMENT "
+            "to override."
+        ),
+    )
 
     # Lookup Service Delegation
     lookup_service_url: str | None = Field(
@@ -54,6 +63,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
 

@@ -174,7 +174,7 @@ Required:
 Optional:
 - `SLACK_WEBHOOK_URL` - For posting results
 - `SLACK_WEBHOOK_KEY_URL` - Railway endpoint to fetch Slack webhook key
-- `SENTRY_DSN` - For error tracking (Sentry)
+- `SENTRY_DSN` - For error tracking and 100% transaction tracing (Sentry). The Sentry environment tag is read from `RAILWAY_ENVIRONMENT_NAME` (Railway sets this automatically) or `DEPLOYMENT_ENVIRONMENT` if you want to override it; falls back to `local` when neither is set. Outbound calls to LML carry `sentry-trace` headers via the `HttpxIntegration`, so request-o-matic and LML spans link up into a single distributed trace.
 - `POSTHOG_API_KEY` - PostHog project API key for telemetry
 - `POSTHOG_HOST` - PostHog host URL (default: `https://us.i.posthog.com`)
 - `ENABLE_SLACK_INTEGRATION` - Enable/disable Slack notifications (default: `true`)

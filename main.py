@@ -28,7 +28,7 @@ settings = get_settings()
 # Initialize Sentry for error tracking
 init_sentry(
     dsn=settings.sentry_dsn,
-    environment="production" if settings.log_level != "DEBUG" else "development",
+    environment=settings.deployment_environment,
     release=settings.app_version,
 )
 
