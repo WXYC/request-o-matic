@@ -29,12 +29,14 @@ def test_main_calls_init_sentry_with_request_o_matic_service_name(monkeypatch):
     with patch("wxyc_fastapi.observability.init_sentry") as mock_init:
         importlib.import_module("main")
 
+    from config.settings import Settings
+
     mock_init.assert_called_once()
     kwargs = mock_init.call_args.kwargs
     assert kwargs["dsn"] == "https://test@sentry.io/123"
     assert kwargs["service_name"] == "request-o-matic"
     assert kwargs["environment"] == "staging"
-    assert kwargs["release"] == "1.0.0"
+    assert kwargs["release"] == Settings().app_version
 
 
 def test_request_router_constructs_telemetry_with_rom_parameters():

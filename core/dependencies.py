@@ -1,16 +1,21 @@
 """FastAPI dependency injection providers."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import Depends
 from groq import AsyncGroq
-from posthog import Posthog
 from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
 
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
 from services.lookup_client import LookupServiceClient
+
+if TYPE_CHECKING:
+    from posthog import Posthog
 
 logger = logging.getLogger(__name__)
 
