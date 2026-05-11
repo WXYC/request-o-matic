@@ -15,12 +15,14 @@ Degraded modes:
 Slack remains the only hard dependency: if it fails, the endpoint returns 502.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from groq import AsyncGroq
-from posthog import Posthog
 from pydantic import BaseModel
 from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
 
@@ -31,6 +33,9 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
+
+if TYPE_CHECKING:
+    from posthog import Posthog
 from models import LibraryItem, ReleaseMetadata
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
