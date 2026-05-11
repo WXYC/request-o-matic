@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from groq import AsyncGroq
 from posthog import Posthog
 from pydantic import BaseModel
+from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
 
 from core.dependencies import (
     SlackService,
@@ -30,7 +31,6 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
-from core.telemetry import RequestTelemetry, get_cache_stats, init_cache_stats
 from models import LibraryItem, ReleaseMetadata
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
@@ -206,8 +206,12 @@ async def handle_request(
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    init_cache_stats()
-    telemetry = RequestTelemetry()
+    init_cache_stats(extra_keys=["memory_misses"])
+    telemetry = RequestTelemetry(
+        api_call_keys=["groq", "discogs", "slack"],
+        distinct_id="request-o-matic-service",
+        event_prefix="request",
+    )
 
     try:
         with telemetry.track_step("parse"):
