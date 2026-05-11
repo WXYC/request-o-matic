@@ -6,6 +6,7 @@ import httpx
 from fastapi import Depends
 from groq import AsyncGroq
 from posthog import Posthog
+from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
 
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
@@ -13,13 +14,8 @@ from services.lookup_client import LookupServiceClient
 
 logger = logging.getLogger(__name__)
 
-# Module-level instances for lifecycle management
 _http_client: httpx.AsyncClient | None = None
-_posthog_client: Posthog | None = None
 _slack_webhook_url: str | None = None
-# One-shot guard so the missing-POSTHOG_API_KEY warning fires once per process,
-# not once per FastAPI request. See get_posthog_client().
-_warned_missing_posthog_key: bool = False
 
 
 async def get_http_client() -> httpx.AsyncClient:
@@ -82,54 +78,15 @@ async def get_lookup_client(
 
 
 def get_posthog_client(settings: Settings = Depends(get_settings)) -> Posthog | None:
-    """Get PostHog client instance.
+    """Get PostHog client instance, gated on the ``ENABLE_TELEMETRY`` flag.
 
-    Args:
-        settings: Application settings
-
-    Returns:
-        Optional[Posthog]: PostHog client if configured and enabled, None otherwise
+    The shared ``wxyc_fastapi`` singleton handles the missing-API-key warn-once
+    behavior; this wrapper short-circuits when telemetry is disabled entirely.
     """
-    global _posthog_client, _warned_missing_posthog_key
-
     if not settings.enable_telemetry:
         logger.debug("Telemetry disabled")
         return None
-
-    if not settings.posthog_api_key:
-        if not _warned_missing_posthog_key:
-            logger.warning(
-                "POSTHOG_API_KEY not set but ENABLE_TELEMETRY is true — "
-                "telemetry will not be sent. Set POSTHOG_API_KEY to enable, "
-                "or set ENABLE_TELEMETRY=false to silence this warning."
-            )
-            _warned_missing_posthog_key = True
-        return None
-
-    if _posthog_client is None:
-        _posthog_client = Posthog(
-            project_api_key=settings.posthog_api_key,
-            host=settings.posthog_host,
-        )
-        logger.info(f"PostHog client initialized (host: {settings.posthog_host})")
-
-    return _posthog_client
-
-
-def flush_posthog() -> None:
-    """Flush any buffered PostHog events."""
-    global _posthog_client
-    if _posthog_client:
-        _posthog_client.flush()
-
-
-def shutdown_posthog() -> None:
-    """Shutdown PostHog client gracefully."""
-    global _posthog_client
-    if _posthog_client:
-        _posthog_client.shutdown()
-        _posthog_client = None
-        logger.info("PostHog client shutdown")
+    return _shared_posthog_client(event_prefix="request")
 
 
 async def get_slack_webhook_url(

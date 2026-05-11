@@ -29,9 +29,7 @@ If Slack itself fails the endpoint returns `502` — there is no further fallbac
 - `services/parser.py` - Groq AI message parsing
 - `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
 - `services/slack.py` - Slack message formatting and posting
-- `core/dependencies.py` - FastAPI dependency injection (HTTP client, Groq, Slack, PostHog)
-- `core/sentry.py` - Sentry error tracking integration
-- `core/telemetry.py` - PostHog telemetry with cache stats tracking
+- `core/dependencies.py` - FastAPI dependency injection (HTTP client, Groq, Slack, PostHog). Sentry, telemetry, cache stats, and PostHog client construction live in [`wxyc-fastapi`](https://github.com/WXYC/wxyc-fastapi); `core/dependencies.get_posthog_client` only wraps the shared singleton with the rom-side `enable_telemetry` flag.
 - `config/settings.py` - Pydantic Settings configuration
 
 ### Discogs Cache (Optional)

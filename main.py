@@ -6,28 +6,22 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from wxyc_fastapi.observability import flush_posthog, init_sentry, shutdown_posthog
 
 from config.settings import get_settings
-from core.dependencies import (
-    close_http_client,
-    flush_posthog,
-    shutdown_posthog,
-)
+from core.dependencies import close_http_client
 from core.logging import setup_logging
-from core.sentry import init_sentry
 from routers.health import router as health_router
 from routers.parse import router as parse_router
 from routers.request import router as request_router
 
-# Load environment variables
 load_dotenv()
 
-# Get settings
 settings = get_settings()
 
-# Initialize Sentry for error tracking
 init_sentry(
     dsn=settings.sentry_dsn,
+    service_name="request-o-matic",
     environment=settings.deployment_environment,
     release=settings.app_version,
 )

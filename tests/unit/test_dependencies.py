@@ -9,13 +9,11 @@ from config.settings import Settings
 from core.dependencies import (
     SlackService,
     close_http_client,
-    flush_posthog,
     get_groq_client,
     get_http_client,
     get_posthog_client,
     get_slack_service,
     get_slack_webhook_url,
-    shutdown_posthog,
 )
 from core.exceptions import ServiceInitializationError
 
@@ -37,25 +35,16 @@ def reset_module_state():
     """Reset module-level state before and after each test."""
     import core.dependencies as deps
 
-    # Save original state
     original_http_client = deps._http_client
-    original_posthog_client = deps._posthog_client
     original_slack_webhook_url = deps._slack_webhook_url
-    original_warned_missing_posthog_key = deps._warned_missing_posthog_key
 
-    # Reset state
     deps._http_client = None
-    deps._posthog_client = None
     deps._slack_webhook_url = None
-    deps._warned_missing_posthog_key = False
 
     yield
 
-    # Restore original state
     deps._http_client = original_http_client
-    deps._posthog_client = original_posthog_client
     deps._slack_webhook_url = original_slack_webhook_url
-    deps._warned_missing_posthog_key = original_warned_missing_posthog_key
 
 
 class TestGetHttpClient:
@@ -120,147 +109,32 @@ class TestGetGroqClient:
 
 
 class TestGetPosthogClient:
-    """Tests for get_posthog_client function."""
+    """Tests for the rom-side gating of get_posthog_client.
 
-    def test_creates_client_when_enabled(self, mock_settings):
-        """Test that get_posthog_client creates client when enabled."""
-        with patch("core.dependencies.Posthog") as mock_posthog:
-            mock_client = Mock()
-            mock_posthog.return_value = mock_client
+    Underlying client construction, the warn-once-per-prefix semantics, and the
+    no-API-key path are exercised in the wxyc-fastapi test suite. These tests
+    pin only what's specific to rom: the `enable_telemetry` short-circuit and
+    that we delegate with the right `event_prefix`.
+    """
 
+    def test_short_circuits_when_telemetry_disabled(self):
+        """`enable_telemetry=False` returns None without calling the wxyc-fastapi client."""
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_telemetry=False,
+        )
+        with patch("core.dependencies._shared_posthog_client") as mock_shared:
+            client = get_posthog_client(settings)
+        assert client is None
+        mock_shared.assert_not_called()
+
+    def test_delegates_to_wxyc_fastapi_with_request_event_prefix(self, mock_settings):
+        """When enabled, delegates to wxyc-fastapi with `event_prefix="request"`."""
+        with patch("core.dependencies._shared_posthog_client") as mock_shared:
+            mock_shared.return_value = Mock()
             client = get_posthog_client(mock_settings)
-
-            mock_posthog.assert_called_once()
-            assert client is mock_client
-
-    def test_returns_none_when_disabled(self):
-        """Test that get_posthog_client returns None when telemetry disabled."""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_telemetry=False,
-        )
-
-        client = get_posthog_client(settings)
-        assert client is None
-
-    def test_returns_none_without_api_key(self):
-        """Test that get_posthog_client returns None without API key."""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_telemetry=True,
-            posthog_api_key=None,
-        )
-
-        client = get_posthog_client(settings)
-        assert client is None
-
-    def test_logs_warning_when_telemetry_enabled_but_key_missing(self, caplog):
-        """When the operator wanted telemetry (enable_telemetry=True) but the key
-        is missing, that's a misconfiguration — log at WARNING so it shows up in
-        normal log scraping. PostHog telemetry has been silently dead in
-        production for ~2.5 months because this was DEBUG. (#111)"""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_telemetry=True,
-            posthog_api_key=None,
-        )
-
-        caplog.clear()
-        with caplog.at_level("WARNING", logger="core.dependencies"):
-            client = get_posthog_client(settings)
-
-        assert client is None
-        assert any(
-            "POSTHOG_API_KEY" in record.message and record.levelname == "WARNING"
-            for record in caplog.records
-        ), (
-            f"expected a WARNING about POSTHOG_API_KEY, got: {[(r.levelname, r.message) for r in caplog.records]}"
-        )
-
-    def test_warning_is_one_shot_per_process(self, caplog):
-        """``get_posthog_client`` is a per-request FastAPI dependency; if the
-        WARN fired on every call it would flood the log stream. Subsequent
-        calls within the same process must stay silent until the module-level
-        ``_warned_missing_posthog_key`` flag is reset (e.g. by a process
-        restart). (#111 review feedback)"""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_telemetry=True,
-            posthog_api_key=None,
-        )
-
-        caplog.clear()
-        with caplog.at_level("WARNING", logger="core.dependencies"):
-            for _ in range(5):
-                assert get_posthog_client(settings) is None
-
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert len(warnings) == 1, (
-            f"expected exactly one WARNING across 5 calls, got {len(warnings)}: "
-            f"{[r.message for r in warnings]}"
-        )
-
-    def test_logs_debug_when_telemetry_explicitly_disabled(self, caplog):
-        """When telemetry is explicitly disabled, that's the operator's intent
-        — keep the log at DEBUG to avoid noise."""
-        settings = Settings(
-            groq_api_key="test_key",
-            enable_telemetry=False,
-        )
-
-        caplog.clear()
-        with caplog.at_level("DEBUG", logger="core.dependencies"):
-            client = get_posthog_client(settings)
-
-        assert client is None
-        # No WARNING-level records should have been emitted by this path.
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert warnings == [], f"unexpected warnings: {[r.message for r in warnings]}"
-
-
-class TestFlushPosthog:
-    """Tests for flush_posthog function."""
-
-    def test_flushes_client(self):
-        """Test that flush_posthog calls flush on client."""
-        import core.dependencies as deps
-
-        mock_client = Mock()
-        deps._posthog_client = mock_client
-
-        flush_posthog()
-
-        mock_client.flush.assert_called_once()
-
-    def test_handles_no_client(self):
-        """Test that flush_posthog handles None client."""
-        import core.dependencies as deps
-
-        deps._posthog_client = None
-        flush_posthog()  # Should not raise
-
-
-class TestShutdownPosthog:
-    """Tests for shutdown_posthog function."""
-
-    def test_shuts_down_client(self):
-        """Test that shutdown_posthog calls shutdown on client."""
-        import core.dependencies as deps
-
-        mock_client = Mock()
-        deps._posthog_client = mock_client
-
-        shutdown_posthog()
-
-        mock_client.shutdown.assert_called_once()
-        assert deps._posthog_client is None
-
-    def test_handles_no_client(self):
-        """Test that shutdown_posthog handles None client."""
-        import core.dependencies as deps
-
-        deps._posthog_client = None
-        shutdown_posthog()  # Should not raise
+        assert client is mock_shared.return_value
+        mock_shared.assert_called_once_with(event_prefix="request")
 
 
 class TestGetSlackWebhookUrl:
