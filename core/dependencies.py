@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import httpx
 from fastapi import Depends
 from groq import AsyncGroq
+from wxyc_fastapi.http import async_singleton
 from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
 
 from config.settings import Settings, get_settings
@@ -19,28 +20,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_http_client: httpx.AsyncClient | None = None
 _slack_webhook_url: str | None = None
 
 
-async def get_http_client() -> httpx.AsyncClient:
-    """Get or create HTTP client for async requests.
-
-    Returns:
-        httpx.AsyncClient: Shared async HTTP client
-    """
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=30.0)
-    return _http_client
+async def _make_http_client() -> httpx.AsyncClient:
+    """Construct the shared httpx.AsyncClient used across rom services."""
+    return httpx.AsyncClient(timeout=30.0)
 
 
-async def close_http_client() -> None:
-    """Close the HTTP client."""
-    global _http_client
-    if _http_client:
-        await _http_client.aclose()
-        _http_client = None
+# Lazy singleton: ``async_singleton`` wraps ``_make_http_client`` with a
+# double-check-lock so concurrent first-callers see one factory invocation
+# (LML#241 / LML#242 — the FD-leak race the helper exists to prevent).
+get_http_client, close_http_client = async_singleton(_make_http_client)
 
 
 def get_groq_client(settings: Settings = Depends(get_settings)) -> AsyncGroq:
