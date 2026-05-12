@@ -21,6 +21,9 @@ on:
     # requests. To test against prod, run pytest locally with
     # TEST_ENV=production after disabling Slack posting.
 
+permissions:
+  contents: read
+
 jobs:
   external_api:
     name: External API Tests
