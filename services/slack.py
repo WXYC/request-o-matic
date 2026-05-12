@@ -1,48 +1,9 @@
 import logging
 from typing import Any
 
-import httpx
-
-from config.settings import get_settings
 from models import LibraryItem, ReleaseMetadata, preview_url
 
 logger = logging.getLogger(__name__)
-
-_webhook_url: str | None = None
-_http_client: httpx.AsyncClient | None = None
-
-
-async def init_slack_service():
-    """Initialize Slack service with webhook URL."""
-    global _webhook_url, _http_client
-
-    _http_client = httpx.AsyncClient(timeout=30.0)
-
-    # Check for webhook URL override, otherwise fetch from configured URL
-    settings = get_settings()
-    if settings.slack_webhook_url:
-        _webhook_url = settings.slack_webhook_url
-        logger.info("Using Slack webhook URL from environment")
-    else:
-        try:
-            response = await _http_client.get(settings.slack_webhook_key_url)
-            response.raise_for_status()
-            webhook_key = response.text.strip()
-            _webhook_url = f"https://hooks.slack.com/services/{webhook_key}"
-            logger.info(f"Slack webhook URL configured from {settings.slack_webhook_key_url}")
-        except Exception as e:
-            logger.error(f"Failed to fetch Slack webhook key: {e}")
-            raise RuntimeError(f"Failed to fetch Slack webhook key: {e}") from e
-
-
-async def shutdown_slack_service():
-    """Clean up Slack service resources."""
-    global _http_client, _webhook_url
-    if _http_client:
-        await _http_client.aclose()
-        _http_client = None
-    _webhook_url = None
-    logger.info("Slack service shut down")
 
 
 def build_slack_blocks(
@@ -94,13 +55,3 @@ def build_simple_slack_blocks(message: str, context: str | None = None) -> list[
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": context}]})
 
     return blocks
-
-
-async def post_to_slack(blocks: list[dict]) -> None:
-    """Post message blocks to Slack webhook."""
-    if not _webhook_url or not _http_client:
-        raise RuntimeError("Slack webhook not configured")
-
-    response = await _http_client.post(_webhook_url, json={"blocks": blocks})
-    response.raise_for_status()
-    logger.info("Posted to Slack successfully")
