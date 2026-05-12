@@ -14,15 +14,12 @@ name: External API Tests
 
 on:
   workflow_dispatch:
-    inputs:
-      test_env:
-        description: "Which deployed environment to test against"
-        required: true
-        type: choice
-        default: staging
-        options:
-          - staging
-          - production
+    # No env input: this workflow always targets staging. Production is
+    # deliberately excluded — TestFullRequestIntegration POSTs to /request,
+    # which posts to Slack from the deployed container, so running the suite
+    # against production would spam the live WXYC channel with ~30 test
+    # requests. To test against prod, run pytest locally with
+    # TEST_ENV=production after disabling Slack posting.
 
 jobs:
   external_api:
@@ -46,5 +43,5 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
-          TEST_ENV: ${{ inputs.test_env }}
+          TEST_ENV: staging
         run: pytest tests/integration/ -v -m "external_api"
