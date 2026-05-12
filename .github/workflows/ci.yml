@@ -128,6 +128,35 @@ jobs:
       workflows-dir: ".github/workflows"
       tests-dir: "tests"
 
+  notify-failure:
+    # Posts to Slack when any gating job fails on a `main` push, so a red CI
+    # run gets noticed in minutes instead of weeks (issue #123). Mirrors the
+    # `if: failure()` + raw-curl + skip-if-secret-unset pattern from
+    # discogs-etl/.github/workflows/rebuild-cache.yml. Scoped to `main` to
+    # match the issue; prod-deploy failures aren't covered yet.
+    name: Notify on CI failure
+    needs: [lint, typecheck, test, marker-sync, deploy-staging]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_MONITORING_WEBHOOK }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL: "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          COMMIT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "SLACK_MONITORING_WEBHOOK unset; skipping Slack post."
+            exit 0
+          fi
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"text\":\":x: *request-o-matic CI failed on \`main\`*\nCommit: <$COMMIT_URL|$SHORT_SHA> by $ACTOR\nRun: $RUN_URL\"}" \
+            || true
+
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
