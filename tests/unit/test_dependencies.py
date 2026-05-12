@@ -1,5 +1,6 @@
 """Unit tests for core/dependencies.py."""
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -32,18 +33,26 @@ def mock_settings():
 
 @pytest.fixture(autouse=True)
 def reset_module_state():
-    """Reset module-level state before and after each test."""
+    """Reset module-level state before and after each test.
+
+    The HTTP client singleton lives inside the closure returned by
+    ``async_singleton``; we reset it via its public closer (which clears the
+    cached instance and invokes ``aclose`` if one was built). The Slack webhook
+    URL remains a plain module global, reset directly.
+    """
     import core.dependencies as deps
 
-    original_http_client = deps._http_client
+    async def _close() -> None:
+        await deps.close_http_client()
+
     original_slack_webhook_url = deps._slack_webhook_url
 
-    deps._http_client = None
+    asyncio.run(_close())
     deps._slack_webhook_url = None
 
     yield
 
-    deps._http_client = original_http_client
+    asyncio.run(_close())
     deps._slack_webhook_url = original_slack_webhook_url
 
 
@@ -65,30 +74,106 @@ class TestGetHttpClient:
         assert client1 is client2
         await client1.aclose()
 
+    @pytest.mark.asyncio
+    async def test_get_http_client_factory_invoked_once_under_concurrency(self):
+        """Concurrent first-callers must see exactly one underlying httpx client.
+
+        Port of the LML#241 / LML#242 FD-leak reproducer adapted to rom. The
+        rom-side wiring is ``get_http_client = async_singleton(_make_http_client)[0]``;
+        we exercise the same race against a freshly-built ``async_singleton``
+        wrapping ``_make_http_client`` so the test is independent of any cached
+        module state and works regardless of whether other tests have already
+        warmed the rom-level singleton.
+
+        Without the ``asyncio.Lock`` inside ``async_singleton``, concurrent
+        first-callers each pass the outer ``is None`` check, each invoke the
+        factory, and only one survives as the cached value — the rest are
+        orphaned with their connections (and FDs) still open. With the lock,
+        the factory runs exactly once.
+        """
+        from wxyc_fastapi.http import async_singleton
+
+        from core.dependencies import _make_http_client
+
+        invocations = 0
+
+        async def counting_factory() -> httpx.AsyncClient:
+            nonlocal invocations
+            invocations += 1
+            await asyncio.sleep(0)  # yield, let other concurrent callers race
+            return await _make_http_client()
+
+        getter, closer = async_singleton(counting_factory)
+        try:
+            results = await asyncio.gather(*(getter() for _ in range(50)))
+            assert invocations == 1, (
+                f"Expected exactly one factory invocation under concurrent "
+                f"first-callers, saw {invocations}. This is the LML#241 FD-leak "
+                f"race — get_http_client needs an asyncio.Lock guard (via "
+                f"wxyc_fastapi.http.async_singleton)."
+            )
+            assert all(r is results[0] for r in results)
+        finally:
+            await closer()
+
+    @pytest.mark.asyncio
+    async def test_get_http_client_is_wired_via_async_singleton(self):
+        """Pin the wiring: rom's ``get_http_client`` and ``close_http_client``
+        must be the (getter, closer) pair returned by ``async_singleton``.
+
+        This catches a future regression where someone reverts to a hand-rolled
+        ``global _http_client`` pattern without the lock — the race-regression
+        test above would still pass (it tests the helper in isolation), but
+        rom would silently lose the FD-leak guard.
+        """
+        from wxyc_fastapi.http.singleton import async_singleton
+
+        import core.dependencies as deps
+
+        # The helper returns local closures defined in
+        # ``wxyc_fastapi.http.singleton`` with qualnames
+        # ``async_singleton.<locals>.getter`` / ``...closer``; both invariants
+        # together pin rom's getter/closer to this exact helper.
+        probe_getter, probe_closer = async_singleton(deps._make_http_client)
+        try:
+            assert deps.get_http_client.__module__ == probe_getter.__module__
+            assert deps.get_http_client.__qualname__ == probe_getter.__qualname__
+            assert deps.close_http_client.__module__ == probe_closer.__module__
+            assert deps.close_http_client.__qualname__ == probe_closer.__qualname__
+        finally:
+            await probe_closer()
+
 
 class TestCloseHttpClient:
     """Tests for close_http_client function."""
 
     @pytest.mark.asyncio
     async def test_closes_client(self):
-        """Test that close_http_client closes the client."""
-        import core.dependencies as deps
+        """Test that close_http_client closes the client and clears the singleton.
 
-        mock_client = AsyncMock()
-        deps._http_client = mock_client
+        After ``close_http_client()`` returns, the next ``get_http_client()``
+        call must build a fresh client via the factory — not return the
+        torn-down one. This is the closer-resets-state contract from
+        ``async_singleton``.
+        """
+        first = await get_http_client()
+        assert isinstance(first, httpx.AsyncClient)
+        assert first.is_closed is False
 
         await close_http_client()
+        assert first.is_closed is True
 
-        mock_client.aclose.assert_called_once()
-        assert deps._http_client is None
+        second = await get_http_client()
+        assert second is not first
+        assert second.is_closed is False
+        await close_http_client()
 
     @pytest.mark.asyncio
     async def test_handles_no_client(self):
-        """Test that close_http_client handles None client."""
-        import core.dependencies as deps
-
-        deps._http_client = None
-        await close_http_client()  # Should not raise
+        """Test that close_http_client is a no-op when never initialized."""
+        # The autouse fixture has already reset state; closer-before-getter
+        # must not raise.
+        await close_http_client()
 
 
 class TestGetGroqClient:
