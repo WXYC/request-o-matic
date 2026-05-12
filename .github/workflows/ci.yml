@@ -7,6 +7,12 @@ on:
     branches: [main, prod]
   workflow_dispatch:
 
+# Default GITHUB_TOKEN scope for every job in this workflow. None of these
+# jobs push code, comment on PRs, or create releases; the deploy jobs use
+# RAILWAY_TOKEN_* secrets, not GITHUB_TOKEN. contents:read is the safe floor.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint & Format
