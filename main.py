@@ -6,12 +6,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from wxyc_fastapi.healthcheck import liveness_router
 from wxyc_fastapi.observability import flush_posthog, init_sentry, shutdown_posthog
 
 from config.settings import get_settings
 from core.dependencies import close_http_client
 from core.logging import setup_logging
-from routers.health import router as health_router
+from routers.health import build_readiness_router
 from routers.parse import router as parse_router
 from routers.request import router as request_router
 
@@ -73,8 +74,11 @@ async def posthog_flush_middleware(request: Request, call_next):
     return response
 
 
-# Include routers - health check at root, others versioned
-app.include_router(health_router, prefix="", tags=["health"])
+# Include routers - health check at root, others versioned.
+# Liveness + readiness come from wxyc_fastapi (shared across LML, rom, semantic-index);
+# the probe functions still live locally in routers/health.py.
+app.include_router(liveness_router, tags=["health"])
+app.include_router(build_readiness_router(), tags=["health"])
 
 # V1 API (new)
 app.include_router(parse_router, prefix="/api/v1", tags=["parse"])
