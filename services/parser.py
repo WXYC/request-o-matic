@@ -5,7 +5,11 @@ from enum import StrEnum
 from groq import AsyncGroq
 from pydantic import BaseModel
 
+from core.groq_tracing import groq_parse_span
+
 logger = logging.getLogger(__name__)
+
+GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 class MessageType(StrEnum):
@@ -67,36 +71,48 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
     """Parse a listener message and extract song request metadata."""
     logger.info(f"Parsing message: {message[:100]}...")
 
-    try:
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=message)},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
+    with groq_parse_span(model=GROQ_MODEL, message=message) as span:
+        try:
+            response = await client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=message)},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
 
-        content = response.choices[0].message.content
-        if content is None:
-            raise ValueError("Empty response from Groq")
+            content = response.choices[0].message.content
+            if content is None:
+                raise ValueError("Empty response from Groq")
 
-        parsed = json.loads(content)
-        logger.debug(f"Raw parsed response: {parsed}")
+            parsed = json.loads(content)
+            logger.debug(f"Raw parsed response: {parsed}")
 
-        return ParsedRequest(
-            song=parsed.get("song"),
-            album=parsed.get("album"),
-            artist=parsed.get("artist"),
-            is_request=parsed.get("is_request", False),
-            message_type=parsed.get("message_type", MessageType.OTHER),
-            raw_message=message,
-        )
+            parsed_request = ParsedRequest(
+                song=parsed.get("song"),
+                album=parsed.get("album"),
+                artist=parsed.get("artist"),
+                is_request=parsed.get("is_request", False),
+                message_type=parsed.get("message_type", MessageType.OTHER),
+                raw_message=message,
+            )
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response: {e}")
-        raise ValueError(f"Invalid JSON response from Groq: {e}") from e
-    except Exception as e:
-        logger.error(f"Error parsing request: {e}")
-        raise
+            span.set_data("ai.output.is_request", parsed_request.is_request)
+            span.set_data("ai.output.message_type", parsed_request.message_type.value)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                if getattr(usage, "prompt_tokens", None) is not None:
+                    span.set_data("ai.tokens.prompt", usage.prompt_tokens)
+                if getattr(usage, "completion_tokens", None) is not None:
+                    span.set_data("ai.tokens.completion", usage.completion_tokens)
+
+            return parsed_request
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            raise ValueError(f"Invalid JSON response from Groq: {e}") from e
+        except Exception as e:
+            logger.error(f"Error parsing request: {e}")
+            raise

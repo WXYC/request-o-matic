@@ -11,6 +11,7 @@ from wxyc_fastapi.observability import flush_posthog, init_sentry, shutdown_post
 
 from config.settings import get_settings
 from core.dependencies import close_http_client
+from core.groq_tracing import install_groq_retry_breadcrumbs
 from core.logging import setup_logging
 from routers.health import build_readiness_router
 from routers.parse import router as parse_router
@@ -26,6 +27,8 @@ init_sentry(
     environment=settings.deployment_environment,
     release=settings.app_version,
 )
+
+install_groq_retry_breadcrumbs()
 
 # Configure logging
 # In production, log to /app/logs which is writable by appuser
