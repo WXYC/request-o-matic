@@ -33,11 +33,26 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 
 # Trailing politeness tokens that the listener appended to the message and
 # that the regex would otherwise pull into the album text. Stripped before the
-# album is returned.
+# album is returned. A single politeness clause is sufficient -- we don't see
+# chained "please thanks" tails in practice.
 _TRAILING_POLITENESS_RE = re.compile(
-    r"(?:[\s,.!?]+(?:please|thanks|thank\ you|thx))+\s*[.!?]*\s*$",
+    r"[\s,.!?]+(?:please|thanks|thank\ you|thx)\s*[.!?]*\s*$",
     re.IGNORECASE | re.VERBOSE,
 )
+
+# Cheap literal pre-screen to bound worst-case backtracking on long inputs
+# without a preposition. The verbose `_ALBUM_PREPOSITION_RE` has two
+# non-greedy `.` runs; on a long DJ blurb that lacks any of these tokens it
+# can backtrack through every prefix split. This regex is linear and lets
+# us bail before the heavyweight pattern runs.
+_PREP_TOKEN_PRESCREEN_RE = re.compile(r"\s(off of|off|from|on)\s", re.IGNORECASE)
+
+# Signal-words in the prefix that mark a message as request-shaped. Used to
+# gate the `from` preposition, where the false-positive surface ("hello from
+# <place>", "greetings from <city>") cannot be covered by a finite first-token
+# denylist on the album side. `on`/`off`/`off of` do not need this gate -- the
+# prepositions themselves carry enough signal.
+_REQUEST_SIGNAL_RE = re.compile(r"\bby\b|,", re.IGNORECASE)
 
 
 # Trailing words that look like an album in surface form but are idioms.
@@ -103,7 +118,14 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     if not raw_message or not raw_message.strip():
         return None
 
-    match = _ALBUM_PREPOSITION_RE.match(raw_message.strip())
+    stripped = raw_message.strip()
+
+    # Cheap pre-screen: bail before the verbose pattern when no preposition
+    # token is present. Bounds worst-case backtracking on long messages.
+    if _PREP_TOKEN_PRESCREEN_RE.search(stripped) is None:
+        return None
+
+    match = _ALBUM_PREPOSITION_RE.match(stripped)
     if match is None:
         return None
 
@@ -113,14 +135,10 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     if not album_raw:
         return None
 
-    # Reject pathological tail tokens like a bare "of" -- the regex eagerly
-    # treats "moon pix off of" as preposition="off", album="of". Recognize the
-    # "off of" preposition properly: when prep is "off" and album starts with
-    # "of " (or is just "of"), it's actually "off of" with no album text.
+    # Reject the bare "of" tail: the regex eagerly parses "moon pix off of"
+    # as preposition="off", album="of" -- there's no real album text there.
     prep = match.group("prep").lower()
-    if prep == "off" and album_raw.lower() in {"of"}:
-        return None
-    if prep == "off" and album_raw.lower().startswith("of ") and len(album_raw) <= 3:
+    if prep == "off" and album_raw.lower() == "of":
         return None
 
     # Idiom denylist: check the first significant token of the album text.
@@ -130,6 +148,14 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
         return None
 
     prefix = match.group("prefix").strip()
+
+    # `from` has a different false-positive surface than `on`/`off`/`off of`:
+    # the album side after `from` is typically a proper noun (boston, new york),
+    # so a finite first-token denylist can't gate it. Instead, require the
+    # prefix to look request-shaped (contains "by" or a comma).
+    if prep == "from" and _REQUEST_SIGNAL_RE.search(prefix) is None:
+        return None
+
     return album_raw, prefix
 
 
@@ -238,7 +264,7 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
 
             span.set_data("ai.output.is_request", parsed_request.is_request)
             span.set_data("ai.output.message_type", parsed_request.message_type.value)
-            span.set_data("ai.album_prepass.fired", pre_pass_album is not None)
+            span.set_data("ai.output.album_prepass_fired", pre_pass_album is not None)
             usage = getattr(response, "usage", None)
             if usage is not None:
                 if getattr(usage, "prompt_tokens", None) is not None:
