@@ -119,12 +119,20 @@ NEGATIVE_CASES: list[str] = [
     "moon pix by cat power on air",
     "moon pix by cat power on vinyl",
     "moon pix by cat power on cd",
-    # "off" as a request-style filler (off the top of my head etc.) -- without
-    # a clear album token following, the pre-pass should not fire.
+    # "off" as a request-style filler (off the top of my head etc.) -- the
+    # idiom denylist rejects "the" as a first album token.
     "moon pix by cat power off the top of my head",
     # No "by <artist>" and the album side is empty -- not a templated shape.
     "moon pix off",
     "moon pix off of",
+    # "from <place>" greetings: listener says hello from a location. The
+    # arbitrary-proper-noun surface (boston, new york, ...) cannot be covered
+    # by a finite first-token denylist, so for `from` we require a request
+    # signal in the prefix (a "by <artist>" clause or a comma).
+    "hello from boston",
+    "hi from new york",
+    "greetings from chapel hill",
+    "calling from durham",
 ]
 
 
