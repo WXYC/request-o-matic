@@ -168,7 +168,9 @@ venv/bin/python scripts/repl.py --local
 Two pins in `.github/workflows/ci.yml` exist for supply-chain reasons (issue #124, free tier). They will bit-rot and need occasional bumps:
 
 - **`@railway/cli@<version>`** in the `Install Railway CLI` step of both `deploy-staging` and `deploy-production`. Failure mode is loud (deploy step fails with a CLI error). Bump by checking `npm view @railway/cli version` and updating both lines. Railway ships fast (~40 versions in 60 days as of 2026-05); pin "current" rather than chasing every release. Last bump: 57b2d8a (2026-05-12, pinned to 4.58.0).
-- **Workflow-level `permissions: contents: read`** on every workflow. Failure mode is silent (a job that needs e.g. `pull-requests: write` fails its API call but the workflow stays green). When adding a step that needs to comment on PRs, push tags, mint releases, etc., explicitly grant the scope at the job level — do not widen the workflow-level floor.
+- **Workflow-level `permissions:`** scoped to the minimum each workflow needs — `contents: read` for `ci.yml` and `external-api.yml`; `contents: read` plus `packages: read` for `charset-corpus-drift.yml` (which pulls `@wxyc/shared` from `npm.pkg.github.com`). Failure mode is silent (a job that needs e.g. `pull-requests: write` fails its API call but the workflow stays green). When adding a step that needs to comment on PRs, push tags, mint releases, etc., explicitly grant the scope at the job level — do not widen the workflow-level floor.
+
+Run `actionlint .github/workflows/*.yml` locally before pushing workflow changes; it validates `permissions:` syntax, action-version pins, and shell-script blocks, and catches the silent-mistake class of errors above before CI does.
 
 What is *not* pinned and why: the `WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml@main` reference floats on `@main`. Item 2 in #124's free tier proposes pinning it to a versioned ref, but the iteration friction (release cut + N consumer bumps for every marker-sync change) currently outweighs the protection given how rarely marker-sync changes. Revisit if wxyc-etl push hygiene becomes a concern or if marker-sync stabilizes.
 
