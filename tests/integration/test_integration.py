@@ -25,6 +25,7 @@ from tests.scenarios import (
     MI_AMI_COMMA_FORMAT,
     MJ_LENDERMAN_BARE_ARTIST,
     MONK_WELL_YOU_NEEDNT,
+    ORB_ON_ALBUM,
     PLUG_ALIAS,
     PLUG_COMMA_FORMAT,
     QUIXOTIC_SPECIAL_CHARS,
@@ -530,6 +531,46 @@ class TestParserIntegration:
         assert result.song is None, f"Should not extract a song title, got: {result.song}"
 
         print("  ✅ Correctly parsed editorial commentary as album request!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_extracts_album_from_on_preposition_reliably(self):
+        """Test that '<song> by <artist> on <album>' populates album deterministically.
+
+        Bug (WXYC/request-o-matic#140): Groq populated album=null on 2 of 3 runs
+        of "tower of dub by the orb on live '93" -- LLM nondeterminism on the
+        canonical "on <album>" templated shape. The fix is a deterministic
+        regex pre-pass; this test re-runs parse_request 10x to confirm the
+        album slot is populated on every call.
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = ORB_ON_ALBUM
+
+        runs = []
+        for i in range(10):
+            result = await parse_request(s.raw_message, client)
+            runs.append(result)
+            print(f"\n  Run {i + 1}: album={result.album!r} artist={result.artist!r}")
+
+        # Every run must have album populated -- the regex pre-pass is
+        # deterministic so this is now a hard invariant, not a statistical
+        # threshold.
+        null_count = sum(1 for r in runs if r.album is None)
+        assert null_count == 0, (
+            f"Expected album to be populated on every run, got {null_count} nulls out of 10"
+        )
+
+        # And every album value should contain the "Live '93" stem.
+        for i, result in enumerate(runs):
+            assert result.album is not None and "live" in result.album.lower(), (
+                f"Run {i + 1}: expected album containing 'Live', got: {result.album!r}"
+            )
+
+        print("\n  ✅ Album populated on 10/10 runs!")
 
 
 class TestFullRequestIntegration:

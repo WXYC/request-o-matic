@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from enum import StrEnum
 
 from groq import AsyncGroq
@@ -10,6 +11,126 @@ from core.groq_tracing import groq_parse_span
 logger = logging.getLogger(__name__)
 
 GROQ_MODEL = "llama-3.1-8b-instant"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic album-extraction pre-pass (WXYC/request-o-matic#140)
+# ---------------------------------------------------------------------------
+# The Groq parser intermittently fails to extract the album from canonical
+# "<song> by <artist> {on|from|off|off of} <album>" phrasing (1-in-3 failure
+# rate observed in production logs). The same input parses inconsistently
+# across runs because we run llama-3.1-8b-instant at temperature 0.1 and that
+# is the floor of what the model exposes -- there's still nondeterminism.
+#
+# The fix is a deterministic regex pre-pass. When it matches, parse_request
+# strips the trailing "<preposition> <album>" suffix from the message before
+# sending to Groq, then overlays the extracted album onto the parsed result.
+# This guarantees the album slot is populated for the canonical shape.
+#
+# False-positive surface: idioms like "on the radio", "on Friday", "on repeat".
+# We gate the match on a small denylist of trailing tokens that are commonly
+# idiomatic rather than album titles.
+
+# Trailing politeness tokens that the listener appended to the message and
+# that the regex would otherwise pull into the album text. Stripped before the
+# album is returned.
+_TRAILING_POLITENESS_RE = re.compile(
+    r"(?:[\s,.!?]+(?:please|thanks|thank\ you|thx))+\s*[.!?]*\s*$",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+# Trailing words that look like an album in surface form but are idioms.
+# Compare against the *first* significant token after the preposition.
+_ALBUM_IDIOM_HEADS: frozenset[str] = frozenset(
+    {
+        "the",  # "on the radio", "off the top of my head"
+        "air",  # "on air"
+        "vinyl",  # "on vinyl"
+        "cd",  # "on cd"
+        "wax",  # "on wax"
+        "rotation",  # "on rotation"
+        "tape",  # "on tape"
+        "blast",  # "on blast"
+        "repeat",  # "on repeat"
+        "loop",  # "on loop"
+        "shuffle",  # "on shuffle"
+        "fire",  # "on fire"
+        "point",  # "on point"
+        "hold",  # "on hold"
+        "today",  # "on today"
+        "tonight",  # "on tonight"
+        "tomorrow",  # "on tomorrow"
+        "monday",  # "on monday"
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    }
+)
+
+# Match the canonical templated shapes. Anchored at end of string.
+#   - <prefix> <on|from|off|off of> <album-text>
+# `prefix` must be non-empty and is what we pass through to Groq after stripping.
+_ALBUM_PREPOSITION_RE = re.compile(
+    r"""
+    ^
+    (?P<prefix>.+?)              # song (+ optional "by <artist>") -- non-empty, non-greedy
+    \s+
+    (?P<prep>off\ of|off|from|on)   # preposition (order matters: "off of" before "off")
+    \s+
+    (?P<album>\S.*?)             # album text -- must start with non-space and be non-empty
+    \s*
+    $
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
+    """Deterministic album extraction for canonical request phrasings.
+
+    Returns a tuple of ``(album, stripped_message)`` when the message matches
+    the canonical "<song> [by <artist>] {on|from|off|off of} <album>" shape and
+    the trailing token is not a known idiom. Returns ``None`` otherwise.
+
+    The caller is expected to send ``stripped_message`` to Groq (so the LLM
+    extracts song/artist/etc. from the shortened text without album confusion)
+    and overlay ``album`` onto the parsed result.
+    """
+    if not raw_message or not raw_message.strip():
+        return None
+
+    match = _ALBUM_PREPOSITION_RE.match(raw_message.strip())
+    if match is None:
+        return None
+
+    album_raw = match.group("album").strip()
+    # Trim trailing politeness ("please", "thanks") that listeners append.
+    album_raw = _TRAILING_POLITENESS_RE.sub("", album_raw).strip()
+    if not album_raw:
+        return None
+
+    # Reject pathological tail tokens like a bare "of" -- the regex eagerly
+    # treats "moon pix off of" as preposition="off", album="of". Recognize the
+    # "off of" preposition properly: when prep is "off" and album starts with
+    # "of " (or is just "of"), it's actually "off of" with no album text.
+    prep = match.group("prep").lower()
+    if prep == "off" and album_raw.lower() in {"of"}:
+        return None
+    if prep == "off" and album_raw.lower().startswith("of ") and len(album_raw) <= 3:
+        return None
+
+    # Idiom denylist: check the first significant token of the album text.
+    # If it's an idiom-head we decline to fire and leave it to Groq.
+    first_token = re.split(r"\s+", album_raw, maxsplit=1)[0].lower().rstrip(",.!?")
+    if first_token in _ALBUM_IDIOM_HEADS:
+        return None
+
+    prefix = match.group("prefix").strip()
+    return album_raw, prefix
 
 
 class MessageType(StrEnum):
@@ -71,13 +192,24 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
     """Parse a listener message and extract song request metadata."""
     logger.info(f"Parsing message: {message[:100]}...")
 
+    # Deterministic pre-pass for canonical "{on|from|off|off of} <album>"
+    # phrasings (WXYC/request-o-matic#140). When it fires we send the stripped
+    # message to Groq (so the LLM still extracts song/artist) and overlay the
+    # regex-extracted album onto the result.
+    pre_pass = extract_album_prefix(message)
+    if pre_pass is not None:
+        pre_pass_album, groq_message = pre_pass
+    else:
+        pre_pass_album = None
+        groq_message = message
+
     with groq_parse_span(model=GROQ_MODEL, message=message) as span:
         try:
             response = await client.chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=message)},
+                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=groq_message)},
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
@@ -90,9 +222,14 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
             parsed = json.loads(content)
             logger.debug(f"Raw parsed response: {parsed}")
 
+            # If the deterministic pre-pass extracted an album, trust it over
+            # whatever Groq returned in that slot (Groq sees the message
+            # without the album suffix, so it shouldn't claim one anyway).
+            album = pre_pass_album if pre_pass_album is not None else parsed.get("album")
+
             parsed_request = ParsedRequest(
                 song=parsed.get("song"),
-                album=parsed.get("album"),
+                album=album,
                 artist=parsed.get("artist"),
                 is_request=parsed.get("is_request", False),
                 message_type=parsed.get("message_type", MessageType.OTHER),
@@ -101,6 +238,7 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
 
             span.set_data("ai.output.is_request", parsed_request.is_request)
             span.set_data("ai.output.message_type", parsed_request.message_type.value)
+            span.set_data("ai.album_prepass.fired", pre_pass_album is not None)
             usage = getattr(response, "usage", None)
             if usage is not None:
                 if getattr(usage, "prompt_tokens", None) is not None:

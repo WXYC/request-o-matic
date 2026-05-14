@@ -326,3 +326,14 @@ BECK_EDITORIAL_ALBUM = _register(
     bug="Parser treated editorial phrase 'Beck's best album' as album title and the actual album name as song title",
     tags=frozenset({"parser", "editorial_commentary"}),
 )
+
+ORB_ON_ALBUM = _register(
+    id="orb_on_album",
+    description="'tower of dub by the orb on live '93' - 'on <album>' phrasing must populate album deterministically",
+    raw_message="tower of dub by the orb on live '93",
+    artist="The Orb",
+    song="Tower of Dub",
+    album="Live '93",
+    bug="Groq parser populated album=null on 2 of 3 runs of this exact input -- LLM nondeterminism on the 'on <album>' templated shape",
+    tags=frozenset({"parser", "album_preposition"}),
+)
