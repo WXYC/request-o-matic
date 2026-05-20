@@ -172,7 +172,7 @@ Two pins in `.github/workflows/ci.yml` exist for supply-chain reasons (issue #12
 
 Run `actionlint .github/workflows/*.yml` locally before pushing workflow changes; it validates `permissions:` syntax, action-version pins, and shell-script blocks, and catches the silent-mistake class of errors above before CI does.
 
-What is *not* pinned and why: the `WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml@main` reference floats on `@main`. Item 2 in #124's free tier proposes pinning it to a versioned ref, but the iteration friction (release cut + N consumer bumps for every marker-sync change) currently outweighs the protection given how rarely marker-sync changes. Revisit if wxyc-etl push hygiene becomes a concern or if marker-sync stabilizes.
+Both reusable-workflow refs (`WXYC/wxyc-shared/.../check-charset-corpus-drift.yml` in `charset-corpus-drift.yml`, and `WXYC/wxyc-etl/.../check-ci-marker-sync.yml` in `ci.yml`) are pinned to `@gha/v1` — the publisher's moving major tag with a documented [Tag Stability Policy](https://github.com/WXYC/wxyc-shared/blob/main/CLAUDE.md#tag-stability-policy-read-before-editing-githubworkflows). Non-breaking changes move the tag forward; breaking changes cut `gha/v2` and require a consumer-side bump. Do not re-point either ref at `@main` — that re-introduces silent breakage from publisher changes.
 
 ## Common Issues and Fixes
 

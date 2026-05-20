@@ -122,7 +122,7 @@ jobs:
   marker-sync:
     # Verifies the pytest marker scheme stays in sync with this file. See
     # plans/test-patterns.md Section 3 ("Sync-check") for the invariant.
-    uses: WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml@main
+    uses: WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml@gha/v1
     with:
       repo-path: "."
       workflows-dir: ".github/workflows"
