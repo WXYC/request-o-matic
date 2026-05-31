@@ -7,7 +7,8 @@ Request-O-Matic is a FastAPI service for WXYC radio that processes song requests
 CLAUDE.md is a router for the always-loaded reference card. Topic depth lives in `docs/`:
 
 - **[`docs/architecture.md`](docs/architecture.md)** — Request flow (parse → delegate → Slack), degraded modes (`parsing_unavailable`, `search_unavailable`), key files, optional Discogs PG cache, daily library.db ETL pipeline, pointer to LML for search-logic details
-- **[`docs/env-vars.md`](docs/env-vars.md)** — Full environment-variable reference (Groq, LML, Slack, Sentry, PostHog, telemetry/integration toggles)
+- **[`docs/env-vars.md`](docs/env-vars.md)** — Full environment-variable reference (Groq, LML, Slack, Sentry, PostHog, telemetry/integration toggles, admin-bans API)
+- **[`docs/admin-bans.md`](docs/admin-bans.md)** — Operator runbook for `/admin/bans` (request-line ban management): endpoints, curl examples, status codes, where to find a fingerprint. Both the HTTP admin router (#151) and the future Slack-native router (#152) share `services/ban_service.py`.
 - **[`docs/testing.md`](docs/testing.md)** — Unit / integration / performance test layout, pytest markers (`external_api`, `slow`, `contract`), TEST_ENV configuration, local server testing, bug-fix protocol
 - **[`docs/deployment.md`](docs/deployment.md)** — Railway hosting, branch → environment mapping, CI pin maintenance (Railway CLI version, workflow `permissions:`, `@gha/v1` reusable refs)
 - **[`docs/scripts.md`](docs/scripts.md)** — `scripts/lookup.py`, `scripts/repl.py`, `scripts/create_posthog_dashboard.py`

@@ -6,13 +6,14 @@ import logging
 from typing import TYPE_CHECKING
 
 import httpx
-from fastapi import Depends
+from fastapi import Depends, Header, HTTPException
 from groq import AsyncGroq
 from wxyc_fastapi.http import async_singleton
 from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
 
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
+from services.ban_admin_client import BanAdminClient
 from services.lookup_client import LookupServiceClient
 
 if TYPE_CHECKING:
@@ -180,3 +181,57 @@ async def get_slack_service(
     if webhook_url is None:
         return None
     return SlackService(webhook_url, http_client)
+
+
+def require_admin_token(
+    settings: Settings = Depends(get_settings),
+    authorization: str | None = Header(None),
+) -> None:
+    """Validate ``Authorization: Bearer <ADMIN_TOKEN>`` for admin endpoints.
+
+    Mirrors LML's ``routers/admin.py:_validate_auth`` so operators don't need
+    to learn two different bearer-token shapes between services. Status codes:
+
+    * ``ADMIN_TOKEN`` unset on the server -> 403 (fail-closed; the operator
+      should hear "disabled", not "you sent the wrong token").
+    * No ``Authorization`` header -> 401.
+    * Malformed scheme or wrong token -> 403.
+    * Correct bearer -> pass.
+    """
+    if not settings.admin_token:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin endpoint disabled (no ADMIN_TOKEN set)",
+        )
+
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization")
+
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or parts[1] != settings.admin_token:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+
+async def get_ban_admin_client(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> BanAdminClient:
+    """Build a :class:`BanAdminClient` from settings, or 503 if misconfigured.
+
+    Both ``BS_INTERNAL_BANS_URL`` and ``BS_INTERNAL_KEY`` are required to talk
+    to Backend-Service. Surfacing the misconfiguration as 503 (not 500) tells
+    operators "the upstream isn't wired" rather than implying a bug in the
+    request they sent.
+    """
+    if not settings.bs_internal_bans_url or not settings.bs_internal_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Ban admin upstream not configured: set BS_INTERNAL_BANS_URL and BS_INTERNAL_KEY"
+            ),
+        )
+    return BanAdminClient(
+        settings.bs_internal_bans_url,
+        http_client,
+        internal_key=settings.bs_internal_key,
+    )
