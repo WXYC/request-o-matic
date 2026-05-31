@@ -13,6 +13,7 @@ from config.settings import get_settings
 from core.dependencies import close_http_client
 from core.groq_tracing import install_groq_retry_breadcrumbs
 from core.logging import setup_logging
+from routers.admin import router as admin_router
 from routers.health import build_readiness_router
 from routers.parse import router as parse_router
 from routers.request import router as request_router
@@ -90,6 +91,11 @@ app.include_router(request_router, prefix="/api/v1", tags=["request"])
 # Backwards compatibility - mount at root as well
 app.include_router(parse_router, prefix="", tags=["parse-legacy"])
 app.include_router(request_router, prefix="", tags=["request-legacy"])
+
+# Admin API for request-line ban management (#151). Mounted at root so the
+# routes are reachable as ``/admin/bans`` — operators don't think about the
+# ``/api/v1`` prefix for admin tooling.
+app.include_router(admin_router)
 
 if __name__ == "__main__":
     import uvicorn

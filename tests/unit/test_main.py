@@ -51,6 +51,27 @@ class TestAppConfiguration:
             assert any("/request" in route and "/api/v1" not in route for route in routes)
             assert any("/parse" in route and "/api/v1" not in route for route in routes)
 
+    def test_app_has_admin_bans_routes(self):
+        """Pin that ``/admin/bans`` (#151) is mounted at the root, not under /api/v1.
+
+        Operators curl ``/admin/bans`` directly — burying it under ``/api/v1``
+        would diverge from LML's admin pattern and from the operator runbook
+        in ``docs/admin-bans.md``.
+        """
+        with patch.dict("os.environ", {"GROQ_API_KEY": "test_key"}):
+            from config.settings import get_settings
+
+            get_settings.cache_clear()
+
+            from main import app
+
+            routes = [route.path for route in app.routes if hasattr(route, "path")]
+
+            assert "/admin/bans" in routes
+            assert "/admin/bans/{fingerprint}" in routes
+            # Must NOT have been accidentally namespaced under /api/v1
+            assert not any("/api/v1/admin" in r for r in routes)
+
     def test_app_has_description(self):
         """Test that app has a description."""
         with patch.dict("os.environ", {"GROQ_API_KEY": "test_key"}):

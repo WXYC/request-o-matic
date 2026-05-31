@@ -54,6 +54,34 @@ class Settings(BaseSettings):
         description="Bearer token sent to library-metadata-lookup. Required when LML has LML_REQUIRE_AUTH=true.",
     )
 
+    # Admin API (request-line ban management — request-o-matic#151)
+    # Co-located with the request-line surface so operators can curl/script
+    # bans against the same service they already know. Auth is a single shared
+    # bearer token; rom is a thin proxy and forwards writes to Backend-Service.
+    admin_token: str | None = Field(
+        None,
+        description=(
+            "Bearer token gating the /admin/bans endpoints. When unset, the "
+            "endpoints reject every request with 403 (fail-closed)."
+        ),
+    )
+    bs_internal_bans_url: str | None = Field(
+        None,
+        description=(
+            "Base URL of Backend-Service's /internal/banned-fingerprints CRUD "
+            "(BS#1261). Example: "
+            "'https://api.wxyc.org/internal/banned-fingerprints'."
+        ),
+    )
+    bs_internal_key: str | None = Field(
+        None,
+        description=(
+            "Shared secret forwarded as X-Internal-Key on calls to BS internal "
+            "endpoints (BS#1261 ROM_INTERNAL_KEY). Shared with the request-time "
+            "ban-check client (#150)."
+        ),
+    )
+
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")
     app_version: str = Field(default="1.0.0", description="Application version")

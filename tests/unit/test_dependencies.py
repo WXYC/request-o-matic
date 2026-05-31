@@ -5,18 +5,22 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from config.settings import Settings
 from core.dependencies import (
     SlackService,
     close_http_client,
+    get_ban_admin_client,
     get_groq_client,
     get_http_client,
     get_posthog_client,
     get_slack_service,
     get_slack_webhook_url,
+    require_admin_token,
 )
 from core.exceptions import ServiceInitializationError
+from services.ban_admin_client import BanAdminClient
 
 
 @pytest.fixture
@@ -344,3 +348,89 @@ class TestGetSlackService:
         assert isinstance(service, SlackService)
         assert service.webhook_url == "https://hooks.slack.com/test"
         assert service.http_client is mock_client
+
+
+# ---------------------------------------------------------------------------
+# Admin auth + ban admin client (#151)
+# ---------------------------------------------------------------------------
+
+
+class TestRequireAdminToken:
+    """Tests for the ``require_admin_token`` FastAPI dependency."""
+
+    def test_passes_with_correct_bearer(self):
+        settings = Settings(groq_api_key="x", admin_token="secret")
+        # Should not raise
+        require_admin_token(settings=settings, authorization="Bearer secret")
+
+    def test_case_insensitive_scheme(self):
+        settings = Settings(groq_api_key="x", admin_token="secret")
+        require_admin_token(settings=settings, authorization="bearer secret")
+        require_admin_token(settings=settings, authorization="BEARER secret")
+
+    def test_missing_header_raises_401(self):
+        settings = Settings(groq_api_key="x", admin_token="secret")
+        with pytest.raises(HTTPException) as excinfo:
+            require_admin_token(settings=settings, authorization=None)
+        assert excinfo.value.status_code == 401
+
+    def test_wrong_token_raises_403(self):
+        settings = Settings(groq_api_key="x", admin_token="secret")
+        with pytest.raises(HTTPException) as excinfo:
+            require_admin_token(settings=settings, authorization="Bearer wrong")
+        assert excinfo.value.status_code == 403
+
+    def test_admin_token_unset_raises_403(self):
+        """Fail-closed: server with no ADMIN_TOKEN rejects every request."""
+        settings = Settings(groq_api_key="x", admin_token=None)
+        with pytest.raises(HTTPException) as excinfo:
+            require_admin_token(settings=settings, authorization="Bearer anything")
+        assert excinfo.value.status_code == 403
+
+
+class TestGetBanAdminClient:
+    """Tests for the ``get_ban_admin_client`` FastAPI dependency."""
+
+    @pytest.mark.asyncio
+    async def test_builds_client_with_settings(self):
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+            bs_internal_key="key-123",
+        )
+        http = httpx.AsyncClient()
+        try:
+            client = await get_ban_admin_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+
+        assert isinstance(client, BanAdminClient)
+        assert client.base_url == "https://bs.example.com/internal/banned-fingerprints"
+        assert client.internal_key == "key-123"
+        assert client.http_client is http
+
+    @pytest.mark.asyncio
+    async def test_missing_url_raises_503(self):
+        settings = Settings(groq_api_key="x", bs_internal_bans_url=None, bs_internal_key="key")
+        http = httpx.AsyncClient()
+        try:
+            with pytest.raises(HTTPException) as excinfo:
+                await get_ban_admin_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+        assert excinfo.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_missing_key_raises_503(self):
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+            bs_internal_key=None,
+        )
+        http = httpx.AsyncClient()
+        try:
+            with pytest.raises(HTTPException) as excinfo:
+                await get_ban_admin_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+        assert excinfo.value.status_code == 503

@@ -155,11 +155,19 @@ docker-compose up
 
 ### Core Endpoints (v1)
 
-All endpoints except `/health` are prefixed with `/api/v1`:
+All endpoints except `/health` and `/admin/*` are prefixed with `/api/v1`:
 
 - `GET /health` - Health check with service status details (groq, lookup, slack)
 - `POST /api/v1/parse` - Parse a natural language song request into structured metadata
 - `POST /api/v1/request` - Full request workflow: parse -> delegate search to lookup service -> post to Slack
+
+### Admin Endpoints
+
+Request-line ban management (`Authorization: Bearer $ADMIN_TOKEN`). All writes are proxied to Backend-Service; request-o-matic owns no ban state. Full operator runbook in [`docs/admin-bans.md`](docs/admin-bans.md).
+
+- `POST /admin/bans` - Create or update a ban for a fingerprint (idempotent)
+- `DELETE /admin/bans/{fingerprint}` - Remove a ban (idempotent)
+- `GET /admin/bans` - List bans (keyset-paginated)
 
 ### Example Requests
 
@@ -295,6 +303,9 @@ If Slack integration fails:
 | `POSTHOG_API_KEY` | No | - | PostHog project API key for telemetry tracking |
 | `POSTHOG_HOST` | No | https://us.i.posthog.com | PostHog host URL |
 | `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
+| `ADMIN_TOKEN` | No | - | Bearer token gating `/admin/bans`. Fail-closed when unset. |
+| `BS_INTERNAL_BANS_URL` | No | - | Base URL of Backend-Service's `/internal/banned-fingerprints` CRUD (BS#1261). |
+| `BS_INTERNAL_KEY` | No | - | Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. |
 
 ## Architecture
 
