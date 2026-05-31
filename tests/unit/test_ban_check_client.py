@@ -246,3 +246,108 @@ class TestBanCheckClientRequestShape:
         client = _make_client(handler)
         with pytest.raises(ValueError):
             await client.check(authorization=None, fingerprint=None)
+
+
+class TestFingerprintValidation:
+    """Malformed `X-Device-Fingerprint` headers are dropped client-side rather
+    than forwarded to BS. Without this guard a banned listener could bypass
+    enforcement by appending garbage to the header — BS would 400, ROM would
+    treat as `BanCheckUnavailableError`, and the router would fail open.
+    """
+
+    @pytest.mark.asyncio
+    async def test_malformed_fingerprint_dropped_jwt_only_call_proceeds(self):
+        """With a JWT plus a non-UUID fingerprint, ROM forwards only the JWT."""
+        captured: dict = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured["headers"] = dict(request.headers)
+            return httpx.Response(200, json={"banned": False})
+
+        client = _make_client(handler)
+        result = await client.check(authorization="Bearer x", fingerprint="not-a-uuid")
+
+        assert result.banned is False
+        assert captured["headers"].get("authorization") == "Bearer x"
+        # The malformed fingerprint must NOT have been forwarded — BS would
+        # have rejected the call with 400, which we already test as
+        # fail-open. The whole point of this guard is to never reach that
+        # state in the first place.
+        assert "x-device-fingerprint" not in captured["headers"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_fingerprint_no_jwt_raises_value_error(self):
+        """Only signal is a bad fingerprint — after dropping it, we have
+        nothing to send, so check() raises ValueError (the standard
+        no-signal contract). The router gates on the same condition so this
+        is reachable only via a misbehaving direct caller."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            pytest.fail("BS must not be called when no signal survives validation")
+
+        client = _make_client(handler)
+        with pytest.raises(ValueError):
+            await client.check(authorization=None, fingerprint="abc?inject=evil")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "valid_uuid",
+        [
+            "11111111-2222-3333-4444-555555555555",  # any version
+            "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",  # uppercase
+            "11111111-1111-4111-8111-111111111111",  # v4-shaped
+        ],
+    )
+    async def test_valid_uuid_forwarded_verbatim(self, valid_uuid):
+        captured: dict = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured["headers"] = dict(request.headers)
+            return httpx.Response(200, json={"banned": False})
+
+        client = _make_client(handler)
+        await client.check(authorization=None, fingerprint=valid_uuid)
+        assert captured["headers"]["x-device-fingerprint"] == valid_uuid
+
+
+class TestMissingBannedKey:
+    """A 200 response missing the required `banned` key must NOT coerce to
+    `banned=False` — that would silently disable enforcement on a BS
+    regression. Surface as unavailable so the router fails open AND the
+    operator sees the breadcrumb."""
+
+    @pytest.mark.asyncio
+    async def test_missing_banned_key_raises_unavailable(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            # BS regression: returns 200 with an empty object.
+            return httpx.Response(200, json={})
+
+        client = _make_client(handler)
+        with pytest.raises(BanCheckUnavailableError):
+            await client.check(authorization="Bearer x", fingerprint=None)
+
+    @pytest.mark.asyncio
+    async def test_present_banned_key_with_false_value_proceeds(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"banned": False})
+
+        client = _make_client(handler)
+        result = await client.check(authorization="Bearer x", fingerprint=None)
+        assert result.banned is False
+
+
+class TestInvalidUrlFailsOpen:
+    """A misconfigured BS URL (typo, missing scheme) must fail open as
+    `BanCheckUnavailableError` — NOT escape as an httpx.InvalidURL crashing
+    every /request. _NETWORK_ERRORS broadened to httpx.HTTPError covers this."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_raises_unavailable(self):
+        # Construct a client whose URL httpx will reject at send time.
+        client = BanCheckClient(
+            "not-a-url",
+            httpx.AsyncClient(),
+            timeout=1.0,
+        )
+        with pytest.raises(BanCheckUnavailableError):
+            await client.check(authorization="Bearer x", fingerprint=None)

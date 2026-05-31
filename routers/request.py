@@ -260,17 +260,24 @@ async def handle_request(
             if ban_result.banned:
                 # Shadow-ban semantics: no Slack, no Groq, no LML. iOS v3.2
                 # silently swallows 403 so the listener sees nothing.
+                # PostHog capture is wrapped because a Posthog ingest outage
+                # raising here would otherwise prevent the 403 and 500 the
+                # caller instead — breaking shadow-ban (the banned listener
+                # would see that the backend is doing extra work).
                 if posthog_client is not None:
-                    posthog_client.capture(
-                        distinct_id="request-o-matic-service",
-                        event="request_blocked",
-                        properties={
-                            "user_id": ban_result.user_id,
-                            "fingerprint": ban_result.fingerprint,
-                            "ban_reason": ban_result.ban_reason,
-                            "ban_source": ban_result.ban_source,
-                        },
-                    )
+                    try:
+                        posthog_client.capture(
+                            distinct_id="request-o-matic-service",
+                            event="request_blocked",
+                            properties={
+                                "user_id": ban_result.user_id,
+                                "fingerprint": ban_result.fingerprint,
+                                "ban_reason": ban_result.ban_reason,
+                                "ban_source": ban_result.ban_source,
+                            },
+                        )
+                    except Exception:
+                        logger.exception("PostHog request_blocked capture failed")
                 logger.info(
                     "Blocked request from banned caller (source=%s, user_id=%s)",
                     ban_result.ban_source,
