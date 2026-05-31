@@ -17,4 +17,10 @@ Optional:
 Admin API for request-line bans (see [`docs/admin-bans.md`](admin-bans.md)):
 - `ADMIN_TOKEN` - Bearer token gating the `/admin/bans` endpoints. When unset, every admin request is rejected with 403 (fail-closed). Rotate by updating the Railway service variable.
 - `BS_INTERNAL_BANS_URL` - Base URL of Backend-Service's `/internal/banned-fingerprints` CRUD (BS#1261). Example: `https://api.wxyc.org/internal/banned-fingerprints`. When unset, `/admin/bans` returns 503.
-- `BS_INTERNAL_KEY` - Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. Must equal `ROM_INTERNAL_KEY` on the BS side. Shared with the request-time ban-check client.
+- `BS_INTERNAL_KEY` - Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. Must equal `ROM_INTERNAL_KEY` on the BS side. Used by `/admin/bans` (#151); the public `/auth/check-request-ban` handler does NOT consume this.
+
+Request-line ban enforcement ([WXYC/request-o-matic#150](https://github.com/WXYC/request-o-matic/issues/150) + [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261)):
+- `ENFORCE_REQUEST_BANS` - Feature flag for request-line ban enforcement. Default `false` so the code can deploy before iOS 3.2 reaches App Store rollout. When `true` AND `BS_CHECK_REQUEST_BAN_URL` is set, every `POST /request` consults BS before parsing.
+- `BS_CHECK_REQUEST_BAN_URL` - Full URL of Backend-Service's `POST /auth/check-request-ban` endpoint (apps/auth service, port 8082), e.g. `https://wxyc-auth-staging.up.railway.app/auth/check-request-ban`. When unset, the ban check is disabled regardless of `ENFORCE_REQUEST_BANS`.
+
+Flow when enforcement is on and the caller supplies `Authorization: Bearer <jwt>` and/or `X-Device-Fingerprint: <uuid>`: ROM POSTs both headers to `BS_CHECK_REQUEST_BAN_URL` before parse. `banned: true` short-circuits to 403 (no Slack, no Groq, no LML) and emits a `request_blocked` PostHog event with `user_id`, `fingerprint`, `ban_reason`, `ban_source`. `banned: false` proceeds. BS 401 (invalid JWT) and 404 (user not found) proceed-as-unauth — the caller MUST NOT see a 401 on `POST /request`, since v3.1 iOS clients send no Authorization header. When BS is unreachable, ROM fails open: log a Sentry breadcrumb, emit `degraded_mode=ban_check_unavailable` telemetry, proceed.

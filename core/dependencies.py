@@ -15,6 +15,7 @@ from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_cli
 from config.settings import Settings, get_settings
 from core.exceptions import ServiceInitializationError
 from services.ban_admin_client import BanAdminClient
+from services.ban_check_client import BanCheckClient
 from services.lookup_client import LookupServiceClient
 
 if TYPE_CHECKING:
@@ -51,6 +52,21 @@ def get_groq_client(settings: Settings = Depends(get_settings)) -> AsyncGroq:
     if not settings.groq_api_key:
         raise ServiceInitializationError("GROQ_API_KEY not configured")
     return AsyncGroq(api_key=settings.groq_api_key, max_retries=4)
+
+
+async def get_ban_check_client(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> BanCheckClient | None:
+    """Get the BS ban-check client if request-line ban enforcement is enabled.
+
+    Returns None when either the feature flag (``ENFORCE_REQUEST_BANS``) is off
+    or the BS URL (``BS_CHECK_REQUEST_BAN_URL``) is unset, so the router can
+    skip the check entirely without a second branch on every request.
+    """
+    if not settings.enforce_request_bans or not settings.bs_check_request_ban_url:
+        return None
+    return BanCheckClient(settings.bs_check_request_ban_url, http_client)
 
 
 async def get_lookup_client(
