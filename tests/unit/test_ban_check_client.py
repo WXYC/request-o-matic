@@ -241,7 +241,7 @@ class TestBanCheckClientRequestShape:
         """Calling check() with neither header is a programmer error; raise."""
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            pytest.fail("BS must not be called when no signal is present")
+            raise AssertionError("BS must not be called when no signal is present")
 
         client = _make_client(handler)
         with pytest.raises(ValueError):
@@ -283,7 +283,7 @@ class TestFingerprintValidation:
         is reachable only via a misbehaving direct caller."""
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            pytest.fail("BS must not be called when no signal survives validation")
+            raise AssertionError("BS must not be called when no signal survives validation")
 
         client = _make_client(handler)
         with pytest.raises(ValueError):
