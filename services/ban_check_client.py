@@ -33,9 +33,21 @@ fingerprint, and BS bounds the cost with per-IP rate limiting.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 import httpx
+
+# Permissive UUID regex matching BS's UUID_REGEX in
+# apps/auth/check-request-ban-handler.ts — accepts any UUID version. ROM uses
+# this to drop malformed fingerprint headers BEFORE the BS round-trip, since
+# a malformed fingerprint would make BS reply 400 (the entire ban check would
+# fail open and let a banned listener bypass enforcement just by appending
+# garbage to their X-Device-Fingerprint header).
+_FINGERPRINT_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 __all__ = [
     "BanCheckClient",
@@ -93,7 +105,12 @@ class BanCheckClient:
             constructor signature stays stable if we add a single retry later.
     """
 
-    _NETWORK_ERRORS = (httpx.ConnectError, httpx.TimeoutException, httpx.TransportError)
+    # Use httpx.HTTPError (the base class for every httpx exception) so that
+    # transport-class errors NOT in TransportError's subtree — InvalidURL,
+    # UnsupportedProtocol, ProxyError — also fail open. Otherwise a
+    # misconfigured BS_CHECK_REQUEST_BAN_URL would 500 every /request instead
+    # of letting traffic through.
+    _NETWORK_ERRORS = (httpx.HTTPError,)
 
     def __init__(
         self,
@@ -133,6 +150,17 @@ class BanCheckClient:
             BanCheckUnavailableError: On network errors, timeouts, 5xx, or
                 contract-bug 4xx (e.g. 400 ``no_signal``).
         """
+        # Drop malformed fingerprint values before they reach BS. Without
+        # this, a banned listener could bypass enforcement by sending
+        # `X-Device-Fingerprint: not-a-uuid` — BS would reply 400, ROM would
+        # treat that as BanCheckUnavailableError, and the router would fail
+        # open. Treat malformed fingerprint as if no fingerprint was sent;
+        # BS will then check only the JWT (or, if neither survives, the
+        # caller is no-signal and we short-circuit to fail open below).
+        if fingerprint is not None and not _FINGERPRINT_RE.match(fingerprint):
+            logger.info("X-Device-Fingerprint header is not a valid UUID; ignoring")
+            fingerprint = None
+
         if not authorization and not fingerprint:
             raise ValueError(
                 "BanCheckClient.check requires at least one of authorization or fingerprint"
@@ -180,8 +208,17 @@ class BanCheckClient:
             logger.warning("BS ban-check returned 200 with non-JSON body")
             raise BanCheckUnavailableError("BS returned non-JSON body") from exc
 
+        # The `banned` key is REQUIRED on every successful response. Coercing a
+        # missing key to False would silently disable enforcement if a future
+        # BS regression returned a partial body — visible only as a drop in
+        # PostHog `request_blocked` events, which is exactly the metric an
+        # operator wouldn't notice was missing.
+        if "banned" not in body:
+            logger.warning("BS ban-check returned 200 without 'banned' key: %r", body)
+            raise BanCheckUnavailableError("BS response missing 'banned' key")
+
         return BanCheckResult(
-            banned=bool(body.get("banned", False)),
+            banned=bool(body["banned"]),
             user_id=body.get("userId"),
             fingerprint=body.get("fingerprint"),
             ban_reason=body.get("banReason"),
