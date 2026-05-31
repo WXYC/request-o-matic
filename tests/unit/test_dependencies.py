@@ -226,6 +226,57 @@ class TestGetPosthogClient:
         mock_shared.assert_called_once_with(event_prefix="request")
 
 
+class TestGetBanCheckClient:
+    """Tests for get_ban_check_client function.
+
+    The provider is the only line of defense that prevents BS calls when the
+    feature flag is off or the URL is unset, so it has to be pinned both ways.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_flag_off(self):
+        """Default config has ENFORCE_REQUEST_BANS=False; provider returns None."""
+        from core.dependencies import get_ban_check_client
+
+        settings = Settings(
+            groq_api_key="test_key",
+            bs_check_request_ban_url="http://bs/auth/check-request-ban",
+            enforce_request_bans=False,
+        )
+        client = await get_ban_check_client(settings, AsyncMock())
+        assert client is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_url_unset(self):
+        """Flag on but URL missing → still None (no half-configured calls)."""
+        from core.dependencies import get_ban_check_client
+
+        settings = Settings(
+            groq_api_key="test_key",
+            bs_check_request_ban_url=None,
+            enforce_request_bans=True,
+        )
+        client = await get_ban_check_client(settings, AsyncMock())
+        assert client is None
+
+    @pytest.mark.asyncio
+    async def test_returns_client_when_enabled(self):
+        """Flag on AND URL set → return a wired BanCheckClient."""
+        from core.dependencies import get_ban_check_client
+        from services.ban_check_client import BanCheckClient
+
+        settings = Settings(
+            groq_api_key="test_key",
+            bs_check_request_ban_url="http://bs/auth/check-request-ban",
+            enforce_request_bans=True,
+        )
+        http_client = AsyncMock()
+        client = await get_ban_check_client(settings, http_client)
+        assert isinstance(client, BanCheckClient)
+        assert client.url == "http://bs/auth/check-request-ban"
+        assert client.http_client is http_client
+
+
 class TestGetSlackWebhookUrl:
     """Tests for get_slack_webhook_url function."""
 

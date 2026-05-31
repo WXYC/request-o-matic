@@ -1,16 +1,18 @@
 # Architecture
 
 ## Request Flow
-1. **Parse**: Groq AI (`llama-3.1-8b-instant`) extracts artist/song/album from message
-2. **Early return**: Non-request messages (feedback, DJ messages) are posted to Slack without search
-3. **Delegate**: Search is delegated to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) via HTTP (`LOOKUP_SERVICE_URL`).
-4. **Slack**: Post enriched results with artwork to Slack
+1. **Ban check (optional)**: When `ENFORCE_REQUEST_BANS=true` and the caller supplies `Authorization` and/or `X-Device-Fingerprint`, ROM consults Backend-Service's `POST /auth/check-request-ban` ([BS#1261](https://github.com/WXYC/Backend-Service/issues/1261)) before parsing. Banned callers get 403 with no Slack, no Groq, no LML; everyone else proceeds. See `services/ban_check_client.py` and [`docs/env-vars.md`](env-vars.md) for the full flow + flag.
+2. **Parse**: Groq AI (`llama-3.1-8b-instant`) extracts artist/song/album from message
+3. **Early return**: Non-request messages (feedback, DJ messages) are posted to Slack without search
+4. **Delegate**: Search is delegated to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) via HTTP (`LOOKUP_SERVICE_URL`).
+5. **Slack**: Post enriched results with artwork to Slack
 
 ## Degraded Modes
 Slack is the only hard dependency. When Groq or LML are unavailable the listener's message still reaches Slack, with a context line explaining what's missing. The response is `200` with a `degraded_mode` field:
 
 - **`parsing_unavailable`** — Groq failed (rate limit, timeout, parse error, etc.). The raw listener message is posted to Slack with a `_Parsing unavailable_` context line. No classification, no search.
 - **`search_unavailable`** — LML is down or `LOOKUP_SERVICE_URL` is unset. The parsed message is posted to Slack with a `_Search unavailable_` context line containing any artist/song/album fields Groq extracted. Empty `library_results`.
+- **`ban_check_unavailable`** — BS `/auth/check-request-ban` was unreachable. The request still proceeds (fail-open is the correct posture for an authz feature; a BS outage must not break listener requests). Emitted only when no more severe degraded mode is active; the independent `ban_check_degraded` PostHog property is always set so operators see both signals together.
 
 If Slack itself fails the endpoint returns `502` — there is no further fallback. PostHog events for degraded requests carry `degraded_mode` and `degraded_reason` (the exception class name) so outages are visible in telemetry.
 
@@ -22,6 +24,7 @@ If Slack itself fails the endpoint returns `502` — there is no further fallbac
 - `routers/health.py` - Health check endpoints: `GET /health` (shallow liveness probe, no external calls) and `GET /health/ready` (deep readiness check: groq, lookup, slack services). Railway's `healthcheckPath` uses `/health` so the container becomes routable immediately on boot.
 - `services/parser.py` - Groq AI message parsing
 - `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
+- `services/ban_check_client.py` - HTTP client for Backend-Service `POST /auth/check-request-ban` (BS#1261). Fails open (raises `BanCheckUnavailableError`) on network errors, timeouts, or 5xx; treats BS 401/404 as proceed-as-unauth so the caller is never 401'd on `POST /request`.
 - `services/slack.py` - Slack message formatting and posting
 - `core/dependencies.py` - FastAPI dependency injection (HTTP client, Groq, Slack, PostHog). Sentry, telemetry, cache stats, and PostHog client construction live in [`wxyc-fastapi`](https://github.com/WXYC/wxyc-fastapi); `core/dependencies.get_posthog_client` only wraps the shared singleton with the rom-side `enable_telemetry` flag.
 - `core/groq_tracing.py` - Sentry instrumentation for Groq parse calls: a `groq_parse_span` context manager wrapping `services.parser.parse_request` (op `ai.parse`, tagged with model, input length, token counts, and parse-result fields), and an `install_groq_retry_breadcrumbs()` filter on the `groq._base_client` logger that converts the SDK's silent 429-retry log lines into structured `groq.retry` breadcrumbs. Installed once from `main.py` after `init_sentry`.

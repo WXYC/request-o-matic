@@ -77,8 +77,29 @@ class Settings(BaseSettings):
         None,
         description=(
             "Shared secret forwarded as X-Internal-Key on calls to BS internal "
-            "endpoints (BS#1261 ROM_INTERNAL_KEY). Shared with the request-time "
-            "ban-check client (#150)."
+            "endpoints (BS#1261 ROM_INTERNAL_KEY). Used by /admin/bans (#151); "
+            "the public /auth/check-request-ban handler does NOT consume this."
+        ),
+    )
+
+    # Request-line ban enforcement (WXYC/request-o-matic#150 + WXYC/Backend-Service#1261).
+    # When enforce_request_bans is True and the caller supplies Authorization
+    # and/or X-Device-Fingerprint, ROM consults BS's /auth/check-request-ban
+    # endpoint and blocks 403 if BS says banned. See docs/architecture.md for
+    # the full flow.
+    bs_check_request_ban_url: str | None = Field(
+        None,
+        description=(
+            "Full URL of Backend-Service's POST /auth/check-request-ban endpoint "
+            "(apps/auth service, port 8082). When unset, the ban check is disabled "
+            "regardless of enforce_request_bans."
+        ),
+    )
+    enforce_request_bans: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for request-line ban enforcement. Default False so the "
+            "code can deploy before iOS 3.2 reaches App Store rollout."
         ),
     )
 

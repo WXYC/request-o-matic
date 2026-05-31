@@ -1,16 +1,20 @@
 """Request handling router that delegates search to library-metadata-lookup service.
 
 Flow:
-1. Parse the message using Groq AI to extract artist/song/album
-2. Early return for non-requests (feedback, DJ messages, etc.)
-3. Delegate search to library-metadata-lookup service via HTTP
-4. Post enriched results to Slack
+1. (Optional) Consult BS /auth/check-request-ban to enforce request-line bans.
+2. Parse the message using Groq AI to extract artist/song/album
+3. Early return for non-requests (feedback, DJ messages, etc.)
+4. Delegate search to library-metadata-lookup service via HTTP
+5. Post enriched results to Slack
 
 Degraded modes:
 - "parsing_unavailable": Groq parsing failed. Slack receives the raw listener
   message with a "_Parsing unavailable_" note. No classification, no search.
 - "search_unavailable": LML is down or unconfigured. Slack receives the parsed
   metadata with a "_Search unavailable_" note. No library results.
+- "ban_check_unavailable": BS /auth/check-request-ban was unreachable. The
+  request still proceeds (fail-open) but the telemetry property is set so
+  operators can see the outage in PostHog.
 
 Slack remains the only hard dependency: if it fails, the endpoint returns 502.
 """
@@ -21,13 +25,15 @@ import logging
 from typing import TYPE_CHECKING
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+import sentry_sdk
+from fastapi import APIRouter, Depends, Header, HTTPException
 from groq import AsyncGroq
 from pydantic import BaseModel
 from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
 
 from core.dependencies import (
     SlackService,
+    get_ban_check_client,
     get_groq_client,
     get_lookup_client,
     get_posthog_client,
@@ -37,6 +43,7 @@ from core.dependencies import (
 if TYPE_CHECKING:
     from posthog import Posthog
 from models import LibraryItem, ReleaseMetadata
+from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks
@@ -54,6 +61,7 @@ MESSAGE_TYPE_LABELS = {
 
 DEGRADED_PARSING = "parsing_unavailable"
 DEGRADED_SEARCH = "search_unavailable"
+DEGRADED_BAN_CHECK = "ban_check_unavailable"
 
 _LML_TRANSIENT_ERRORS = (
     httpx.HTTPStatusError,
@@ -193,6 +201,7 @@ async def _post_degraded_to_slack(
     responses={
         200: {"description": "Request processed (possibly via a degraded fallback)"},
         400: {"description": "Invalid request (empty message)"},
+        403: {"description": "Caller is banned from the request line"},
         502: {"description": "Slack unavailable"},
     },
 )
@@ -202,6 +211,9 @@ async def handle_request(
     slack_service: SlackService | None = Depends(get_slack_service),
     posthog_client: Posthog | None = Depends(get_posthog_client),
     lookup_client: LookupServiceClient | None = Depends(get_lookup_client),
+    ban_check_client: BanCheckClient | None = Depends(get_ban_check_client),
+    authorization: str | None = Header(default=None),
+    x_device_fingerprint: str | None = Header(default=None),
 ):
     """Parse a request, search the library, and post to Slack.
 
@@ -217,6 +229,54 @@ async def handle_request(
         distinct_id="request-o-matic-service",
         event_prefix="request",
     )
+
+    # Request-line ban enforcement (WXYC/request-o-matic#150 + BS#1261).
+    # Runs BEFORE parse so an abusive listener does not consume Groq TPM or
+    # LML cache budget. The check is fully skipped when:
+    #   - the feature flag is off (ban_check_client is None), OR
+    #   - the caller supplies neither Authorization nor X-Device-Fingerprint
+    #     (matches v3.1 iOS clients in production — BS would 400 no_signal).
+    # The BS endpoint is public; we do NOT forward X-Internal-Key here.
+    ban_check_degraded = False
+    if ban_check_client is not None and (authorization or x_device_fingerprint):
+        try:
+            ban_result = await ban_check_client.check(
+                authorization=authorization,
+                fingerprint=x_device_fingerprint,
+            )
+        except BanCheckUnavailableError as exc:
+            # Fail open: log a Sentry breadcrumb so the outage is visible in
+            # the distributed trace, and let the request proceed. The
+            # degraded_mode flag rides on the final telemetry event.
+            logger.warning("Ban check unavailable (%s); proceeding with request", exc)
+            sentry_sdk.add_breadcrumb(
+                category="ban_check",
+                level="warning",
+                message="BS /auth/check-request-ban unavailable; failing open",
+                data={"error": str(exc)},
+            )
+            ban_check_degraded = True
+        else:
+            if ban_result.banned:
+                # Shadow-ban semantics: no Slack, no Groq, no LML. iOS v3.2
+                # silently swallows 403 so the listener sees nothing.
+                if posthog_client is not None:
+                    posthog_client.capture(
+                        distinct_id="request-o-matic-service",
+                        event="request_blocked",
+                        properties={
+                            "user_id": ban_result.user_id,
+                            "fingerprint": ban_result.fingerprint,
+                            "ban_reason": ban_result.ban_reason,
+                            "ban_source": ban_result.ban_source,
+                        },
+                    )
+                logger.info(
+                    "Blocked request from banned caller (source=%s, user_id=%s)",
+                    ban_result.ban_source,
+                    ban_result.user_id,
+                )
+                raise HTTPException(status_code=403, detail="Request blocked")
 
     try:
         with telemetry.track_step("parse"):
@@ -242,19 +302,22 @@ async def handle_request(
                 note="Parsing unavailable",
             )
         if posthog_client:
+            parse_props: dict = {
+                "results_count": 0,
+                "search_type": "none",
+                "had_artist": False,
+                "had_album": False,
+                "had_song": False,
+                "is_request": None,
+                "message_type": None,
+                "degraded_mode": DEGRADED_PARSING,
+                "degraded_reason": type(e).__name__,
+            }
+            if ban_check_degraded:
+                parse_props["ban_check_degraded"] = True
             telemetry.send_to_posthog(
                 posthog_client,
-                {
-                    "results_count": 0,
-                    "search_type": "none",
-                    "had_artist": False,
-                    "had_album": False,
-                    "had_song": False,
-                    "is_request": None,
-                    "message_type": None,
-                    "degraded_mode": DEGRADED_PARSING,
-                    "degraded_reason": type(e).__name__,
-                },
+                parse_props,
             )
         return UnifiedResponse(
             parsed=None,
@@ -345,8 +408,13 @@ async def handle_request(
         next((art for _, art in items_with_artwork if art), None) if items_with_artwork else None
     )
 
-    # Send telemetry
+    # Send telemetry. degraded_mode priority: search > ban_check. Search is
+    # more user-visible (no library results) so it wins on the single field;
+    # ban_check_degraded rides on its own dedicated property so operators can
+    # see both signals in PostHog.
     degraded_mode = DEGRADED_SEARCH if lookup_failure is not None else None
+    if degraded_mode is None and ban_check_degraded:
+        degraded_mode = DEGRADED_BAN_CHECK
     if posthog_client:
         properties: dict = {
             "results_count": len(library_results),
@@ -359,7 +427,12 @@ async def handle_request(
         }
         if degraded_mode:
             properties["degraded_mode"] = degraded_mode
-            properties["degraded_reason"] = type(lookup_failure).__name__
+            if lookup_failure is not None:
+                properties["degraded_reason"] = type(lookup_failure).__name__
+        if ban_check_degraded:
+            # Always emit the ban_check signal independently so it surfaces
+            # even when a more severe degraded_mode (search) is also set.
+            properties["ban_check_degraded"] = True
         telemetry.send_to_posthog(posthog_client, properties)
 
     return UnifiedResponse(
