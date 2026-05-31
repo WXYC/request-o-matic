@@ -55,9 +55,12 @@ async def ban(
         The upserted row as a dict: ``fingerprint``, ``banned_at``,
         ``ban_reason``, ``ban_expires_at``, ``banned_by_user_id``.
     """
+    # Fingerprint is a stable per-device identifier (iOS-Keychain UUID).
+    # Log only the first 8 chars so Railway/Sentry log retention doesn't act as
+    # a deanon vector for anyone with log access.
     logger.info(
-        "ban_service.ban fingerprint=%s reason_len=%d actor=%s expires_in=%s",
-        fingerprint,
+        "ban_service.ban fingerprint=%s... reason_len=%d actor=%s expires_in=%s",
+        fingerprint[:8],
         len(reason),
         actor or "<none>",
         expires_in_seconds,
@@ -83,9 +86,10 @@ async def unban(
     trail it goes in the BS-side route as a separate column; rom should not
     invent local audit state.)
     """
+    # See ban() above for the rationale on truncating the fingerprint.
     logger.info(
-        "ban_service.unban fingerprint=%s actor=%s",
-        fingerprint,
+        "ban_service.unban fingerprint=%s... actor=%s",
+        fingerprint[:8],
         actor or "<none>",
     )
     await client.unban(fingerprint=fingerprint)

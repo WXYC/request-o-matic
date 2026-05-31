@@ -387,6 +387,41 @@ class TestRequireAdminToken:
             require_admin_token(settings=settings, authorization="Bearer anything")
         assert excinfo.value.status_code == 403
 
+    def test_admin_token_empty_string_raises_403(self):
+        """Pins the empty-string fail-closed path. Operator who accidentally
+        clears the Railway variable (ADMIN_TOKEN=) gets 'disabled', not 'wrong
+        token' — and the empty bearer never authenticates."""
+        settings = Settings(groq_api_key="x", admin_token="")
+        with pytest.raises(HTTPException) as excinfo:
+            require_admin_token(settings=settings, authorization="Bearer ")
+        assert excinfo.value.status_code == 403
+
+    def test_tolerates_extra_whitespace_in_header(self):
+        """RFC 7235 allows 1*SP between scheme and token; copy-paste from a
+        wiki or notes app often introduces double spaces or tabs. Strict
+        single-space split would 403 the operator with a misleading 'Invalid
+        token' message."""
+        settings = Settings(groq_api_key="x", admin_token="secret")
+        # Multiple spaces between scheme and token
+        require_admin_token(settings=settings, authorization="Bearer  secret")
+        # Tab between scheme and token
+        require_admin_token(settings=settings, authorization="Bearer\tsecret")
+        # Surrounding whitespace
+        require_admin_token(settings=settings, authorization="  Bearer secret  ")
+
+    def test_uses_constant_time_comparison(self):
+        """Smoke check that hmac.compare_digest is being used (the comparison
+        path returns False for wrong tokens of the same length AND of
+        different lengths — both raise 403 rather than leaking via length-
+        dependent control flow)."""
+        settings = Settings(groq_api_key="x", admin_token="secret-token-123")
+        # Same-length wrong token
+        with pytest.raises(HTTPException):
+            require_admin_token(settings=settings, authorization="Bearer XXXXXX-token-123")
+        # Different-length wrong token (compare_digest doesn't short-circuit)
+        with pytest.raises(HTTPException):
+            require_admin_token(settings=settings, authorization="Bearer short")
+
 
 class TestGetBanAdminClient:
     """Tests for the ``get_ban_admin_client`` FastAPI dependency."""

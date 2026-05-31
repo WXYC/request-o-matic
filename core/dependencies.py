@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import TYPE_CHECKING
 
@@ -207,8 +208,15 @@ def require_admin_token(
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing authorization")
 
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer" or parts[1] != settings.admin_token:
+    parts = authorization.strip().split(None, 1)
+    # Encode to bytes so non-ASCII bearer values (which CPython's
+    # hmac.compare_digest rejects with TypeError on str) compare safely
+    # rather than escaping as an unhandled 500.
+    if (
+        len(parts) != 2
+        or parts[0].lower() != "bearer"
+        or not hmac.compare_digest(parts[1].encode("utf-8"), settings.admin_token.encode("utf-8"))
+    ):
         raise HTTPException(status_code=403, detail="Invalid token")
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -29,7 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 class BanAdminClientError(Exception):
-    """Raised when BS rejects an admin call with a 4xx/5xx response.
+    """Raised when BS rejects an admin call with a 4xx/5xx response, OR when
+    the rom->BS hop fails at the transport layer (DNS, TLS, connect-refused,
+    socket timeout).
+
+    Transport-layer failures are reported with ``status_code=0`` so the router
+    can render them as 502 (upstream unreachable) rather than letting the raw
+    httpx exception escape as 500.
 
     Carries the upstream status code and (best-effort decoded) body so the
     router can surface a faithful status code to the operator instead of
@@ -79,6 +86,23 @@ class BanAdminClient:
         except ValueError:
             return response.text
 
+    @staticmethod
+    def _safe_json(response: httpx.Response) -> Any:
+        """Decode a 2xx body, raising BanAdminClientError if it isn't JSON.
+
+        BS contract is JSON-on-success, but a reverse proxy or content-type
+        drift could return a 200 with HTML/text. Without this guard the bare
+        ``response.json()`` would raise ``json.JSONDecodeError`` and escape
+        the router's ``except BanAdminClientError`` as an unhandled 500.
+        """
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise BanAdminClientError(
+                response.status_code,
+                {"error": "non_json_upstream_body", "text": response.text[:200]},
+            ) from exc
+
     async def ban(
         self,
         *,
@@ -100,27 +124,42 @@ class BanAdminClient:
         if banned_by_user_id is not None:
             payload["bannedByUserId"] = banned_by_user_id
 
-        response = await self.http_client.post(
-            self.base_url,
-            json=payload,
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        if response.status_code != 200:
+        try:
+            response = await self.http_client.post(
+                self.base_url,
+                json=payload,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise BanAdminClientError(
+                0, {"error": "upstream_unreachable", "detail": str(exc)}
+            ) from exc
+        if not 200 <= response.status_code < 300:
             raise BanAdminClientError(response.status_code, self._decode_body(response))
-        return response.json()  # type: ignore[no-any-return]
+        return self._safe_json(response)  # type: ignore[no-any-return]
 
     async def unban(self, *, fingerprint: str) -> None:
         """Delete a ban. Idempotent — succeeds whether or not the row existed.
 
         Returns None. Raises :class:`BanAdminClientError` for any non-204
         response (including 400 for a malformed fingerprint).
+
+        ``fingerprint`` is URL-quoted so a caller that bypasses the FastAPI
+        path-param validator (e.g. the future Slack-native router #152
+        consuming an interaction payload) cannot inject ``?``/``#``/``/`` into
+        the BS request path.
         """
-        response = await self.http_client.delete(
-            f"{self.base_url}/{fingerprint}",
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
+        try:
+            response = await self.http_client.delete(
+                f"{self.base_url}/{quote(fingerprint, safe='')}",
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise BanAdminClientError(
+                0, {"error": "upstream_unreachable", "detail": str(exc)}
+            ) from exc
         if response.status_code != 204:
             raise BanAdminClientError(response.status_code, self._decode_body(response))
 
@@ -141,12 +180,17 @@ class BanAdminClient:
         if cursor is not None:
             params["cursor"] = cursor
 
-        response = await self.http_client.get(
-            self.base_url,
-            params=params,
-            headers=self._headers(),
-            timeout=self.timeout,
-        )
-        if response.status_code != 200:
+        try:
+            response = await self.http_client.get(
+                self.base_url,
+                params=params,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise BanAdminClientError(
+                0, {"error": "upstream_unreachable", "detail": str(exc)}
+            ) from exc
+        if not 200 <= response.status_code < 300:
             raise BanAdminClientError(response.status_code, self._decode_body(response))
-        return response.json()  # type: ignore[no-any-return]
+        return self._safe_json(response)  # type: ignore[no-any-return]

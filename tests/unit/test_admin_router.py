@@ -312,15 +312,30 @@ class TestDeleteBan:
         assert resp.status_code == 204
 
     @pytest.mark.asyncio
-    async def test_upstream_400_forwarded(self):
+    async def test_non_uuid_path_returns_422_before_hitting_bs(self):
+        """The path-param UUID validator short-circuits malformed input."""
         client = _mock_client()
-        client.unban = AsyncMock(
-            side_effect=BanAdminClientError(400, {"error": "fingerprint must be a valid UUID"})
-        )
         app = _build_app(client=client)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.delete("/admin/bans/not-a-uuid", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 422
+        client.unban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_upstream_400_forwarded(self):
+        """A BS 400 (the only non-UUID path that survives 422 short-circuit
+        is a valid UUID that BS rejects for some other reason, e.g. a
+        constraint violation) forwards as 400."""
+        client = _mock_client()
+        client.unban = AsyncMock(
+            side_effect=BanAdminClientError(400, {"error": "some bs validation failure"})
+        )
+        app = _build_app(client=client)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.delete(f"/admin/bans/{SAMPLE_FP}", headers=AUTH_HEADERS)
 
         assert resp.status_code == 400
 
@@ -414,3 +429,134 @@ class TestUpstreamMisconfig:
             resp = await c.get("/admin/bans", headers=AUTH_HEADERS)
 
         assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Local validation — Pydantic body model rejects bad shapes before BS round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestBodyValidation:
+    """Verifies that BanCreateRequest rejects bad shapes locally rather than
+    forwarding the operator typo to BS and surfacing a nested 400.
+    """
+
+    @pytest.mark.asyncio
+    async def test_non_uuid_fingerprint_returns_422(self):
+        client = _mock_client()
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": "not-a-uuid", "reason": "spam"},
+            )
+        assert resp.status_code == 422
+        client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_reason_returns_422(self):
+        client = _mock_client()
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": SAMPLE_FP, "reason": ""},
+            )
+        assert resp.status_code == 422
+        client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reason_over_1000_chars_returns_422(self):
+        client = _mock_client()
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": SAMPLE_FP, "reason": "x" * 1001},
+            )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", [0, -1, -3600])
+    async def test_expires_in_seconds_must_be_positive(self, bad):
+        client = _mock_client()
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": SAMPLE_FP, "reason": "spam", "expires_in_seconds": bad},
+            )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_extra_field_rejected_as_422(self):
+        """Operator typo like ``banned_by_user_id`` (which the HTTP route
+        deliberately doesn't honor — see router docstring) surfaces as 422
+        instead of silently dropping the field."""
+        client = _mock_client()
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={
+                    "fingerprint": SAMPLE_FP,
+                    "reason": "spam",
+                    "banned_by_user_id": "jake",
+                },
+            )
+        assert resp.status_code == 422
+        client.ban.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Upstream-fault status remapping — BS 401/403/429 are rom->BS hop concerns
+# that mustn't conflate with the operator->rom request's auth/rate state.
+# ---------------------------------------------------------------------------
+
+
+class TestUpstreamFaultRemap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bs_status", [401, 403, 429])
+    async def test_bs_upstream_fault_4xx_remaps_to_502(self, bs_status):
+        """BS 401 (X-Internal-Key drift), 403 (BS perm), 429 (rom->BS rate-
+        limit at BS) all become 502 — they describe an upstream problem, not
+        an operator request problem. Forwarding them verbatim would mislead
+        the operator (e.g. 401 reads as 'your ADMIN_TOKEN is wrong')."""
+        client = _mock_client()
+        client.ban = AsyncMock(
+            side_effect=BanAdminClientError(bs_status, {"error": "upstream said no"})
+        )
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": SAMPLE_FP, "reason": "spam"},
+            )
+        assert resp.status_code == 502
+        assert resp.json()["detail"]["upstream_status"] == bs_status
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_remaps_to_502(self):
+        """BanAdminClient wraps httpx.HTTPError as BanAdminClientError(0, ...);
+        the router renders that as 502 (upstream unreachable)."""
+        client = _mock_client()
+        client.ban = AsyncMock(
+            side_effect=BanAdminClientError(
+                0, {"error": "upstream_unreachable", "detail": "conn refused"}
+            )
+        )
+        app = _build_app(client=client)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/bans",
+                headers=AUTH_HEADERS,
+                json={"fingerprint": SAMPLE_FP, "reason": "spam"},
+            )
+        assert resp.status_code == 502
+        assert resp.json()["detail"]["upstream_body"]["error"] == "upstream_unreachable"

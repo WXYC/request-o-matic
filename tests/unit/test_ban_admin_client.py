@@ -300,3 +300,105 @@ class TestRealHttpxResponse:
             result = await _client(http).ban(fingerprint=SAMPLE_FP, reason="spam")
 
         assert result == body
+
+
+class TestTransportFailure:
+    """Network/transport errors wrap as BanAdminClientError(status_code=0).
+
+    Without this guard, httpx.HTTPError would escape the router's
+    ``except BanAdminClientError`` and surface as an unhandled 500 — even
+    though the docstring on _map_upstream_error and the route's responses=
+    table both promise 502 for upstream failures.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            httpx.ConnectError("conn refused"),
+            httpx.ReadTimeout("read timeout"),
+            httpx.ConnectTimeout("connect timeout"),
+            httpx.RemoteProtocolError("bad upstream"),
+        ],
+    )
+    async def test_ban_transport_error_wraps_as_status_zero(self, exc):
+        http = AsyncMock()
+        http.post = AsyncMock(side_effect=exc)
+        with pytest.raises(BanAdminClientError) as excinfo:
+            await _client(http).ban(fingerprint=SAMPLE_FP, reason="spam")
+        assert excinfo.value.status_code == 0
+        assert excinfo.value.body["error"] == "upstream_unreachable"
+
+    @pytest.mark.asyncio
+    async def test_unban_transport_error_wraps_as_status_zero(self):
+        http = AsyncMock()
+        http.delete = AsyncMock(side_effect=httpx.ConnectError("conn refused"))
+        with pytest.raises(BanAdminClientError) as excinfo:
+            await _client(http).unban(fingerprint=SAMPLE_FP)
+        assert excinfo.value.status_code == 0
+
+    @pytest.mark.asyncio
+    async def test_list_bans_transport_error_wraps_as_status_zero(self):
+        http = AsyncMock()
+        http.get = AsyncMock(side_effect=httpx.ReadTimeout("slow"))
+        with pytest.raises(BanAdminClientError) as excinfo:
+            await _client(http).list_bans()
+        assert excinfo.value.status_code == 0
+
+
+class TestNonJsonSuccess:
+    """A 200 with non-JSON body (HTML from a reverse proxy, content-type drift,
+    truncation) should NOT escape as an uncaught json.JSONDecodeError. Wrap
+    it as BanAdminClientError so the router renders 502 via the existing
+    upstream-error path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ban_non_json_2xx_raises_ban_admin_client_error(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"<html>not json</html>")
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http:
+            with pytest.raises(BanAdminClientError) as excinfo:
+                await _client(http).ban(fingerprint=SAMPLE_FP, reason="spam")
+        assert excinfo.value.status_code == 200
+        assert excinfo.value.body["error"] == "non_json_upstream_body"
+
+    @pytest.mark.asyncio
+    async def test_list_bans_non_json_2xx_raises_ban_admin_client_error(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"<html>not json</html>")
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http:
+            with pytest.raises(BanAdminClientError) as excinfo:
+                await _client(http).list_bans()
+        assert excinfo.value.status_code == 200
+
+
+class TestUnbanUrlQuoting:
+    """unban() must URL-quote the fingerprint so a non-FastAPI caller (e.g.
+    the future Slack-native router #152) can't inject path/query/fragment
+    characters into the BS request URL.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unban_quotes_special_chars_in_path(self):
+        seen_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_urls.append(str(request.url))
+            return httpx.Response(204)
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http:
+            # Caller-supplied value that would otherwise create a query string
+            # rather than a path component.
+            await _client(http).unban(fingerprint="aa?bb#cc")
+        assert len(seen_urls) == 1
+        # The '?' and '#' must be percent-encoded into the path; no query or
+        # fragment may appear on the resulting URL.
+        assert "?" not in seen_urls[0]
+        assert "#" not in seen_urls[0]
+        assert "aa%3Fbb%23cc" in seen_urls[0]
