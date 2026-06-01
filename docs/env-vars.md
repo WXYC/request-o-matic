@@ -24,3 +24,13 @@ Request-line ban enforcement ([WXYC/request-o-matic#150](https://github.com/WXYC
 - `BS_CHECK_REQUEST_BAN_URL` - Full URL of Backend-Service's `POST /auth/check-request-ban` endpoint (apps/auth service, port 8082), e.g. `https://wxyc-auth-staging.up.railway.app/auth/check-request-ban`. When unset, the ban check is disabled regardless of `ENFORCE_REQUEST_BANS`.
 
 Flow when enforcement is on and the caller supplies `Authorization: Bearer <jwt>` and/or `X-Device-Fingerprint: <uuid>`: ROM POSTs both headers to `BS_CHECK_REQUEST_BAN_URL` before parse. `banned: true` short-circuits to 403 (no Slack, no Groq, no LML) and emits a `request_blocked` PostHog event with `user_id`, `fingerprint`, `ban_reason`, `ban_source`. `banned: false` proceeds. BS 401 (invalid JWT) and 404 (user not found) proceed-as-unauth — the caller MUST NOT see a 401 on `POST /request`, since v3.1 iOS clients send no Authorization header. When BS is unreachable, ROM fails open: log a Sentry breadcrumb, emit `degraded_mode=ban_check_unavailable` telemetry, proceed.
+
+User-Agent gate ([WXYC/request-o-matic#155](https://github.com/WXYC/request-o-matic/issues/155)):
+- `STRICT_FINGERPRINT_FOR_KNOWN_CLIENTS` - Feature flag for the User-Agent gate. Default `false`. When `true`, requests whose `User-Agent` identifies a registered WXYC client at-or-above its strict-mode version (currently `WXYC-iOS >= 3.2`) are rejected `403` if `X-Device-Fingerprint` is absent. Unknown UAs (curl, browsers, v3.1 iOS, anything not registered in `services/ua_gate.py`) are unaffected — the existing lenient contract still holds. The gate is independent of `ENFORCE_REQUEST_BANS`: it's a structural check on the request shape from known clients, not a ban decision. Rejection emits a `request_blocked` PostHog event with `ban_source='rom_strict_mode'`, `ban_reason='ua_gate_missing_fingerprint'`, and the received `user_agent`.
+
+Operator flip sequence (after iOS 3.2 ships):
+1. Deploy ROM with the gate code (default-off).
+2. Verify iOS 3.2 fingerprint pipeline against staging.
+3. Wait for App Store rollout to reach ~90% (App Store Connect → Analytics → App Versions).
+4. Flip `STRICT_FINGERPRINT_FOR_KNOWN_CLIENTS=true` on staging, watch PostHog for `request_blocked` events keyed on `ban_source='rom_strict_mode'`. Spikes here indicate either a 3.2 fingerprint regression or active evasion attempts; a slow trickle is expected.
+5. Flip on production. Rollback recipe: set the var to `false` and restart; legitimate traffic recovers within one restart cycle.
