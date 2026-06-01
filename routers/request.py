@@ -31,6 +31,7 @@ from groq import AsyncGroq
 from pydantic import BaseModel
 from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
 
+from config.settings import Settings, get_settings
 from core.dependencies import (
     SlackService,
     get_ban_check_client,
@@ -47,6 +48,11 @@ from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks
+from services.ua_gate import (
+    UA_GATE_BAN_REASON,
+    UA_GATE_BAN_SOURCE,
+    is_known_strict_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +218,10 @@ async def handle_request(
     posthog_client: Posthog | None = Depends(get_posthog_client),
     lookup_client: LookupServiceClient | None = Depends(get_lookup_client),
     ban_check_client: BanCheckClient | None = Depends(get_ban_check_client),
+    settings: Settings = Depends(get_settings),
     authorization: str | None = Header(default=None),
     x_device_fingerprint: str | None = Header(default=None),
+    user_agent: str | None = Header(default=None),
 ):
     """Parse a request, search the library, and post to Slack.
 
@@ -229,6 +237,40 @@ async def handle_request(
         distinct_id="request-o-matic-service",
         event_prefix="request",
     )
+
+    # User-Agent gate (WXYC/request-o-matic#155). Runs BEFORE the BS ban check
+    # so a known-client request missing its fingerprint is rejected without an
+    # extra BS round-trip. Unknown UAs (v3.1 iOS, browsers, curl, anything not
+    # in the registry) keep the existing lenient behavior — see services/ua_gate.py.
+    # The gate is independent of ENFORCE_REQUEST_BANS: it's a structural check
+    # on the request shape from known clients, not a ban decision.
+    if (
+        settings.strict_fingerprint_for_known_clients
+        and not x_device_fingerprint
+        and is_known_strict_client(user_agent)
+    ):
+        if posthog_client is not None:
+            # Wrap PostHog capture in the same try/except as the BS-ban path
+            # below — a PostHog outage must not flip the response away from 403.
+            try:
+                posthog_client.capture(
+                    distinct_id="request-o-matic-service",
+                    event="request_blocked",
+                    properties={
+                        "user_id": None,
+                        "fingerprint": None,
+                        "ban_reason": UA_GATE_BAN_REASON,
+                        "ban_source": UA_GATE_BAN_SOURCE,
+                        "user_agent": user_agent,
+                    },
+                )
+            except Exception:
+                logger.exception("PostHog request_blocked capture failed (ua_gate)")
+        logger.info(
+            "Blocked known-client request missing X-Device-Fingerprint (user_agent=%s)",
+            user_agent,
+        )
+        raise HTTPException(status_code=403, detail="Request blocked")
 
     # Request-line ban enforcement (WXYC/request-o-matic#150 + BS#1261).
     # Runs BEFORE parse so an abusive listener does not consume Groq TPM or

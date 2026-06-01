@@ -103,6 +103,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    # User-Agent gate for known-client strict mode (WXYC/request-o-matic#155).
+    # When True, requests whose User-Agent identifies a registered WXYC client
+    # at-or-above its strict-mode version (currently WXYC-iOS >= 3.2) are
+    # rejected 403 if X-Device-Fingerprint is absent. Unknown UAs (curl,
+    # browsers, v3.1 iOS, etc.) are unaffected. Independent of
+    # enforce_request_bans: this gate is a structural requirement on known
+    # clients, not a ban decision.
+    strict_fingerprint_for_known_clients: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the User-Agent gate (WXYC/request-o-matic#155). "
+            "When True, known WXYC clients (iOS >= 3.2) must send "
+            "X-Device-Fingerprint or the request is rejected 403."
+        ),
+    )
+
     # Application Metadata
     app_name: str = Field(default="Request-O-Matic", description="Application name")
     app_version: str = Field(default="1.0.0", description="Application version")
