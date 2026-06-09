@@ -343,22 +343,18 @@ class TestLookupRetry:
         assert isinstance(response, LookupResponse)
 
     @pytest.mark.asyncio
-    async def test_retry_on_timeout_then_success(self):
-        """First call raises ReadTimeout, second succeeds."""
+    async def test_no_retry_on_timeout(self):
+        """ReadTimeout raises immediately; retrying a slow lookup just doubles LML load."""
         calls = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
             calls.append(1)
-            if len(calls) == 1:
-                raise httpx.ReadTimeout("Read timed out")
-            return httpx.Response(200, json=SAMPLE_RESPONSE)
+            raise httpx.ReadTimeout("Read timed out")
 
         client = _make_client(handler)
-        response = await client.lookup(
-            LookupRequest(artist="Cat Power", raw_message="play cat power")
-        )
-        assert len(calls) == 2
-        assert isinstance(response, LookupResponse)
+        with pytest.raises(httpx.ReadTimeout):
+            await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
+        assert len(calls) == 1
 
     @pytest.mark.asyncio
     async def test_retry_exhausted_connect_error(self):
@@ -372,20 +368,6 @@ class TestLookupRetry:
         client = _make_client(handler)
         with pytest.raises(httpx.ConnectError):
             await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
-        assert len(calls) == 2
-
-    @pytest.mark.asyncio
-    async def test_retry_exhausted_timeout(self):
-        """Both calls raise ReadTimeout. Exception propagates."""
-        calls = []
-
-        async def handler(request: httpx.Request) -> httpx.Response:
-            calls.append(1)
-            raise httpx.ReadTimeout("Read timed out")
-
-        client = _make_client(handler)
-        with pytest.raises(httpx.ReadTimeout):
-            await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
         assert len(calls) == 2
 
     @pytest.mark.asyncio

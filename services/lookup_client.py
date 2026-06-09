@@ -26,7 +26,12 @@ class LookupServiceClient:
         per_attempt_timeout: Per-attempt timeout in seconds (overrides the client default)
     """
 
-    _RETRYABLE = (httpx.ConnectError, httpx.TimeoutException)
+    # Only retry transient connection-establishment failures. TimeoutException
+    # is deliberately excluded: a lookup that already spent the per-attempt
+    # budget is doing real work on LML's side and won't be faster on retry,
+    # while the concurrent duplicate doubles LML's Discogs/Apple Music load
+    # because LML cannot cancel work when the rom socket disconnects.
+    _RETRYABLE = (httpx.ConnectError,)
 
     def __init__(
         self,
@@ -36,7 +41,7 @@ class LookupServiceClient:
         api_key: str | None = None,
         max_attempts: int = 2,
         retry_delay: float = 1.0,
-        per_attempt_timeout: float = 10.0,
+        per_attempt_timeout: float = 20.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
@@ -51,8 +56,8 @@ class LookupServiceClient:
     async def lookup(self, request: LookupRequest, skip_cache: bool = False) -> LookupResponse:
         """Call the lookup service and return parsed response.
 
-        Retries on transient network errors (``ConnectError``, ``TimeoutException``).
-        HTTP status errors are raised immediately without retry.
+        Retries on ``ConnectError`` only. ``TimeoutException`` and HTTP status
+        errors are raised immediately without retry.
 
         Args:
             request: Lookup request with artist/song/album/raw_message
@@ -64,7 +69,7 @@ class LookupServiceClient:
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx responses (no retry)
             httpx.ConnectError: If the service is unreachable after all attempts
-            httpx.TimeoutException: If the request times out after all attempts
+            httpx.TimeoutException: If the request times out (no retry)
         """
         params = {"skip_cache": "true"} if skip_cache else {}
         last_exc: Exception | None = None
