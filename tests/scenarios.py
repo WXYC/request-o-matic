@@ -352,20 +352,29 @@ TODAY_JEFFERSON_AIRPLANE = _register(
 # ---------------------------------------------------------------------------
 # Album pre-pass corpus (services.parser.extract_album_prefix)
 # ---------------------------------------------------------------------------
-# Shared INPUTS for the deterministic album pre-pass, consumed by BOTH layers:
-#   * unit  -- tests/unit/test_album_extraction.py asserts the regex extracts
-#              `expected_album` and returns `expected_stripped` (positives), or
-#              declines (negatives).
-#   * E2E   -- tests/integration/test_integration.py runs parse_request against
-#              real Groq and asserts the overlay populates album==`expected_album`
-#              (positives), or that `forbidden_album` never lands in the album
-#              slot (negatives with an idiom/greeting tail).
+# Shared INPUTS for the deterministic album pre-pass. Coverage is asymmetric by
+# design: the pre-pass is deterministic and `parse_request` *forces* the
+# extracted album over Groq's (services/parser.py), so real-Groq E2E can only
+# smoke the wiring -- it cannot verify behaviour the LLM does not influence.
 #
-# Because both suites parametrise this single list, a new preposition branch is
-# covered in both layers the moment a case is added here. The guard tests in
-# test_album_extraction.py assert every entry of
-# services.parser.SUPPORTED_ALBUM_PREPOSITIONS has a positive case, so a branch
-# cannot be added to the parser without a shared (hence E2E) case.
+#   * Positives (`expected_album` set): the pre-pass must fire.
+#       - unit (test_album_extraction.py): asserts the regex returns
+#         `expected_album` and `expected_stripped`. This is the real verification.
+#       - E2E (test_integration.py): one representative case per *new* preposition
+#         (from/off/off of) smokes the live parse_request path. The deterministic
+#         overlay wiring is already covered with mocked Groq in
+#         test_parser_album_overlay.py, and `on` by the 10x determinism test.
+#   * Negatives (`expected_album` None): the pre-pass must decline. Unit-only and
+#     deterministic -- asserting on real-Groq output for a declined input would
+#     test Groq, not our denylist, and could flake. The decline path through
+#     parse_request is covered with mocked Groq in
+#     test_parser_album_overlay.py::test_no_overlay_when_pre_pass_declines.
+#
+# The guard tests in test_album_extraction.py assert every entry of
+# services.parser.SUPPORTED_ALBUM_PREPOSITIONS has a positive case, and that each
+# positive's `preposition` label matches what the regex actually matches (so the
+# label can be trusted as the coverage key). A branch therefore cannot be added
+# to the parser without shared coverage.
 
 
 @dataclass(frozen=True)
@@ -377,9 +386,12 @@ class AlbumPrepassCase:
     see after the trailing "{prep} <album>" clause is consumed.
 
     Negative case: ``expected_album`` is ``None``; the pre-pass must decline.
-    ``forbidden_album`` (when set) is the idiom/greeting tail that a false-fire
-    would wrongly capture -- the E2E layer asserts it never becomes the album.
-    Negatives without ``forbidden_album`` (bare short-forms) are unit-only.
+    Negatives are unit-only -- see the module comment above for why E2E cannot
+    verify a declined input deterministically.
+
+    ``preposition`` is the ``SUPPORTED_ALBUM_PREPOSITIONS`` entry the case
+    exercises; a guard test asserts it matches what the regex actually matches,
+    so it can be trusted as the coverage key.
     """
 
     id: str
@@ -387,7 +399,6 @@ class AlbumPrepassCase:
     preposition: str  # one of SUPPORTED_ALBUM_PREPOSITIONS
     expected_album: str | None = None
     expected_stripped: str | None = None
-    forbidden_album: str | None = None
 
     @property
     def is_positive(self) -> bool:
@@ -459,48 +470,42 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
         expected_album="doga",
         expected_stripped="la paradoja by juana molina",
     ),
-    # -- Negatives: pre-pass must decline. `forbidden_album` => E2E-checked. ---
+    # -- Negatives: pre-pass must decline (idioms, greetings, bare short-forms).
+    # The id documents the tail that a false-fire would wrongly capture as album.
     AlbumPrepassCase(
         id="catpower_on_the_radio",
         raw_message="moon pix by cat power on the radio",
         preposition="on",
-        forbidden_album="the radio",
     ),
     AlbumPrepassCase(
         id="catpower_on_friday",
         raw_message="moon pix by cat power on Friday",
         preposition="on",
-        forbidden_album="Friday",
     ),
     AlbumPrepassCase(
         id="catpower_on_repeat",
         raw_message="moon pix by cat power on repeat",
         preposition="on",
-        forbidden_album="repeat",
     ),
     AlbumPrepassCase(
         id="catpower_on_air",
         raw_message="moon pix by cat power on air",
         preposition="on",
-        forbidden_album="air",
     ),
     AlbumPrepassCase(
         id="catpower_on_vinyl",
         raw_message="moon pix by cat power on vinyl",
         preposition="on",
-        forbidden_album="vinyl",
     ),
     AlbumPrepassCase(
         id="catpower_on_cd",
         raw_message="moon pix by cat power on cd",
         preposition="on",
-        forbidden_album="cd",
     ),
     AlbumPrepassCase(
         id="catpower_off_top_of_head",
         raw_message="moon pix by cat power off the top of my head",
         preposition="off",
-        forbidden_album="the top of my head",
     ),
     AlbumPrepassCase(
         id="moonpix_off_shortform",
@@ -516,24 +521,28 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
         id="hello_from_boston",
         raw_message="hello from boston",
         preposition="from",
-        forbidden_album="boston",
     ),
     AlbumPrepassCase(
         id="hi_from_newyork",
         raw_message="hi from new york",
         preposition="from",
-        forbidden_album="new york",
     ),
     AlbumPrepassCase(
         id="greetings_from_chapelhill",
         raw_message="greetings from chapel hill",
         preposition="from",
-        forbidden_album="chapel hill",
     ),
     AlbumPrepassCase(
         id="calling_from_durham",
         raw_message="calling from durham",
         preposition="from",
-        forbidden_album="durham",
     ),
+]
+
+# Partitioned once here so the unit and E2E suites import the same subsets rather
+# than each re-deriving the `is_positive` split (which risks the layers drifting
+# onto divergent subsets of the corpus).
+ALBUM_PREPASS_POSITIVES: list[AlbumPrepassCase] = [c for c in ALBUM_PREPASS_CASES if c.is_positive]
+ALBUM_PREPASS_NEGATIVES: list[AlbumPrepassCase] = [
+    c for c in ALBUM_PREPASS_CASES if not c.is_positive
 ]
