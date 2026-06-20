@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          pip install -r requirements-dev.txt
 
       - name: Check formatting with ruff
         run: ruff format --check .
@@ -50,8 +50,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install mypy
+          pip install -r requirements-dev.txt
 
       - name: Type check with mypy
         run: mypy . --ignore-missing-imports
@@ -70,8 +69,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-httpx pytest-cov
+          pip install -r requirements-dev.txt
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --cov=. --cov-report=xml
@@ -84,11 +82,48 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  deps-sync:
+    # Guards the dependency-pinning invariant (issue #168): uv.lock is the
+    # single source of truth, and requirements.txt / requirements-dev.txt are
+    # generated artifacts that must match it. `uv lock --locked` proves the
+    # lock is consistent with pyproject.toml; re-exporting and diffing proves
+    # the committed requirements files were regenerated from that lock. Without
+    # this gate a floor-only spec could silently float CI/Railway across a
+    # breaking release (the #164 / fastapi 0.137 incident). Policy + regenerate
+    # procedure: docs/deployment.md > Dependency management. Keep the pinned uv
+    # version below aligned with the one used to run the export commands there,
+    # since the export format is uv-version-sensitive.
+    name: Dependency Lock Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv==0.11.21
+
+      - name: Verify uv.lock matches pyproject.toml
+        run: uv lock --locked
+
+      - name: Verify requirements files are regenerated from the lock
+        run: |
+          uv export --frozen --no-emit-project --no-hashes -o requirements.txt
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o requirements-dev.txt
+          if [ -n "$(git status --porcelain -- requirements.txt requirements-dev.txt)" ]; then
+            echo "::error::requirements.txt / requirements-dev.txt are out of sync with uv.lock. Regenerate them (see docs/deployment.md > Dependency management) and commit."
+            git --no-pager diff -- requirements.txt requirements-dev.txt || true
+            exit 1
+          fi
+
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, deps-sync]
     steps:
       - uses: actions/checkout@v6
 
@@ -135,7 +170,7 @@ jobs:
     # discogs-etl/.github/workflows/rebuild-cache.yml. Scoped to `main` to
     # match the issue; prod-deploy failures aren't covered yet.
     name: Notify on CI failure
-    needs: [lint, typecheck, test, marker-sync, deploy-staging]
+    needs: [lint, typecheck, test, marker-sync, deps-sync, deploy-staging]
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -161,7 +196,7 @@ jobs:
     name: Deploy to Production
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/prod'
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, deps-sync]
     steps:
       - uses: actions/checkout@v6
 
