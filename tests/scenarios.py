@@ -347,3 +347,193 @@ TODAY_JEFFERSON_AIRPLANE = _register(
     bug="Parser dropped the song and put the artist in the song slot (song='Jefferson Airplane', artist=null) because it treated leading 'Today,' as a temporal aside",
     tags=frozenset({"parser", "comma_format"}),
 )
+
+
+# ---------------------------------------------------------------------------
+# Album pre-pass corpus (services.parser.extract_album_prefix)
+# ---------------------------------------------------------------------------
+# Shared INPUTS for the deterministic album pre-pass, consumed by BOTH layers:
+#   * unit  -- tests/unit/test_album_extraction.py asserts the regex extracts
+#              `expected_album` and returns `expected_stripped` (positives), or
+#              declines (negatives).
+#   * E2E   -- tests/integration/test_integration.py runs parse_request against
+#              real Groq and asserts the overlay populates album==`expected_album`
+#              (positives), or that `forbidden_album` never lands in the album
+#              slot (negatives with an idiom/greeting tail).
+#
+# Because both suites parametrise this single list, a new preposition branch is
+# covered in both layers the moment a case is added here. The guard tests in
+# test_album_extraction.py assert every entry of
+# services.parser.SUPPORTED_ALBUM_PREPOSITIONS has a positive case, so a branch
+# cannot be added to the parser without a shared (hence E2E) case.
+
+
+@dataclass(frozen=True)
+class AlbumPrepassCase:
+    """A single album pre-pass case shared across the unit and E2E layers.
+
+    Positive case: ``expected_album`` is set; the pre-pass must fire.
+    ``expected_stripped`` is the message the rest of the parser (Groq) should
+    see after the trailing "{prep} <album>" clause is consumed.
+
+    Negative case: ``expected_album`` is ``None``; the pre-pass must decline.
+    ``forbidden_album`` (when set) is the idiom/greeting tail that a false-fire
+    would wrongly capture -- the E2E layer asserts it never becomes the album.
+    Negatives without ``forbidden_album`` (bare short-forms) are unit-only.
+    """
+
+    id: str
+    raw_message: str
+    preposition: str  # one of SUPPORTED_ALBUM_PREPOSITIONS
+    expected_album: str | None = None
+    expected_stripped: str | None = None
+    forbidden_album: str | None = None
+
+    @property
+    def is_positive(self) -> bool:
+        return self.expected_album is not None
+
+
+ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
+    # -- Positives: pre-pass fires, album + stripped message returned. ---------
+    AlbumPrepassCase(
+        id="orb_on_live93",
+        raw_message="tower of dub by the orb on live '93",
+        preposition="on",
+        expected_album="live '93",
+        expected_stripped="tower of dub by the orb",
+    ),
+    AlbumPrepassCase(
+        id="juana_from_doga",
+        raw_message="la paradoja by juana molina from doga",
+        preposition="from",
+        expected_album="doga",
+        expected_stripped="la paradoja by juana molina",
+    ),
+    AlbumPrepassCase(
+        id="jessica_off_onyourown",
+        raw_message="back, baby by jessica pratt off on your own love again",
+        preposition="off",
+        expected_album="on your own love again",
+        expected_stripped="back, baby by jessica pratt",
+    ),
+    AlbumPrepassCase(
+        id="stereolab_offof_aluminumtunes",
+        raw_message="aluminum tunes by stereolab off of aluminum tunes",
+        preposition="off of",
+        expected_album="aluminum tunes",
+        expected_stripped="aluminum tunes by stereolab",
+    ),
+    AlbumPrepassCase(
+        id="moonpix_off_moonpix",
+        raw_message="moon pix off moon pix",
+        preposition="off",
+        expected_album="moon pix",
+        expected_stripped="moon pix",
+    ),
+    AlbumPrepassCase(
+        id="edits_offof_edits",
+        raw_message="edits off of edits",
+        preposition="off of",
+        expected_album="edits",
+        expected_stripped="edits",
+    ),
+    AlbumPrepassCase(
+        id="orb_on_live93_mixedcase",
+        raw_message="  Tower Of Dub by The Orb ON Live '93  ",
+        preposition="on",
+        expected_album="Live '93",
+        expected_stripped="Tower Of Dub by The Orb",
+    ),
+    AlbumPrepassCase(
+        id="orb_on_live93_please",
+        raw_message="tower of dub by the orb on live '93 please",
+        preposition="on",
+        expected_album="live '93",
+        expected_stripped="tower of dub by the orb",
+    ),
+    AlbumPrepassCase(
+        id="juana_from_doga_thanks",
+        raw_message="la paradoja by juana molina from doga, thanks",
+        preposition="from",
+        expected_album="doga",
+        expected_stripped="la paradoja by juana molina",
+    ),
+    # -- Negatives: pre-pass must decline. `forbidden_album` => E2E-checked. ---
+    AlbumPrepassCase(
+        id="catpower_on_the_radio",
+        raw_message="moon pix by cat power on the radio",
+        preposition="on",
+        forbidden_album="the radio",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_friday",
+        raw_message="moon pix by cat power on Friday",
+        preposition="on",
+        forbidden_album="Friday",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_repeat",
+        raw_message="moon pix by cat power on repeat",
+        preposition="on",
+        forbidden_album="repeat",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_air",
+        raw_message="moon pix by cat power on air",
+        preposition="on",
+        forbidden_album="air",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_vinyl",
+        raw_message="moon pix by cat power on vinyl",
+        preposition="on",
+        forbidden_album="vinyl",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_cd",
+        raw_message="moon pix by cat power on cd",
+        preposition="on",
+        forbidden_album="cd",
+    ),
+    AlbumPrepassCase(
+        id="catpower_off_top_of_head",
+        raw_message="moon pix by cat power off the top of my head",
+        preposition="off",
+        forbidden_album="the top of my head",
+    ),
+    AlbumPrepassCase(
+        id="moonpix_off_shortform",
+        raw_message="moon pix off",
+        preposition="off",
+    ),
+    AlbumPrepassCase(
+        id="moonpix_offof_shortform",
+        raw_message="moon pix off of",
+        preposition="off of",
+    ),
+    AlbumPrepassCase(
+        id="hello_from_boston",
+        raw_message="hello from boston",
+        preposition="from",
+        forbidden_album="boston",
+    ),
+    AlbumPrepassCase(
+        id="hi_from_newyork",
+        raw_message="hi from new york",
+        preposition="from",
+        forbidden_album="new york",
+    ),
+    AlbumPrepassCase(
+        id="greetings_from_chapelhill",
+        raw_message="greetings from chapel hill",
+        preposition="from",
+        forbidden_album="chapel hill",
+    ),
+    AlbumPrepassCase(
+        id="calling_from_durham",
+        raw_message="calling from durham",
+        preposition="from",
+        forbidden_album="durham",
+    ),
+]
