@@ -15,6 +15,14 @@ Two corpora live here:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # `from __future__ import annotations` makes the `preposition` annotation
+    # below a string, so Preposition only needs to be importable by the type
+    # checker -- importing it for real would pull the Groq SDK into the corpus
+    # module at collection time for no runtime benefit.
+    from services.parser import Preposition
 
 
 @dataclass(frozen=True)
@@ -397,15 +405,18 @@ class AlbumPrepassCase:
     verify a declined input deterministically.
 
     ``preposition`` is the ``SUPPORTED_ALBUM_PREPOSITIONS`` entry the case
-    exercises. For positives a guard test asserts it equals what the regex
-    actually matches, so the coverage key can be trusted; for negatives (which by
-    definition the regex may decline before reaching this preposition) it is an
-    informational label of the surface being guarded, not regex-verified.
+    exercises. Its type is the ``Preposition`` Literal, so membership is checked
+    at type-check time -- a value the parser does not support is a mypy error,
+    not a runtime guard-test failure. For positives a guard test additionally
+    asserts the label equals what the regex actually matches (so the coverage key
+    can be trusted); for negatives (which by definition the regex may decline
+    before reaching this preposition) it is an informational label of the surface
+    being guarded, not regex-verified.
     """
 
     id: str
     raw_message: str
-    preposition: str  # one of SUPPORTED_ALBUM_PREPOSITIONS
+    preposition: Preposition
     expected_album: str | None = None
     expected_stripped: str | None = None
 

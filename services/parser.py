@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from enum import StrEnum
+from typing import Literal, get_args
 
 from groq import AsyncGroq
 from pydantic import BaseModel
@@ -42,13 +43,24 @@ _TRAILING_POLITENESS_RE = re.compile(
 
 # Single source of truth for the album prepositions the pre-pass recognises.
 # Order matters: multi-word forms must precede their own prefixes ("off of"
-# before "off") so the regex alternation is greedy-correct. Both regexes below
-# derive from this tuple, and so does the shared test corpus
-# (tests/scenarios.py::ALBUM_PREPASS_CASES): a guard test in
-# tests/unit/test_album_extraction.py fails until every preposition here has a
-# positive corpus case, so a branch cannot ship without coverage. See
-# WXYC/request-o-matic#140.
-SUPPORTED_ALBUM_PREPOSITIONS: tuple[str, ...] = ("off of", "off", "from", "on")
+# before "off") so the regex alternation is greedy-correct.
+#
+# Declared as a Literal so the membership half of test parity is enforced at
+# type-check time: tests/scenarios.py types AlbumPrepassCase.preposition as
+# `Preposition`, so a corpus case carrying a preposition the parser does not
+# support (a typo, or a string for a branch that was never added) is a mypy
+# error in the "Type Check" CI job -- it can no longer slip past as a runtime
+# guard-test failure. The coverage half (every supported preposition has a
+# positive corpus case) remains a runtime guard in
+# tests/unit/test_album_extraction.py, because asserting a regex fires on a
+# given string is irreducibly runtime. See WXYC/request-o-matic#140.
+Preposition = Literal["off of", "off", "from", "on"]
+
+# Runtime tuple derived from the Literal so the two cannot drift. get_args
+# preserves declaration order, so the greedy-correct ordering above is kept.
+# Both regexes below build from this tuple, and so does the shared test corpus
+# (tests/scenarios.py::ALBUM_PREPASS_CASES).
+SUPPORTED_ALBUM_PREPOSITIONS: tuple[Preposition, ...] = get_args(Preposition)
 
 # Cheap literal pre-screen to bound worst-case backtracking on long inputs
 # without a preposition. The verbose `_ALBUM_PREPOSITION_RE` has two
