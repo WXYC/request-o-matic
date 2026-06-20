@@ -26,7 +26,7 @@ Branches: **`main`** → staging on push; **`prod`** → production on push. Dev
 ## Code Style
 
 - Line length: 100 chars
-- Use `black` for formatting, `ruff` for linting
+- Format with `ruff format`, lint with `ruff check` — CI gates on `ruff format --check .` and `ruff check .` (`black` is installed as a dev dependency but is **not** what CI enforces; its assert-wrapping style differs from `ruff format` and will produce a failing diff)
 - Type hints encouraged but not enforced
 - Async/await for all I/O operations
 
