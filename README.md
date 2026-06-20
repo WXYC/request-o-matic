@@ -186,6 +186,15 @@ curl -X POST "http://localhost:8000/api/v1/request" \
   -d '{"message": "Play la paradoja by Juana Molina"}'
 ```
 
+**Full request workflow (bypass the lookup cache):**
+```bash
+curl -X POST "http://localhost:8000/api/v1/request" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Play la paradoja by Juana Molina", "skip_cache": true}'
+```
+
+The `skip_cache` flag is forwarded as `?skip_cache=true` to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup), bypassing that service's caches so the lookup resolves against fresh data. Useful for benchmarking and cache A/B comparisons — see `scripts/benchmark_requests.py` and [`docs/benchmark-results.md`](docs/benchmark-results.md).
+
 **Health check:**
 ```bash
 curl "http://localhost:8000/health"
