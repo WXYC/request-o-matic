@@ -7,9 +7,10 @@ Two corpora live here:
   Only artist/song/album/raw_message are shared.
 * ``AlbumPrepassCase`` / ``ALBUM_PREPASS_CASES`` -- album pre-pass inputs (see the
   block lower in this file). These additionally share ``expected_album``,
-  ``expected_stripped`` and ``preposition``, and centralize the positive/negative
-  partition. Coverage is intentionally asymmetric: negatives are unit-only and
-  only the per-preposition positive smoke reaches the E2E suite.
+  ``expected_stripped`` and ``preposition`` (type-constrained to the parser's
+  supported set via the ``Preposition`` Literal), and centralize the
+  positive/negative partition. Coverage is intentionally asymmetric: negatives
+  are unit-only and only the per-preposition positive smoke reaches the E2E suite.
 """
 
 from __future__ import annotations
@@ -385,11 +386,13 @@ TODAY_JEFFERSON_AIRPLANE = _register(
 #     parse_request is covered with mocked Groq in
 #     test_parser_album_overlay.py::test_no_overlay_when_pre_pass_declines.
 #
-# The guard tests in test_album_extraction.py assert every entry of
-# services.parser.SUPPORTED_ALBUM_PREPOSITIONS has a positive case, and that each
-# positive's `preposition` label matches what the regex actually matches (so the
-# label can be trusted as the coverage key). A branch therefore cannot be added
-# to the parser without shared coverage.
+# Membership -- that every case's `preposition` is one the parser supports -- is
+# enforced at type-check time (the field is typed as services.parser.Preposition),
+# not by a runtime test. The guard tests in test_album_extraction.py cover the
+# rest: every entry of services.parser.SUPPORTED_ALBUM_PREPOSITIONS has a positive
+# case, and each positive's `preposition` label matches what the regex actually
+# matches (so the label can be trusted as the coverage key). A branch therefore
+# cannot be added to the parser without shared coverage.
 
 
 @dataclass(frozen=True)
@@ -405,13 +408,12 @@ class AlbumPrepassCase:
     verify a declined input deterministically.
 
     ``preposition`` is the ``SUPPORTED_ALBUM_PREPOSITIONS`` entry the case
-    exercises. Its type is the ``Preposition`` Literal, so membership is checked
-    at type-check time -- a value the parser does not support is a mypy error,
-    not a runtime guard-test failure. For positives a guard test additionally
-    asserts the label equals what the regex actually matches (so the coverage key
-    can be trusted); for negatives (which by definition the regex may decline
-    before reaching this preposition) it is an informational label of the surface
-    being guarded, not regex-verified.
+    exercises; its ``Preposition`` Literal type makes an unsupported value a mypy
+    error, so membership is checked at type-check time rather than by a runtime
+    guard. For positives a guard test also asserts the label equals what the regex
+    matches (so it can be trusted as the coverage key); for negatives (which the
+    regex may decline before reaching this preposition) it is an informational
+    label, not regex-verified.
     """
 
     id: str
