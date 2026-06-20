@@ -10,22 +10,33 @@ The regex covers the canonical templated shape and a denylist of common
 "on X" idioms (radio / Friday / repeat / etc.) keeps the false-positive surface
 small. These tests cover the pre-pass in isolation -- no Groq, no I/O.
 
-Inputs come from the shared corpus ``tests.scenarios.ALBUM_PREPASS_CASES`` so
-the same cases drive the E2E suite (tests/integration/test_integration.py). The
-guard tests at the bottom of this file keep the corpus in lockstep with
-``services.parser.SUPPORTED_ALBUM_PREPOSITIONS`` -- a new preposition branch
-cannot ship without a positive case that *both* layers then exercise.
+Inputs come from the shared corpus ``tests.scenarios.ALBUM_PREPASS_CASES``; the
+positive cases also drive the E2E smoke in tests/integration/test_integration.py
+(negatives are unit-only -- see tests/scenarios.py for why E2E cannot verify a
+declined input deterministically). The guard tests at the bottom of this file
+keep the corpus in lockstep with ``services.parser.SUPPORTED_ALBUM_PREPOSITIONS``
+-- a new preposition branch cannot ship without a positive case backing it.
 """
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from services.parser import SUPPORTED_ALBUM_PREPOSITIONS, extract_album_prefix
-from tests.scenarios import ALBUM_PREPASS_CASES
+from services.parser import (
+    _ALBUM_PREPOSITION_RE,
+    SUPPORTED_ALBUM_PREPOSITIONS,
+    extract_album_prefix,
+)
+from tests.scenarios import (
+    ALBUM_PREPASS_CASES,
+    ALBUM_PREPASS_NEGATIVES,
+    ALBUM_PREPASS_POSITIVES,
+)
 
-POSITIVE_CASES = [c for c in ALBUM_PREPASS_CASES if c.is_positive]
-NEGATIVE_CASES = [c for c in ALBUM_PREPASS_CASES if not c.is_positive]
+POSITIVE_CASES = ALBUM_PREPASS_POSITIVES
+NEGATIVE_CASES = ALBUM_PREPASS_NEGATIVES
 
 
 # ---------------------------------------------------------------------------
@@ -97,16 +108,38 @@ def test_returns_none_for_empty_input() -> None:
 def test_every_supported_preposition_has_positive_corpus_case() -> None:
     """Every preposition the parser supports must have a positive shared case.
 
-    The E2E suite parametrises the same ``ALBUM_PREPASS_CASES`` corpus, so a
-    positive case per preposition guarantees that branch is exercised end-to-end
-    against real Groq -- not just at the unit level.
+    The unit suite verifies every positive deterministically and the E2E suite
+    smokes the new prepositions through the live path, both off this corpus, so a
+    positive case per preposition guarantees the branch is covered. The label is
+    trustworthy because ``test_positive_preposition_label_matches_regex`` asserts
+    it equals what the regex actually matches.
     """
     covered = {c.preposition for c in POSITIVE_CASES}
     missing = set(SUPPORTED_ALBUM_PREPOSITIONS) - covered
     assert not missing, (
         "Prepositions supported by services.parser but with no positive case in "
-        f"tests.scenarios.ALBUM_PREPASS_CASES (so no E2E coverage): {sorted(missing)}. "
+        f"tests.scenarios.ALBUM_PREPASS_CASES (so no coverage): {sorted(missing)}. "
         "Add a positive AlbumPrepassCase for each."
+    )
+
+
+@pytest.mark.parametrize("case", POSITIVE_CASES, ids=[c.id for c in POSITIVE_CASES])
+def test_positive_preposition_label_matches_regex(case) -> None:
+    """The hand-entered ``preposition`` label must match what the regex matches.
+
+    The coverage guard above keys off ``case.preposition``; if a case's label
+    silently disagreed with its ``raw_message`` (a copy-paste typo), the guard
+    could report a branch covered while a different branch was actually exercised.
+    Anchor the label to the regex's own ``prep`` group so it cannot lie.
+    """
+    match = _ALBUM_PREPOSITION_RE.match(case.raw_message.strip())
+    assert match is not None, (
+        f"{case.id}: positive case raw_message does not match the pre-pass regex"
+    )
+    matched = re.sub(r"\s+", " ", match.group("prep").strip().lower())
+    assert matched == case.preposition, (
+        f"{case.id}: preposition label {case.preposition!r} disagrees with the regex match "
+        f"{matched!r} for {case.raw_message!r}"
     )
 
 

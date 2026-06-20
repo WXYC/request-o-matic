@@ -43,11 +43,11 @@ _TRAILING_POLITENESS_RE = re.compile(
 # Single source of truth for the album prepositions the pre-pass recognises.
 # Order matters: multi-word forms must precede their own prefixes ("off of"
 # before "off") so the regex alternation is greedy-correct. Both regexes below
-# and the shared test corpus (tests/scenarios.py::ALBUM_PREPASS_CASES) derive
-# from this tuple, so adding a preposition here forces matching coverage in the
-# unit *and* E2E layers -- the guard tests in
-# tests/unit/test_album_extraction.py fail until a positive corpus case exists,
-# and the E2E suite parametrises the same corpus. See WXYC/request-o-matic#140.
+# derive from this tuple, and so does the shared test corpus
+# (tests/scenarios.py::ALBUM_PREPASS_CASES): a guard test in
+# tests/unit/test_album_extraction.py fails until every preposition here has a
+# positive corpus case, so a branch cannot ship without coverage. See
+# WXYC/request-o-matic#140.
 SUPPORTED_ALBUM_PREPOSITIONS: tuple[str, ...] = ("off of", "off", "from", "on")
 
 # Cheap literal pre-screen to bound worst-case backtracking on long inputs

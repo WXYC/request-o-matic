@@ -11,7 +11,7 @@ import pytest
 from dotenv import load_dotenv
 
 from tests.scenarios import (
-    ALBUM_PREPASS_CASES,
+    ALBUM_PREPASS_POSITIVES,
     AMPS_FOR_CHRIST_AMBIGUOUS,
     BECK_EDITORIAL_ALBUM,
     BIOSPHERE_ALBUM_FILTER,
@@ -53,12 +53,18 @@ skip_if_no_groq = pytest.mark.skipif(
     not GROQ_API_KEY, reason="GROQ_API_KEY not set - skipping parser integration tests"
 )
 
-# Album pre-pass cases, split for parametrisation. Sourced from the same shared
-# corpus the unit suite uses (tests/scenarios.py), so every preposition branch
-# verified by extract_album_prefix at the unit level is also exercised here
-# through the live Groq overlay path.
-_PREPASS_POSITIVES = [c for c in ALBUM_PREPASS_CASES if c.is_positive]
-_PREPASS_NEGATIVES_E2E = [c for c in ALBUM_PREPASS_CASES if not c.is_positive and c.forbidden_album]
+# One representative positive per *new* preposition (from/off/off of) from the
+# shared corpus (tests/scenarios.py). `on` is already exercised 10x by
+# test_extracts_album_from_on_preposition_reliably, and the deterministic overlay
+# wiring is covered with mocked Groq in test_parser_album_overlay.py -- so these
+# only need to smoke the live parse_request path once per new preposition. The
+# regex itself is verified exhaustively (and deterministically) in the unit
+# suite; negatives are unit-only because asserting on real-Groq output for a
+# declined input tests Groq, not our denylist, and can flake.
+_PREPASS_E2E_SMOKE = [
+    next(c for c in ALBUM_PREPASS_POSITIVES if c.preposition == prep)
+    for prep in ("from", "off", "off of")
+]
 
 
 class TestParserIntegration:
@@ -633,17 +639,18 @@ class TestParserIntegration:
 
     @pytest.mark.asyncio
     @skip_if_no_groq
-    @pytest.mark.parametrize("case", _PREPASS_POSITIVES, ids=[c.id for c in _PREPASS_POSITIVES])
+    @pytest.mark.parametrize("case", _PREPASS_E2E_SMOKE, ids=[c.id for c in _PREPASS_E2E_SMOKE])
     async def test_prepass_overlays_album_e2e(self, case):
-        """Every positive pre-pass branch populates the album slot end-to-end.
+        """Smoke the live parse_request path for the from/off/off-of prepositions.
 
         The deterministic pre-pass (services.parser.extract_album_prefix) strips
-        the "{on|from|off|off of} <album>" suffix before Groq sees the message
-        and overlays the regex-extracted album onto the result. This exercises
-        that overlay through the live Groq path for *all* supported prepositions
-        -- the dedicated `on` test above only covers one branch. Parametrised off
-        the same shared corpus (tests/scenarios.py::ALBUM_PREPASS_CASES) the unit
-        suite uses, so a new branch is verified in both layers automatically.
+        the "{prep} <album>" suffix before Groq sees the message and overlays the
+        regex-extracted album. parse_request *forces* that album over Groq's, so
+        this is a wiring smoke test, not an LLM-behaviour test: the regex is
+        verified exhaustively in tests/unit/test_album_extraction.py and the
+        overlay with mocked Groq in tests/unit/test_parser_album_overlay.py. The
+        `on` branch is covered by test_extracts_album_from_on_preposition_reliably
+        above; this confirms the other prepositions also flow through unbroken.
         """
         from groq import AsyncGroq
 
@@ -661,32 +668,6 @@ class TestParserIntegration:
         )
         assert result.album.strip().lower() == case.expected_album.lower(), (
             f"{case.id}: album mismatch -- got {result.album!r}, want {case.expected_album!r}"
-        )
-
-    @pytest.mark.asyncio
-    @skip_if_no_groq
-    @pytest.mark.parametrize(
-        "case", _PREPASS_NEGATIVES_E2E, ids=[c.id for c in _PREPASS_NEGATIVES_E2E]
-    )
-    async def test_prepass_declines_idiom_e2e(self, case):
-        """Idiom / greeting tails are never forced into the album slot end-to-end.
-
-        The pre-pass denylist ("on the radio", "on Friday", "hello from boston",
-        ...) must keep these out of the album. A pre-pass false-fire would set
-        album to the exact idiom text, so we assert the album is never that text.
-        """
-        from groq import AsyncGroq
-
-        from services.parser import parse_request
-
-        client = AsyncGroq(api_key=GROQ_API_KEY)
-        result = await parse_request(case.raw_message, client)
-
-        got = (result.album or "").strip().lower()
-        print(f"\n  {case.id}: album={result.album!r} (forbidden={case.forbidden_album!r})")
-
-        assert got != case.forbidden_album.lower(), (
-            f"{case.id}: idiom tail {case.forbidden_album!r} was wrongly captured as the album"
         )
 
 
