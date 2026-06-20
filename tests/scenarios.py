@@ -337,3 +337,13 @@ ORB_ON_ALBUM = _register(
     bug="Groq parser populated album=null on 2 of 3 runs of this exact input -- LLM nondeterminism on the 'on <album>' templated shape",
     tags=frozenset({"parser", "album_preposition"}),
 )
+
+TODAY_JEFFERSON_AIRPLANE = _register(
+    id="today_jefferson_airplane",
+    description="'Today, Jefferson Airplane' comma shape: short common word on the left is the song, not a temporal preamble",
+    raw_message="Today, Jefferson Airplane",
+    artist="Jefferson Airplane",
+    song="Today",
+    bug="Parser dropped the song and put the artist in the song slot (song='Jefferson Airplane', artist=null) because it treated leading 'Today,' as a temporal aside",
+    tags=frozenset({"parser", "comma_format"}),
+)
