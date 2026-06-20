@@ -80,3 +80,6 @@ venv/bin/python scripts/repl.py --local
 1. Create a **unit test** in `tests/unit/` that reproduces the bug with mocked data
 2. Create an **integration test** in `tests/integration/` (`@pytest.mark.external_api`) that verifies the fix against real APIs
 3. The integration test should assert that false positives are excluded AND correct results are included
+
+### Prompt-only parser fixes
+Some parser bugs are fixed purely by editing `SYSTEM_PROMPT` in `services/parser.py` (no behavior code changes) — e.g. teaching Groq a new phrasing shape. A mocked-Groq unit test is **vacuous** for these: the mock returns whatever JSON it is handed and exercises none of the prompt. For prompt-only fixes the unit half of the protocol is satisfied by a **prompt-contract** test (see `tests/unit/test_parser_prompt_contract.py`) that asserts `SYSTEM_PROMPT` still encodes the rule and its canonical example, so the rule can't be silently deleted or reworded away. The behavioral verification remains the `external_api` integration test, which — given temp-0.1 nondeterminism — should re-run the parse a handful of times and require every run to pass.

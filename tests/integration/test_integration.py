@@ -35,6 +35,7 @@ from tests.scenarios import (
     SOMETHING_BY_HELDEN_FILLER,
     SPOONFUL_DASH_FORMAT,
     SUGAR_PLANT_FALSE_POSITIVE,
+    TODAY_JEFFERSON_AIRPLANE,
     TOY_WORD_BOUNDARY,
     YOUNG_GOV_PREFIX,
 )
@@ -417,6 +418,56 @@ class TestParserIntegration:
         assert "sara" in result.song.lower(), f"Expected song containing 'Sara', got: {result.song}"
 
         print("  ✅ Greeting ignored, song and artist correctly extracted!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_comma_shape_short_word_left_is_song(self):
+        """Test that 'Today, Jefferson Airplane' parses 'Today' as the song.
+
+        Bug (WXYC/request-o-matic#162): the parser dropped the song and put the
+        artist in the song slot (song='Jefferson Airplane', artist=null) because
+        it treated the leading 'Today,' as a temporal/conversational preamble.
+        In the '<song>, <artist>' comma shape the short common word on the left
+        is the song title, not preamble to drop.
+
+        Expected: song='Today', artist='Jefferson Airplane', is_request=True.
+
+        The fix is prompt-only, so the model is nondeterministic at temp 0.1.
+        Re-run a handful of times and require every run to parse correctly --
+        scaled down from the 10x loop in
+        test_extracts_album_from_on_preposition_reliably to limit Groq TPM usage.
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = TODAY_JEFFERSON_AIRPLANE
+        assert s.artist is not None and s.song is not None
+
+        failures = []
+        for i in range(5):
+            result = await parse_request(s.raw_message, client)
+            print(
+                f"\n  Run {i + 1}: song={result.song!r} artist={result.artist!r} "
+                f"is_request={result.is_request}"
+            )
+
+            song = (result.song or "").lower()
+            artist = (result.artist or "").lower()
+            if not (
+                result.is_request and song == s.song.lower() and "jefferson airplane" in artist
+            ):
+                failures.append(
+                    f"run {i + 1}: song={result.song!r} artist={result.artist!r} "
+                    f"is_request={result.is_request}"
+                )
+
+        assert not failures, (
+            f"Expected song='Today', artist='Jefferson Airplane' on every run; failures: {failures}"
+        )
+
+        print("\n  ✅ Comma-shape short word parsed as song on 5/5 runs!")
 
     @pytest.mark.asyncio
     @skip_if_no_groq
