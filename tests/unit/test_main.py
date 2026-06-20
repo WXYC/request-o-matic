@@ -17,11 +17,17 @@ def _openapi_paths(app) -> set[str]:
 
 
 def _operation_tags(app, path: str) -> set[str]:
-    """Union of OpenAPI tags across every HTTP method of ``path``."""
+    """Union of OpenAPI tags across every HTTP method of ``path``.
+
+    A path-item object can hold non-operation keys (a path-level ``parameters``
+    list, ``summary``/``description`` strings, ``servers``); skip anything that
+    isn't an operation dict so this can't ``AttributeError`` on them.
+    """
     operations = app.openapi().get("paths", {}).get(path, {})
     tags: set[str] = set()
     for operation in operations.values():
-        tags.update(operation.get("tags", []) or [])
+        if isinstance(operation, dict):
+            tags.update(operation.get("tags", []) or [])
     return tags
 
 
