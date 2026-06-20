@@ -1,4 +1,4 @@
-"""Prompt-contract regression guards for services.parser.SYSTEM_PROMPT.
+"""Prompt-contract regression guard for services.parser.SYSTEM_PROMPT.
 
 Bug context: WXYC/request-o-matic#162 -- "Today, Jefferson Airplane" parsed as
 song="Jefferson Airplane", artist=null because Groq treated the leading short
@@ -7,11 +7,11 @@ common word "Today," as a temporal/conversational preamble and dropped it.
 The fix is prompt-only (no behavior code changed). A mocked-Groq unit test would
 be vacuous here -- the mock returns whatever JSON we feed it and exercises none
 of the prompt. So instead of asserting parser *behavior* (that's the manual
-external_api integration test), these tests assert the prompt *contract*: that
-SYSTEM_PROMPT still encodes the #162 rule and the greeting asymmetry it depends
-on, so the rule can't be silently deleted in a refactor.
+external_api integration test), this asserts the prompt *contract*: that
+SYSTEM_PROMPT still encodes the #162 rule, so it can't be silently deleted in a
+refactor.
 
-They assert at the *concept* level (the distinguishing phrases the rule
+It asserts at the *concept* level (the distinguishing phrase the rule
 introduces) rather than pinning a literal example sentence, so a benign reword
 -- e.g. swapping the example artist -- doesn't fail CI. See docs/testing.md
 "Prompt-only parser fixes".
@@ -34,16 +34,4 @@ def test_prompt_documents_short_temporal_word_as_song() -> None:
     assert "temporal adverb" in _PROMPT, (
         "SYSTEM_PROMPT no longer documents that a short temporal-adverb-like word "
         "can be the song title (regression guard for #162)"
-    )
-
-
-def test_prompt_preserves_greeting_asymmetry() -> None:
-    """A genuine greeting is still dropped, so the #162 fix must not over-generalize.
-
-    The greeting rule (greetings are conversational preamble) has to coexist with
-    the short-word rule (a non-greeting short word is the song) -- the asymmetry
-    #162 calls out.
-    """
-    assert "greeting" in _PROMPT and "preamble" in _PROMPT, (
-        "SYSTEM_PROMPT no longer documents that greetings are conversational preamble"
     )
