@@ -40,12 +40,24 @@ _TRAILING_POLITENESS_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Single source of truth for the album prepositions the pre-pass recognises.
+# Order matters: multi-word forms must precede their own prefixes ("off of"
+# before "off") so the regex alternation is greedy-correct. Both regexes below
+# and the shared test corpus (tests/scenarios.py::ALBUM_PREPASS_CASES) derive
+# from this tuple, so adding a preposition here forces matching coverage in the
+# unit *and* E2E layers -- the guard tests in
+# tests/unit/test_album_extraction.py fail until a positive corpus case exists,
+# and the E2E suite parametrises the same corpus. See WXYC/request-o-matic#140.
+SUPPORTED_ALBUM_PREPOSITIONS: tuple[str, ...] = ("off of", "off", "from", "on")
+
 # Cheap literal pre-screen to bound worst-case backtracking on long inputs
 # without a preposition. The verbose `_ALBUM_PREPOSITION_RE` has two
 # non-greedy `.` runs; on a long DJ blurb that lacks any of these tokens it
 # can backtrack through every prefix split. This regex is linear and lets
 # us bail before the heavyweight pattern runs.
-_PREP_TOKEN_PRESCREEN_RE = re.compile(r"\s(off of|off|from|on)\s", re.IGNORECASE)
+_PREP_TOKEN_PRESCREEN_RE = re.compile(
+    r"\s(" + "|".join(SUPPORTED_ALBUM_PREPOSITIONS) + r")\s", re.IGNORECASE
+)
 
 # Signal-words in the prefix that mark a message as request-shaped. Used to
 # gate the `from` preposition, where the false-positive surface ("hello from
@@ -89,12 +101,16 @@ _ALBUM_IDIOM_HEADS: frozenset[str] = frozenset(
 # Match the canonical templated shapes. Anchored at end of string.
 #   - <prefix> <on|from|off|off of> <album-text>
 # `prefix` must be non-empty and is what we pass through to Groq after stripping.
+# The preposition alternation is built from `SUPPORTED_ALBUM_PREPOSITIONS` so the
+# two stay in lockstep; internal spaces are escaped (`off\ of`) because VERBOSE
+# mode ignores unescaped whitespace.
+_PREP_ALTERNATION = "|".join(p.replace(" ", r"\ ") for p in SUPPORTED_ALBUM_PREPOSITIONS)
 _ALBUM_PREPOSITION_RE = re.compile(
-    r"""
+    rf"""
     ^
     (?P<prefix>.+?)              # song (+ optional "by <artist>") -- non-empty, non-greedy
     \s+
-    (?P<prep>off\ of|off|from|on)   # preposition (order matters: "off of" before "off")
+    (?P<prep>{_PREP_ALTERNATION})   # preposition (order matters: "off of" before "off")
     \s+
     (?P<album>\S.*?)             # album text -- must start with non-space and be non-empty
     \s*

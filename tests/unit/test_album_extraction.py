@@ -9,138 +9,66 @@ The fix is a deterministic regex pre-pass that runs *before* Groq is invoked.
 The regex covers the canonical templated shape and a denylist of common
 "on X" idioms (radio / Friday / repeat / etc.) keeps the false-positive surface
 small. These tests cover the pre-pass in isolation -- no Groq, no I/O.
+
+Inputs come from the shared corpus ``tests.scenarios.ALBUM_PREPASS_CASES`` so
+the same cases drive the E2E suite (tests/integration/test_integration.py). The
+guard tests at the bottom of this file keep the corpus in lockstep with
+``services.parser.SUPPORTED_ALBUM_PREPOSITIONS`` -- a new preposition branch
+cannot ship without a positive case that *both* layers then exercise.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from services.parser import extract_album_prefix
+from services.parser import SUPPORTED_ALBUM_PREPOSITIONS, extract_album_prefix
+from tests.scenarios import ALBUM_PREPASS_CASES
+
+POSITIVE_CASES = [c for c in ALBUM_PREPASS_CASES if c.is_positive]
+NEGATIVE_CASES = [c for c in ALBUM_PREPASS_CASES if not c.is_positive]
+
 
 # ---------------------------------------------------------------------------
 # Positive cases: pre-pass should extract album and the suffix it consumed.
 # ---------------------------------------------------------------------------
-# Each case is (raw_message, expected_album, expected_stripped_message).
-# `expected_stripped_message` is what the rest of the parser (Groq) should see
-# after the pre-pass has consumed the trailing "{on|from|off|off of} <album>"
-# clause. It still contains song + artist so Groq can extract those normally.
-
-POSITIVE_CASES: list[tuple[str, str, str]] = [
-    # "on <album>" -- canonical "on" preposition, WXYC artists.
-    (
-        "tower of dub by the orb on live '93",
-        "live '93",
-        "tower of dub by the orb",
-    ),
-    # "from <album>" -- "from" preposition.
-    (
-        "la paradoja by juana molina from doga",
-        "doga",
-        "la paradoja by juana molina",
-    ),
-    # "off <album>" -- "off" preposition, no "of".
-    (
-        "back, baby by jessica pratt off on your own love again",
-        "on your own love again",
-        "back, baby by jessica pratt",
-    ),
-    # "off of <album>" -- "off of" preposition.
-    (
-        "aluminum tunes by stereolab off of aluminum tunes",
-        "aluminum tunes",
-        "aluminum tunes by stereolab",
-    ),
-    # Bare "<song> off <album>" with no "by <artist>" -- still wins; the song
-    # remains for Groq to extract.
-    (
-        "moon pix off moon pix",
-        "moon pix",
-        "moon pix",
-    ),
-    # Bare "<song> off of <album>".
-    (
-        "edits off of edits",
-        "edits",
-        "edits",
-    ),
-    # Mixed case + extra whitespace shouldn't matter.
-    (
-        "  Tower Of Dub by The Orb ON Live '93  ",
-        "Live '93",
-        "Tower Of Dub by The Orb",
-    ),
-    # Trailing politeness ("please", "thanks") is trimmed from the album text.
-    (
-        "tower of dub by the orb on live '93 please",
-        "live '93",
-        "tower of dub by the orb",
-    ),
-    (
-        "la paradoja by juana molina from doga, thanks",
-        "doga",
-        "la paradoja by juana molina",
-    ),
-]
+# `expected_stripped` is what the rest of the parser (Groq) should see after the
+# pre-pass has consumed the trailing "{on|from|off|off of} <album>" clause. It
+# still contains song + artist so Groq can extract those normally.
 
 
-@pytest.mark.parametrize(("raw_message", "expected_album", "expected_stripped"), POSITIVE_CASES)
-def test_extracts_album_from_canonical_phrasing(
-    raw_message: str, expected_album: str, expected_stripped: str
-) -> None:
+@pytest.mark.parametrize("case", POSITIVE_CASES, ids=[c.id for c in POSITIVE_CASES])
+def test_extracts_album_from_canonical_phrasing(case) -> None:
     """The pre-pass extracts the album and returns the consumed-suffix-stripped message."""
-    result = extract_album_prefix(raw_message)
+    result = extract_album_prefix(case.raw_message)
 
-    assert result is not None, f"Expected pre-pass to fire for: {raw_message!r}"
+    assert result is not None, f"Expected pre-pass to fire for: {case.raw_message!r}"
     extracted_album, stripped_message = result
 
     # Case-insensitive equality on the album (the regex preserves the listener's casing,
     # so we normalize before comparing). The stripped message must drop the suffix exactly.
-    assert extracted_album.strip().lower() == expected_album.lower(), (
-        f"album mismatch for {raw_message!r}: got {extracted_album!r}, want {expected_album!r}"
+    assert extracted_album.strip().lower() == case.expected_album.lower(), (
+        f"album mismatch for {case.raw_message!r}: got {extracted_album!r}, "
+        f"want {case.expected_album!r}"
     )
-    assert stripped_message.strip() == expected_stripped.strip(), (
-        f"stripped-message mismatch for {raw_message!r}: got {stripped_message!r}, "
-        f"want {expected_stripped!r}"
+    assert stripped_message.strip() == case.expected_stripped.strip(), (
+        f"stripped-message mismatch for {case.raw_message!r}: got {stripped_message!r}, "
+        f"want {case.expected_stripped!r}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Negative cases: pre-pass must NOT fire on common "on X" idioms.
+# Negative cases: pre-pass must NOT fire on common "on X" idioms / short forms.
 # ---------------------------------------------------------------------------
 # These leave album=null in the final parse. The regex is gated by a denylist
-# of trailing tokens that are commonly idioms, not album names.
-
-NEGATIVE_CASES: list[str] = [
-    # Canonical negatives from the ticket acceptance criteria.
-    "moon pix by cat power on the radio",
-    "moon pix by cat power on Friday",
-    "moon pix by cat power on repeat",
-    # Sibling idioms that fall in the same surface.
-    "moon pix by cat power on air",
-    "moon pix by cat power on vinyl",
-    "moon pix by cat power on cd",
-    # "off" as a request-style filler (off the top of my head etc.) -- the
-    # idiom denylist rejects "the" as a first album token.
-    "moon pix by cat power off the top of my head",
-    # No "by <artist>" and the album side is empty -- not a templated shape.
-    "moon pix off",
-    "moon pix off of",
-    # "from <place>" greetings: listener says hello from a location. The
-    # arbitrary-proper-noun surface (boston, new york, ...) cannot be covered
-    # by a finite first-token denylist, so for `from` we require a request
-    # signal in the prefix (a "by <artist>" clause or a comma).
-    "hello from boston",
-    "hi from new york",
-    "greetings from chapel hill",
-    "calling from durham",
-]
+# of trailing tokens that are commonly idioms, plus a request-signal gate on
+# `from` (so "hello from boston" is not mistaken for an album request).
 
 
-@pytest.mark.parametrize("raw_message", NEGATIVE_CASES)
-def test_does_not_extract_album_for_idioms_or_short_forms(raw_message: str) -> None:
+@pytest.mark.parametrize("case", NEGATIVE_CASES, ids=[c.id for c in NEGATIVE_CASES])
+def test_does_not_extract_album_for_idioms_or_short_forms(case) -> None:
     """The pre-pass returns None for inputs where the trailing clause is not an album."""
-    assert extract_album_prefix(raw_message) is None, (
-        f"Pre-pass incorrectly fired for: {raw_message!r}"
+    assert extract_album_prefix(case.raw_message) is None, (
+        f"Pre-pass incorrectly fired for: {case.raw_message!r}"
     )
 
 
@@ -155,3 +83,38 @@ def test_returns_none_for_empty_input() -> None:
     """Defensive: empty input returns None instead of raising."""
     assert extract_album_prefix("") is None
     assert extract_album_prefix("   ") is None
+
+
+# ---------------------------------------------------------------------------
+# Enforcement: keep the shared corpus and the parser's preposition set in sync.
+# ---------------------------------------------------------------------------
+# These are the tripwires that make "heuristic parity" structural rather than a
+# matter of vigilance. They run in normal CI (no external_api marker), so a
+# preposition added to the parser without a shared corpus case -- which would
+# silently skip the E2E layer that parametrises the same corpus -- fails here.
+
+
+def test_every_supported_preposition_has_positive_corpus_case() -> None:
+    """Every preposition the parser supports must have a positive shared case.
+
+    The E2E suite parametrises the same ``ALBUM_PREPASS_CASES`` corpus, so a
+    positive case per preposition guarantees that branch is exercised end-to-end
+    against real Groq -- not just at the unit level.
+    """
+    covered = {c.preposition for c in POSITIVE_CASES}
+    missing = set(SUPPORTED_ALBUM_PREPOSITIONS) - covered
+    assert not missing, (
+        "Prepositions supported by services.parser but with no positive case in "
+        f"tests.scenarios.ALBUM_PREPASS_CASES (so no E2E coverage): {sorted(missing)}. "
+        "Add a positive AlbumPrepassCase for each."
+    )
+
+
+def test_corpus_prepositions_are_all_supported() -> None:
+    """Every preposition referenced by the corpus must be one the parser supports."""
+    declared = {c.preposition for c in ALBUM_PREPASS_CASES if c.preposition}
+    unknown = declared - set(SUPPORTED_ALBUM_PREPOSITIONS)
+    assert not unknown, (
+        "tests.scenarios.ALBUM_PREPASS_CASES references prepositions that "
+        f"services.parser.SUPPORTED_ALBUM_PREPOSITIONS does not list: {sorted(unknown)}"
+    )
