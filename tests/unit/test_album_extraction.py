@@ -14,8 +14,11 @@ Inputs come from the shared corpus ``tests.scenarios.ALBUM_PREPASS_CASES``; the
 positive cases also drive the E2E smoke in tests/integration/test_integration.py
 (negatives are unit-only -- see tests/scenarios.py for why E2E cannot verify a
 declined input deterministically). The guard tests at the bottom of this file
-keep the corpus in lockstep with ``services.parser.SUPPORTED_ALBUM_PREPOSITIONS``
--- a new preposition branch cannot ship without a positive case backing it.
+keep the corpus's preposition *coverage* in lockstep with
+``services.parser.SUPPORTED_ALBUM_PREPOSITIONS`` -- a new preposition branch
+cannot ship without a positive case backing it. (Membership -- that a case names
+only a supported preposition -- is enforced separately at type-check time by the
+``Preposition`` Literal, not by a test here.)
 """
 
 from __future__ import annotations
@@ -143,13 +146,10 @@ def test_positive_preposition_label_matches_regex(case) -> None:
     )
 
 
-# NOTE: the "every corpus preposition is one the parser supports" invariant that
-# used to live here as test_corpus_prepositions_are_all_supported is now enforced
-# at type-check time: AlbumPrepassCase.preposition is typed as the
-# services.parser.Preposition Literal, so an unsupported value is a mypy error in
-# the CI "Type Check" job rather than a runtime assertion. The behavioural guards
-# below (coverage, label-matches-regex, unique ids) stay runtime because they
-# evaluate the regex / inspect the corpus, which no type checker does.
+# Membership ("every corpus preposition is one the parser supports") is enforced
+# at type-check time by AlbumPrepassCase.preposition's Preposition Literal type,
+# so it is not retested here. The guards below stay runtime because they evaluate
+# the regex / inspect the corpus, which no type checker does.
 
 
 def test_corpus_ids_are_unique() -> None:
