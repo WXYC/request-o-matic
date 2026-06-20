@@ -10,6 +10,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
+from services.parser import SUPPORTED_ALBUM_PREPOSITIONS
 from tests.scenarios import (
     ALBUM_PREPASS_POSITIVES,
     AMPS_FOR_CHRIST_AMBIGUOUS,
@@ -53,17 +54,22 @@ skip_if_no_groq = pytest.mark.skipif(
     not GROQ_API_KEY, reason="GROQ_API_KEY not set - skipping parser integration tests"
 )
 
-# One representative positive per *new* preposition (from/off/off of) from the
-# shared corpus (tests/scenarios.py). `on` is already exercised 10x by
-# test_extracts_album_from_on_preposition_reliably, and the deterministic overlay
-# wiring is covered with mocked Groq in test_parser_album_overlay.py -- so these
-# only need to smoke the live parse_request path once per new preposition. The
-# regex itself is verified exhaustively (and deterministically) in the unit
-# suite; negatives are unit-only because asserting on real-Groq output for a
-# declined input tests Groq, not our denylist, and can flake.
+# One representative positive per preposition *except* `on` (already exercised
+# 10x by test_extracts_album_from_on_preposition_reliably). Derived from
+# SUPPORTED_ALBUM_PREPOSITIONS rather than a hardcoded list, so a preposition
+# added to the parser is smoked here automatically -- the unit guard
+# test_every_supported_preposition_has_positive_corpus_case guarantees a positive
+# exists for each, and the `if c is not None` keeps a corpus edit from crashing
+# collection of this whole module. The deterministic overlay wiring for every
+# preposition is covered with mocked Groq in test_parser_album_overlay.py and the
+# regex in the unit suite; these tests only smoke the live parse_request path.
+# Negatives are unit-only: asserting on real-Groq output for a declined input
+# tests Groq, not our denylist, and can flake.
 _PREPASS_E2E_SMOKE = [
-    next(c for c in ALBUM_PREPASS_POSITIVES if c.preposition == prep)
-    for prep in ("from", "off", "off of")
+    c
+    for prep in SUPPORTED_ALBUM_PREPOSITIONS
+    if prep != "on"
+    if (c := next((p for p in ALBUM_PREPASS_POSITIVES if p.preposition == prep), None)) is not None
 ]
 
 
@@ -641,16 +647,17 @@ class TestParserIntegration:
     @skip_if_no_groq
     @pytest.mark.parametrize("case", _PREPASS_E2E_SMOKE, ids=[c.id for c in _PREPASS_E2E_SMOKE])
     async def test_prepass_overlays_album_e2e(self, case):
-        """Smoke the live parse_request path for the from/off/off-of prepositions.
+        """Smoke the live parse_request path for each preposition except `on`.
 
         The deterministic pre-pass (services.parser.extract_album_prefix) strips
         the "{prep} <album>" suffix before Groq sees the message and overlays the
         regex-extracted album. parse_request *forces* that album over Groq's, so
         this is a wiring smoke test, not an LLM-behaviour test: the regex is
         verified exhaustively in tests/unit/test_album_extraction.py and the
-        overlay with mocked Groq in tests/unit/test_parser_album_overlay.py. The
-        `on` branch is covered by test_extracts_album_from_on_preposition_reliably
-        above; this confirms the other prepositions also flow through unbroken.
+        overlay (for every preposition) with mocked Groq in
+        tests/unit/test_parser_album_overlay.py. The `on` branch is covered by
+        test_extracts_album_from_on_preposition_reliably above; this confirms the
+        other prepositions also flow through the real stack unbroken.
         """
         from groq import AsyncGroq
 
@@ -661,13 +668,13 @@ class TestParserIntegration:
 
         print(f"\n  {case.id}: album={result.album!r} (prep={case.preposition!r})")
 
-        # The overlay forces the regex-extracted album, so this is a hard
-        # invariant against real Groq, not a statistical threshold.
+        # Wiring smoke only: assert the album slot is populated through the live
+        # path. The *value* is forced by the deterministic overlay, so it is
+        # checked exactly (and for free) in the unit + mocked-overlay suites --
+        # re-asserting it here against real Groq would add no signal.
         assert result.album is not None, (
-            f"{case.id}: expected pre-pass to populate album for {case.raw_message!r}"
-        )
-        assert result.album.strip().lower() == case.expected_album.lower(), (
-            f"{case.id}: album mismatch -- got {result.album!r}, want {case.expected_album!r}"
+            f"{case.id}: pre-pass did not populate album through the live path "
+            f"for {case.raw_message!r}"
         )
 
 

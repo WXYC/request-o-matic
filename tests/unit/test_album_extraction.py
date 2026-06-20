@@ -151,3 +151,15 @@ def test_corpus_prepositions_are_all_supported() -> None:
         "tests.scenarios.ALBUM_PREPASS_CASES references prepositions that "
         f"services.parser.SUPPORTED_ALBUM_PREPOSITIONS does not list: {sorted(unknown)}"
     )
+
+
+def test_corpus_ids_are_unique() -> None:
+    """Case ids must be unique -- they key the parametrize ids in both suites.
+
+    The SearchScenario registry guards this via `_register`; the plain
+    ALBUM_PREPASS_CASES list has no such guard, so a copy-pasted id would
+    silently produce duplicate pytest node ids (and clobber any by-id lookup).
+    """
+    ids = [c.id for c in ALBUM_PREPASS_CASES]
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    assert not duplicates, f"duplicate AlbumPrepassCase ids: {duplicates}"

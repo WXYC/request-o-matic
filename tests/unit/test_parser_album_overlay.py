@@ -151,6 +151,29 @@ async def test_overlay_works_for_from_phrasing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_overlay_works_for_off_phrasing() -> None:
+    """Bare `off` (no `of`) overlays the album through parse_request.
+
+    Covers the bare-`off` preposition deterministically so the live-Groq E2E
+    smoke in test_integration.py is not the only coverage of this branch.
+    """
+    client = _make_mock_groq(
+        {
+            "song": "Back, Baby",
+            "album": None,
+            "artist": "Jessica Pratt",
+            "is_request": True,
+            "message_type": "request",
+        }
+    )
+
+    result = await parse_request("back, baby by jessica pratt off on your own love again", client)
+
+    assert result.album is not None
+    assert result.album.lower() == "on your own love again"
+
+
+@pytest.mark.asyncio
 async def test_overlay_works_for_off_of_phrasing() -> None:
     client = _make_mock_groq(
         {

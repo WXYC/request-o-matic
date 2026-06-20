@@ -1,8 +1,15 @@
-"""Shared search scenarios for unit and integration tests.
+"""Shared test inputs for unit and integration tests.
 
-Scenarios define INPUTS shared by both layers. Mock setup (unit) and assertions
-(both layers) remain in the test files -- only artist/song/album/raw_message
-are shared.
+Two corpora live here:
+
+* ``SearchScenario`` / ``SCENARIOS`` -- search-request inputs. Scenarios define
+  INPUTS; mock setup (unit) and assertions (both layers) stay in the test files.
+  Only artist/song/album/raw_message are shared.
+* ``AlbumPrepassCase`` / ``ALBUM_PREPASS_CASES`` -- album pre-pass inputs (see the
+  block lower in this file). These additionally share ``expected_album``,
+  ``expected_stripped`` and ``preposition``, and centralize the positive/negative
+  partition. Coverage is intentionally asymmetric: negatives are unit-only and
+  only the per-preposition positive smoke reaches the E2E suite.
 """
 
 from __future__ import annotations
@@ -390,8 +397,10 @@ class AlbumPrepassCase:
     verify a declined input deterministically.
 
     ``preposition`` is the ``SUPPORTED_ALBUM_PREPOSITIONS`` entry the case
-    exercises; a guard test asserts it matches what the regex actually matches,
-    so it can be trusted as the coverage key.
+    exercises. For positives a guard test asserts it equals what the regex
+    actually matches, so the coverage key can be trusted; for negatives (which by
+    definition the regex may decline before reaching this preposition) it is an
+    informational label of the surface being guarded, not regex-verified.
     """
 
     id: str
