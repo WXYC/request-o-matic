@@ -23,29 +23,30 @@ git clone <repository-url>
 cd request-o-matic
 ```
 
-### 2. Create Virtual Environment (Recommended)
+### 2. Create Virtual Environment
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
+
+> [uv](https://docs.astral.sh/uv/) users can skip this step — `uv sync` (below) creates and manages `.venv/` automatically.
 
 ### 3. Install Dependencies
 
-**Option A: Using requirements.txt**
+Dependencies are pinned via `uv.lock` (the single source of truth); `requirements.txt` (runtime) and `requirements-dev.txt` (runtime + dev tools) are generated from it. See [docs/deployment.md](docs/deployment.md#dependency-management) for the policy and the regenerate/bump procedure.
+
+**Recommended — using [uv](https://docs.astral.sh/uv/)** (installs the exact locked versions into `.venv/`):
 ```bash
-pip install -r requirements.txt
+uv sync --extra dev    # omit --extra dev for a runtime-only environment
 ```
 
-**Option B: Using pyproject.toml (Recommended)**
+**Using pip** (from the pinned requirements files):
 ```bash
-pip install -e .
+pip install -r requirements-dev.txt   # or requirements.txt for runtime only
 ```
 
-**Option C: With development dependencies**
-```bash
-pip install -e ".[dev]"
-```
+> Avoid `pip install -e .` / `pip install -e ".[dev]"` for routine setup — they re-resolve dependencies from PyPI and ignore `uv.lock`, so local versions can silently drift from what CI and Railway run. Bump deliberately via the procedure in [docs/deployment.md](docs/deployment.md#dependency-management).
 
 ### 4. Configure Environment Variables
 
