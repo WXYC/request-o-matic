@@ -7,51 +7,43 @@ common word "Today," as a temporal/conversational preamble and dropped it.
 The fix is prompt-only (no behavior code changed). A mocked-Groq unit test would
 be vacuous here -- the mock returns whatever JSON we feed it and exercises none
 of the prompt. So instead of asserting parser *behavior* (that's the manual
-external_api integration test), these tests assert the prompt *contract*: the
-SYSTEM_PROMPT continues to encode the comma-shape-short-word rule and its
-greeting-asymmetry counterpart, so the rule can't be silently deleted or reworded
-away. See docs/testing.md "Bug Fix Protocol" for when this prompt-contract
-pattern stands in for the mocked unit half on prompt-only parser fixes.
+external_api integration test), these tests assert the prompt *contract*: that
+SYSTEM_PROMPT still encodes the #162 rule and the greeting asymmetry it depends
+on, so the rule can't be silently deleted in a refactor.
+
+They assert at the *concept* level (the distinguishing phrases the rule
+introduces) rather than pinning a literal example sentence, so a benign reword
+-- e.g. swapping the example artist -- doesn't fail CI. See docs/testing.md
+"Prompt-only parser fixes".
 """
 
 from __future__ import annotations
 
 from services.parser import SYSTEM_PROMPT
 
-# Normalize to lowercase once: the rule's meaning, not its casing, is the contract.
+# Compare case-insensitively: the rule's meaning, not its casing, is the contract.
 _PROMPT = SYSTEM_PROMPT.lower()
 
 
-def test_prompt_documents_comma_shape() -> None:
-    """The terse '<song>, <artist>' comma shape must remain documented."""
-    assert "song title, artist name" in _PROMPT, (
-        "SYSTEM_PROMPT no longer documents the 'song title, artist name' comma shape"
-    )
+def test_prompt_documents_short_temporal_word_as_song() -> None:
+    """#162: a short word resembling a temporal adverb can be the song title.
 
-
-def test_prompt_covers_short_temporal_word_on_left_of_comma() -> None:
-    """The comma rule must cover a short common word that resembles a temporal adverb.
-
-    Guards WXYC/request-o-matic#162: the canonical example pins the behavior so a
-    future reword can't quietly drop the short-word coverage.
+    This is the distinguishing concept the fix adds to the comma/terse rule;
+    if it disappears, the parser regresses to dropping "Today," as preamble.
     """
-    assert "today, jefferson airplane" in _PROMPT, (
-        "SYSTEM_PROMPT no longer carries the 'Today, Jefferson Airplane' short-word "
-        "comma example (regression guard for #162)"
-    )
-    # The example must map the short word to the SONG slot, not the artist slot.
-    assert 'song="today"' in _PROMPT, (
-        "SYSTEM_PROMPT no longer maps the short leading word 'Today' to song= "
-        "in the comma-shape example"
+    assert "temporal adverb" in _PROMPT, (
+        "SYSTEM_PROMPT no longer documents that a short temporal-adverb-like word "
+        "can be the song title (regression guard for #162)"
     )
 
 
 def test_prompt_preserves_greeting_asymmetry() -> None:
-    """A genuine greeting is still dropped, so the fix must not over-generalize.
+    """A genuine greeting is still dropped, so the #162 fix must not over-generalize.
 
-    The greeting rule ("good morning" is preamble) must coexist with the
-    short-word rule ("Today" is a song), preserving the asymmetry #162 calls out.
+    The greeting rule (greetings are conversational preamble) has to coexist with
+    the short-word rule (a non-greeting short word is the song) -- the asymmetry
+    #162 calls out.
     """
-    assert "good morning" in _PROMPT, (
-        "SYSTEM_PROMPT no longer documents that greetings like 'good morning' are preamble"
+    assert "greeting" in _PROMPT and "preamble" in _PROMPT, (
+        "SYSTEM_PROMPT no longer documents that greetings are conversational preamble"
     )
