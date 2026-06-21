@@ -26,10 +26,16 @@ def build_slack_blocks(
             f"_{item.call_number}_",
         ]
         if artwork and artwork.release_url:
-            links = f"<{artwork.release_url}|Discogs> | <{item.library_url}|WXYC>"
+            # A row-less external result (LML#631) has no WXYC catalog page —
+            # it carries id=0 and an empty library_url. Omit the WXYC link in
+            # that case rather than emitting a malformed empty-target <|WXYC>;
+            # the "(external)" call number already marks it as not-in-library.
+            link_parts = [f"<{artwork.release_url}|Discogs>"]
+            if item.library_url:
+                link_parts.append(f"<{item.library_url}|WXYC>")
             if (preview := preview_url(artwork)) is not None:
-                links += f" | <{preview}|Preview>"
-            text_lines.append(links)
+                link_parts.append(f"<{preview}|Preview>")
+            text_lines.append(" | ".join(link_parts))
 
         block: dict = {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(text_lines)}}
 
