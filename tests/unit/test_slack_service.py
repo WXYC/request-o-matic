@@ -103,6 +103,29 @@ class TestBuildSlackBlocks:
         assert "WXYC" in text
         assert "discogs.com" in text
 
+    def test_rowless_external_item_omits_broken_wxyc_link(self):
+        """A row-less external result (LML#631) carries id=0 and an empty
+        ``library_url`` — there is no WXYC catalog page for it. The Discogs link
+        must still surface, but the WXYC link must be omitted rather than emitted
+        as a malformed ``<|WXYC>`` (empty-target Slack link)."""
+        item = make_library_item(id=0, call_number="(external)", library_url="")
+        artwork = make_release_metadata(
+            release_id=99999,
+            release_url="https://www.discogs.com/release/99999",
+            artwork_url="https://example.com/artwork.jpg",
+        )
+
+        blocks = build_slack_blocks(
+            message="Result:",
+            items_with_artwork=[(item, artwork)],
+        )
+
+        text = blocks[1]["text"]["text"]
+        assert "<https://www.discogs.com/release/99999|Discogs>" in text
+        # No WXYC link at all — and certainly not the malformed empty-target form.
+        assert "WXYC" not in text
+        assert "<|WXYC>" not in text
+
     @pytest.mark.parametrize(
         "streaming_field",
         ["spotify_url", "apple_music_url", "youtube_music_url", "bandcamp_url", "soundcloud_url"],
