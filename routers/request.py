@@ -425,6 +425,13 @@ async def handle_request(
         # Extract results for Slack posting. Generated LookupResponse fields
         # are nullable in the schema; coerce to non-null defaults for callers.
         results = lookup_response.results or []
+        # Exclude non-library results from the request channel. LML surfaces
+        # albums not in the WXYC catalog as row-less items (LML#631: id=0, empty
+        # library_url, call_number="(external)"). A DJ can't pull a non-shelved
+        # album, so these don't belong in the request feed. When this empties the
+        # list, the Slack post falls through to the existing "No results found"
+        # branch in post_results_to_slack.
+        results = [item for item in results if item.library_item.id > 0]
         library_results = [item.library_item for item in results]
         items_with_artwork = [(item.library_item, item.artwork) for item in results]
         search_type = str(lookup_response.search_type or "none")
