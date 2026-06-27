@@ -6,7 +6,8 @@
 3. **Parse**: Groq AI (`llama-3.1-8b-instant`) extracts artist/song/album from message
 4. **Early return**: Non-request messages (feedback, DJ messages) are posted to Slack without search
 5. **Delegate**: Search is delegated to [library-metadata-lookup](https://github.com/WXYC/library-metadata-lookup) via HTTP (`LOOKUP_SERVICE_URL`).
-6. **Slack**: Post enriched results with artwork to Slack
+6. **Filter to library**: Non-library results are dropped. LML can surface albums not in the WXYC catalog as row-less items (LML#631: `library_item.id == 0`, empty `library_url`, `call_number="(external)"`); a DJ can't pull a non-shelved album, so the request channel keeps only real library releases (`library_item.id > 0`). If this leaves nothing, the Slack post falls through to the "No results found" message.
+7. **Slack**: Post enriched results with artwork to Slack
 
 ## Degraded Modes
 Slack is the only hard dependency. When Groq or LML are unavailable the listener's message still reaches Slack, with a context line explaining what's missing. The response is `200` with a `degraded_mode` field:

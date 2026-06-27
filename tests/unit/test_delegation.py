@@ -1,5 +1,6 @@
 """Unit tests for the lookup delegation branch in handle_request."""
 
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -58,14 +59,20 @@ def sample_lookup_response():
 
 
 @pytest.fixture
-def app(mock_lookup_client):
+def mock_slack():
+    """A mock SlackService whose ``post_blocks`` calls can be inspected."""
+    slack = AsyncMock()
+    slack.webhook_url = "https://hooks.slack.com/test"
+    return slack
+
+
+@pytest.fixture
+def app(mock_lookup_client, mock_slack):
     """Create a test app with the request router and delegation enabled."""
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
 
     mock_groq = Mock()
-    mock_slack = AsyncMock()
-    mock_slack.webhook_url = "https://hooks.slack.com/test"
 
     app.dependency_overrides[get_groq_client] = lambda: mock_groq
     app.dependency_overrides[get_slack_service] = lambda: mock_slack
@@ -388,6 +395,94 @@ class TestDelegationBranch:
         assert lookup_req.song == "la paradoja"
         assert lookup_req.album == "DOGA"
         assert lookup_req.raw_message == "play la paradoja by juana molina"
+
+    @pytest.mark.asyncio
+    async def test_rowless_nonlibrary_results_excluded(self, app, mock_lookup_client, mock_slack):
+        """Row-less, non-library results (LML#631: ``id=0``, empty ``library_url``,
+        ``call_number="(external)"``) are albums not in the WXYC catalog. A DJ can't
+        pull them off the shelf, so they must not reach the request channel — neither
+        the response's ``library_results`` nor the Slack post."""
+        mock_lookup_client.lookup.return_value = LookupResponse(
+            results=[
+                LookupResultItem(
+                    library_item=make_library_item(
+                        id=42, title="Aluminum Tunes", artist="Stereolab"
+                    ),
+                    artwork=None,
+                ),
+                LookupResultItem(
+                    library_item=make_library_item(
+                        id=0,
+                        title="Unshelved Bootleg",
+                        artist="Not In Library",
+                        call_number="(external)",
+                        library_url="",
+                    ),
+                    artwork=make_release_metadata(release_id=999),
+                ),
+            ],
+            search_type=SearchType.direct,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/api/v1/request", json={"message": "play stereolab"})
+
+        data = response.json()
+        # Only the shelved release survives in the response.
+        assert [r["id"] for r in data["library_results"]] == [42]
+
+        # The Slack post mentions the library item but never the non-library one.
+        mock_slack.post_blocks.assert_awaited_once()
+        posted = json.dumps(mock_slack.post_blocks.call_args.args[0])
+        assert "Aluminum Tunes" in posted
+        assert "Not In Library" not in posted
+        assert "Unshelved Bootleg" not in posted
+
+    @pytest.mark.asyncio
+    async def test_all_nonlibrary_results_post_no_results_found(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """When every match is a row-less non-library result, filtering empties the
+        list and the request channel falls through to the existing 'No results found'
+        message rather than posting a non-library item."""
+        mock_lookup_client.lookup.return_value = LookupResponse(
+            results=[
+                LookupResultItem(
+                    library_item=make_library_item(
+                        id=0,
+                        title="Unshelved Bootleg",
+                        artist="Not In Library",
+                        call_number="(external)",
+                        library_url="",
+                    ),
+                    artwork=make_release_metadata(release_id=999),
+                ),
+            ],
+            search_type=SearchType.direct,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request", json={"message": "play obscure bootleg"}
+                )
+
+        data = response.json()
+        assert data["library_results"] == []
+
+        mock_slack.post_blocks.assert_awaited_once()
+        posted = json.dumps(mock_slack.post_blocks.call_args.args[0])
+        assert "No results found" in posted
+        assert "Not In Library" not in posted
 
 
 class TestDelegatedCacheStats:
