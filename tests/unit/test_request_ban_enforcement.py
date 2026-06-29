@@ -31,7 +31,7 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
-from generated.api_models import SearchType
+from generated.api_models import CacheStats, SearchType
 from routers.request import router
 from services.ban_check_client import (
     BanCheckClient,
@@ -54,7 +54,14 @@ EMPTY_LOOKUP = LookupResponse(
     found_on_compilation=False,
     context_message=None,
     corrected_artist=None,
-    cache_stats={"hits": 0, "misses": 0},
+    cache_stats=CacheStats(
+        memory_hits=0,
+        pg_hits=0,
+        pg_misses=0,
+        api_calls=0,
+        pg_time_ms=0.0,
+        api_time_ms=0.0,
+    ),
 )
 
 

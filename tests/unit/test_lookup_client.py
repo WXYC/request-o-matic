@@ -52,7 +52,14 @@ SAMPLE_RESPONSE = {
     "found_on_compilation": False,
     "context_message": None,
     "corrected_artist": None,
-    "cache_stats": {"hits": 1, "misses": 0},
+    "cache_stats": {
+        "memory_hits": 1,
+        "pg_hits": 0,
+        "pg_misses": 0,
+        "api_calls": 0,
+        "pg_time_ms": 0.0,
+        "api_time_ms": 0.0,
+    },
 }
 
 
@@ -299,6 +306,9 @@ class TestLookupModels:
             "song": "la paradoja",
             "album": "DOGA",
             "raw_message": "msg",
+            # include_identity is a non-optional bool with a False default, so it
+            # survives exclude_none (added to the LookupRequest contract upstream).
+            "include_identity": False,
         }
 
     def test_lookup_response_defaults(self):

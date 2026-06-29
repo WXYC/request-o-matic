@@ -441,8 +441,13 @@ async def handle_request(
 
         # Prefer the lookup service's cache stats over local counters,
         # which stay at 0 since all Discogs/cache work is delegated.
-        if lookup_response.cache_stats:
-            cache_stats_override = lookup_response.cache_stats
+        # wxyc-shared tightened LookupResponse.cache_stats from a free-form
+        # object to the structured CacheStats model, so a parsed response
+        # carries a CacheStats here; flatten it back to a plain dict for the
+        # UnifiedResponse wire shape (and tolerate a raw dict defensively).
+        stats = lookup_response.cache_stats
+        if stats:
+            cache_stats_override = stats if isinstance(stats, dict) else stats.model_dump()
 
     with telemetry.track_step("slack_post"):
         if not request.skip_slack:
