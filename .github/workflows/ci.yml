@@ -36,6 +36,41 @@ jobs:
       - name: Lint with ruff
         run: ruff check .
 
+  codegen-check:
+    # Fails fast when generated/api_models.py lags the wxyc-shared api.yaml
+    # contract. Without this gate the committed models drifted silently across
+    # many wxyc-shared releases (fixed in #175). PR-only: it regenerates and
+    # diffs, which needs the codegen toolchain that normal jobs don't carry.
+    # Mirrors library-metadata-lookup's codegen-check job.
+    name: Codegen Freshness
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # requirements-dev.txt pins datamodel-code-generator + ruff, so a new
+        # release with different generated-code formatting cannot silently fail
+        # this job on an unrelated PR (same rationale as the lint job's pins).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Regenerate API models
+        # No sibling wxyc-shared checkout exists in CI, so the script downloads
+        # api.yaml from wxyc-shared main and regenerates generated/api_models.py.
+        run: bash scripts/generate_api_models.sh
+
+      - name: Check for drift
+        # A non-empty diff means the committed models are stale: regenerate with
+        # `bash scripts/generate_api_models.sh` and commit the result.
+        run: git diff --exit-code generated/
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
