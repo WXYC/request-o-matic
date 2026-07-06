@@ -101,6 +101,29 @@ PLUG_COMMA_FORMAT = _register(
     tags=frozenset({"parser", "artist_substitution", "comma_format"}),
 )
 
+# Same track as PLUG_ALIAS but WITHOUT the album, so the lookup can't ride the
+# ARTIST_PLUS_ALBUM album-title path and must find the original via track search.
+# The in-library original "Me & Mr Jones" is on Discogs release 3192 (WXYC library
+# id 38167, cataloged under "Luke Vibert"); a non-library remix "Me & Mr. Jones
+# (Boymerang Remix)" lives on release 1643641 ("Me & Mr. Sutton"). The album-less
+# lookup should surface the in-library original, not the remix.
+#
+# Currently xfail: blocked by WXYC/discogs-etl#298 — the discogs-cache track index
+# (release_track / release_artist) was emptied ~2026-07-01, so release 3192 is
+# unindexed and search_releases_by_track can only surface the write-back-indexed
+# remix. Flip to a hard assertion once the cache is repopulated.
+PLUG_NO_ALBUM = _register(
+    id="plug_no_album",
+    description="album-less 'me and mr. jones by plug' should surface the in-library original, not the non-library remix",
+    raw_message="me and mr. jones by plug",
+    artist="Plug",
+    song="Me And Mr Jones",
+    bug="Album-less track lookup surfaced non-library remix 'Me & Mr. Sutton' (release 1643641) row-less instead of in-library original 'Drum 'n' Bass for Papa' (library id 38167)",
+    tags=frozenset({"alias", "track_search", "compilation"}),
+    xfail=True,
+    xfail_reason="blocked by WXYC/discogs-etl#298: discogs-cache track index empty, release 3192 unindexed",
+)
+
 SNEAKER_PIMPS_TRACK_VALIDATION = _register(
     id="sneaker_pimps_track_validation",
     description="6 Underground is on Becoming X but not Kiss & Swallow",
