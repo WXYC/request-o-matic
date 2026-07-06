@@ -30,6 +30,7 @@ from tests.scenarios import (
     ORB_ON_ALBUM,
     PLUG_ALIAS,
     PLUG_COMMA_FORMAT,
+    PLUG_NO_ALBUM,
     QUIXOTIC_SPECIAL_CHARS,
     SARA_FLEETWOOD_MAC_GREETING,
     SNEAKER_PIMPS_TRACK_VALIDATION,
@@ -1589,4 +1590,63 @@ class TestFullRequestIntegration:
         assert len(results) > 0, (
             "Should find results for 'me and mr jones by plug'. "
             "Plug is an alias for Luke Vibert on Discogs."
+        )
+        # NOTE: this stays a weak `len>0` on purpose. Ideally it would assert the
+        # in-library original ("Drum 'n' Bass for Papa"), but two separate bugs
+        # block that today: (1) the LLM parser does not reliably extract the album
+        # from the "... from <album>" clause here (returns album=None), so the
+        # request falls to track search; (2) track search then hits the empty
+        # discogs-cache index (WXYC/discogs-etl#298) and returns the remix. The
+        # album-less companion below pins the track-search half as an xfail; the
+        # parser-extraction half is tracked separately.
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason=PLUG_NO_ALBUM.xfail_reason or "", strict=False)
+    async def test_plug_me_and_mr_jones_no_album_finds_library_original(self, base_url):
+        """Album-LESS 'me and mr. jones by plug' must surface the in-library
+        original, not the non-library remix.
+
+        Without the album the lookup can't use the ARTIST_PLUS_ALBUM album-title
+        path; it falls to track search. The in-library original "Me & Mr Jones"
+        is on Discogs release 3192 (WXYC library id 38167, cataloged under
+        "Luke Vibert"); the remix "Me & Mr. Jones (Boymerang Remix)" is on the
+        non-library release 1643641 ("Me & Mr. Sutton").
+
+        XFAIL (non-strict): blocked by WXYC/discogs-etl#298 — the discogs-cache
+        track index was emptied ~2026-07-01, so release 3192 is unindexed and
+        search_releases_by_track can only return the write-back-indexed remix.
+        Remove the marker once the cache is repopulated.
+        """
+        import httpx
+
+        s = PLUG_NO_ALBUM
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{base_url}/request",
+                json={"message": s.raw_message, "skip_slack": True},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        results = data.get("library_results", [])
+        print("\n📚 Library Results (album-less):")
+        for r in results:
+            print(f"  - {r.get('artist')} - {r.get('title')}")
+
+        assert results, "Album-less lookup should return the in-library original."
+        # The remix release must NOT be what we surface.
+        assert not any("sutton" in (r.get("title") or "").lower() for r in results), (
+            "Surfaced the non-library remix 'Me & Mr. Sutton' instead of the "
+            "in-library original — discogs-etl#298."
+        )
+        # The in-library original must be present.
+        assert any(
+            "papa" in (r.get("title") or "").lower()
+            or "drum" in (r.get("title") or "").lower()
+            or "vibert" in (r.get("artist") or "").lower()
+            for r in results
+        ), (
+            "Album-less lookup should surface 'Drum 'n' Bass for Papa' "
+            f"(Luke Vibert / library id 38167), got: "
+            f"{[(r.get('artist'), r.get('title')) for r in results]}"
         )
