@@ -56,3 +56,27 @@ class TestPrintServerTiming:
         out = capsys.readouterr().out
         assert "mystery_stage" in out
         assert "12" in out
+
+    def test_all_forwarded_lml_substages_get_friendly_labels(self, capsys):
+        """Every sub-stage LML forwards renders with an ``LML:`` provenance label,
+        not its raw snake_case name. Regression guard: the map originally covered
+        only 3 of LML's 7 forwarded stages, so album_lookup / track_validation /
+        artwork_fetch / identity_resolution leaked through raw (confirmed against
+        staging on 2026-07-16)."""
+        header = (
+            "parse;dur=5, album_lookup;dur=1, library_search;dur=2, "
+            "track_validation;dur=1, artwork_fetch;dur=3, metadata_enrichment;dur=4, "
+            "identity_resolution;dur=2, discogs;dur=6, lookup_service;dur=20, total;dur=25"
+        )
+        print_server_timing(header, round_trip_ms=30.0)
+        out = capsys.readouterr().out
+        for label in (
+            "LML: album lookup",
+            "LML: track validation",
+            "LML: artwork fetch",
+            "LML: identity resolution",
+        ):
+            assert label in out
+        # the raw snake_case forms must not leak once the stage is mapped
+        for raw in ("album_lookup", "track_validation", "artwork_fetch", "identity_resolution"):
+            assert raw not in out
