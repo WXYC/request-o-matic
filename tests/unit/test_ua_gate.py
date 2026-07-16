@@ -29,7 +29,7 @@ from core.dependencies import (
 from generated.api_models import CacheStats, SearchType
 from routers.request import router
 from services.ban_check_client import BanCheckClient
-from services.lookup_client import LookupResponse, LookupServiceClient
+from services.lookup_client import LookupResponse, LookupResult, LookupServiceClient
 from services.ua_gate import (
     UA_GATE_BAN_REASON,
     UA_GATE_BAN_SOURCE,
@@ -193,7 +193,7 @@ def mock_ban_check_client():
 @pytest.fixture
 def mock_lookup_client():
     client = AsyncMock(spec=LookupServiceClient)
-    client.lookup.return_value = EMPTY_LOOKUP
+    client.lookup.return_value = LookupResult(response=EMPTY_LOOKUP, server_timing=None)
     return client
 
 

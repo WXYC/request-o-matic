@@ -2,14 +2,35 @@
 
 import asyncio
 import logging
+from typing import NamedTuple
 
 import httpx
 
 from generated.api_models import LookupRequest, LookupResponse, LookupResultItem
 
-__all__ = ["LookupRequest", "LookupResponse", "LookupResultItem", "LookupServiceClient"]
+__all__ = [
+    "LookupRequest",
+    "LookupResponse",
+    "LookupResult",
+    "LookupResultItem",
+    "LookupServiceClient",
+]
 
 logger = logging.getLogger(__name__)
+
+
+class LookupResult(NamedTuple):
+    """The parsed LML response paired with its raw ``Server-Timing`` header.
+
+    ``server_timing`` is the verbatim header value LML returns (or ``None`` when
+    absent), carried alongside the body so the router can forward and merge LML's
+    per-stage timings without re-fetching. Returned by value rather than stashed
+    on the client instance because ``get_lookup_client`` may hand the same client
+    to concurrent requests — a per-instance attribute would race.
+    """
+
+    response: LookupResponse
+    server_timing: str | None
 
 
 class LookupServiceClient:
@@ -53,8 +74,8 @@ class LookupServiceClient:
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-    async def lookup(self, request: LookupRequest, skip_cache: bool = False) -> LookupResponse:
-        """Call the lookup service and return parsed response.
+    async def lookup(self, request: LookupRequest, skip_cache: bool = False) -> LookupResult:
+        """Call the lookup service and return the parsed response + timing header.
 
         Retries on ``ConnectError`` only. ``TimeoutException`` and HTTP status
         errors are raised immediately without retry.
@@ -64,7 +85,8 @@ class LookupServiceClient:
             skip_cache: If True, bypass the lookup service's caches
 
         Returns:
-            LookupResponse with results and metadata
+            LookupResult pairing the parsed ``LookupResponse`` with LML's raw
+            ``Server-Timing`` header value (``None`` when the header is absent).
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx responses (no retry)
@@ -84,7 +106,10 @@ class LookupServiceClient:
                     timeout=self.per_attempt_timeout,
                 )
                 response.raise_for_status()
-                return LookupResponse.model_validate(response.json())
+                return LookupResult(
+                    response=LookupResponse.model_validate(response.json()),
+                    server_timing=response.headers.get("Server-Timing"),
+                )
             except self._RETRYABLE as exc:
                 last_exc = exc
                 if attempt < self.max_attempts:

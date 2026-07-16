@@ -1,6 +1,7 @@
 """Unit tests for the lookup delegation branch in handle_request."""
 
 import json
+import re
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -16,11 +17,26 @@ from core.dependencies import (
 )
 from generated.api_models import SearchType
 from routers.request import router
-from services.lookup_client import LookupResponse, LookupResultItem, LookupServiceClient
+from services.lookup_client import (
+    LookupResponse,
+    LookupResult,
+    LookupResultItem,
+    LookupServiceClient,
+)
 from tests.conftest import make_parsed_request
 from tests.factories import make_library_item, make_release_metadata
 
 # -- Fixtures -----------------------------------------------------------------
+
+
+def _lr(response: LookupResponse, server_timing: str | None = None) -> LookupResult:
+    """Wrap a LookupResponse as the LookupResult that ``lookup()`` now returns.
+
+    These cases assert on response fields, not timing, so they stage a response
+    and let the router observe ``server_timing`` (``None`` = no forwarded header)
+    exactly as the real client would deliver it.
+    """
+    return LookupResult(response=response, server_timing=server_timing)
 
 
 @pytest.fixture
@@ -98,7 +114,7 @@ class TestDelegationBranch:
     @pytest.mark.asyncio
     async def test_successful_delegation(self, app, mock_lookup_client, sample_lookup_response):
         """Delegation returns results from lookup service, skipping inline pipeline."""
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch(
             "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
@@ -127,13 +143,15 @@ class TestDelegationBranch:
     @pytest.mark.asyncio
     async def test_delegation_maps_response_fields(self, app, mock_lookup_client):
         """All LookupResponse metadata fields map to UnifiedResponse correctly."""
-        mock_lookup_client.lookup.return_value = LookupResponse(
-            results=[],
-            search_type=SearchType.compilation,
-            song_not_found=True,
-            found_on_compilation=True,
-            context_message='Found "Abele Dance" by Manu Dibango on:',
-            corrected_artist=None,
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[],
+                search_type=SearchType.compilation,
+                song_not_found=True,
+                found_on_compilation=True,
+                context_message='Found "Abele Dance" by Manu Dibango on:',
+                corrected_artist=None,
+            )
         )
 
         with patch(
@@ -159,7 +177,7 @@ class TestDelegationBranch:
         sample_lookup_response.corrected_artist = "Living Colour"
 
         parsed = make_parsed_request(artist="Living Color", raw_message="play living color")
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=parsed):
             async with AsyncClient(
@@ -260,7 +278,7 @@ class TestDelegationBranch:
     @pytest.mark.asyncio
     async def test_skip_cache_forwarded(self, app, mock_lookup_client, sample_lookup_response):
         """skip_cache=True is forwarded to the lookup service."""
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch(
             "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
@@ -285,11 +303,13 @@ class TestDelegationBranch:
     @pytest.mark.asyncio
     async def test_empty_results_from_delegation(self, app, mock_lookup_client):
         """Empty results from lookup service are handled correctly."""
-        mock_lookup_client.lookup.return_value = LookupResponse(
-            results=[],
-            search_type=SearchType.none,
-            song_not_found=True,
-            found_on_compilation=False,
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[],
+                search_type=SearchType.none,
+                song_not_found=True,
+                found_on_compilation=False,
+            )
         )
 
         with patch(
@@ -312,33 +332,35 @@ class TestDelegationBranch:
     @pytest.mark.asyncio
     async def test_multiple_results_with_artwork(self, app, mock_lookup_client):
         """Multiple results with artwork are extracted correctly."""
-        mock_lookup_client.lookup.return_value = LookupResponse(
-            results=[
-                LookupResultItem(
-                    library_item=make_library_item(
-                        id=1,
-                        title="Aluminum Tunes",
-                        artist="Stereolab",
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=1,
+                            title="Aluminum Tunes",
+                            artist="Stereolab",
+                        ),
+                        artwork=make_release_metadata(
+                            release_id=100,
+                            album="Aluminum Tunes",
+                            artist="Stereolab",
+                            artwork_url="https://img.discogs.com/aluminum.jpg",
+                            confidence=0.9,
+                        ),
                     ),
-                    artwork=make_release_metadata(
-                        release_id=100,
-                        album="Aluminum Tunes",
-                        artist="Stereolab",
-                        artwork_url="https://img.discogs.com/aluminum.jpg",
-                        confidence=0.9,
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=2,
+                            title="Dots and Loops",
+                            artist="Stereolab",
+                            release_call_number=2,
+                        ),
+                        artwork=None,
                     ),
-                ),
-                LookupResultItem(
-                    library_item=make_library_item(
-                        id=2,
-                        title="Dots and Loops",
-                        artist="Stereolab",
-                        release_call_number=2,
-                    ),
-                    artwork=None,
-                ),
-            ],
-            search_type=SearchType.fallback,
+                ],
+                search_type=SearchType.fallback,
+            )
         )
 
         with patch(
@@ -369,7 +391,7 @@ class TestDelegationBranch:
         self, app, mock_lookup_client, sample_lookup_response
     ):
         """LookupRequest is built from parsed fields and raw message."""
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         parsed = make_parsed_request(
             song="la paradoja",
@@ -402,26 +424,28 @@ class TestDelegationBranch:
         ``call_number="(external)"``) are albums not in the WXYC catalog. A DJ can't
         pull them off the shelf, so they must not reach the request channel — neither
         the response's ``library_results`` nor the Slack post."""
-        mock_lookup_client.lookup.return_value = LookupResponse(
-            results=[
-                LookupResultItem(
-                    library_item=make_library_item(
-                        id=42, title="Aluminum Tunes", artist="Stereolab"
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=42, title="Aluminum Tunes", artist="Stereolab"
+                        ),
+                        artwork=None,
                     ),
-                    artwork=None,
-                ),
-                LookupResultItem(
-                    library_item=make_library_item(
-                        id=0,
-                        title="Unshelved Bootleg",
-                        artist="Not In Library",
-                        call_number="(external)",
-                        library_url="",
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=0,
+                            title="Unshelved Bootleg",
+                            artist="Not In Library",
+                            call_number="(external)",
+                            library_url="",
+                        ),
+                        artwork=make_release_metadata(release_id=999),
                     ),
-                    artwork=make_release_metadata(release_id=999),
-                ),
-            ],
-            search_type=SearchType.direct,
+                ],
+                search_type=SearchType.direct,
+            )
         )
 
         with patch(
@@ -450,20 +474,22 @@ class TestDelegationBranch:
         """When every match is a row-less non-library result, filtering empties the
         list and the request channel falls through to the existing 'No results found'
         message rather than posting a non-library item."""
-        mock_lookup_client.lookup.return_value = LookupResponse(
-            results=[
-                LookupResultItem(
-                    library_item=make_library_item(
-                        id=0,
-                        title="Unshelved Bootleg",
-                        artist="Not In Library",
-                        call_number="(external)",
-                        library_url="",
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=0,
+                            title="Unshelved Bootleg",
+                            artist="Not In Library",
+                            call_number="(external)",
+                            library_url="",
+                        ),
+                        artwork=make_release_metadata(release_id=999),
                     ),
-                    artwork=make_release_metadata(release_id=999),
-                ),
-            ],
-            search_type=SearchType.direct,
+                ],
+                search_type=SearchType.direct,
+            )
         )
 
         with patch(
@@ -508,7 +534,7 @@ class TestDelegatedCacheStats:
             "api_time_ms": 350.0,
         }
         sample_lookup_response.cache_stats = remote_stats
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch(
             "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
@@ -546,7 +572,7 @@ class TestDelegatedCacheStats:
             "api_time_ms": 200.0,
         }
         sample_lookup_response.cache_stats = remote_stats
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch(
             "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
@@ -572,7 +598,7 @@ class TestDelegatedCacheStats:
     ):
         """When lookup service returns no cache_stats, fall back to local counters."""
         sample_lookup_response.cache_stats = None
-        mock_lookup_client.lookup.return_value = sample_lookup_response
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
 
         with patch(
             "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
@@ -589,3 +615,139 @@ class TestDelegatedCacheStats:
         # Should still have cache_stats (from local init_cache_stats), just all zeros
         assert data["cache_stats"] is not None
         assert data["cache_stats"]["memory_hits"] == 0
+
+
+def _server_timing_names(header: str) -> list[str]:
+    """Ordered metric names from a Server-Timing header value."""
+    return [entry.split(";")[0].strip() for entry in header.split(",") if entry.strip()]
+
+
+class TestServerTimingForwarding:
+    """Server-Timing emission + LML sub-stage merge on /request (Backend-Service#881).
+
+    /request combines rom's own per-stage telemetry (parse, lookup_service,
+    slack_post) with the sub-stages LML forwards in its own Server-Timing header,
+    dropping LML's total so the merged header carries exactly one (rom's) total.
+    """
+
+    @pytest.mark.asyncio
+    async def test_header_present_by_default(self, app, mock_lookup_client, sample_lookup_response):
+        """With the flag at its default (on), /request attaches a Server-Timing
+        header carrying rom's own stages and exactly one total, last."""
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja by juana molina", "skip_slack": True},
+                )
+
+        header = response.headers.get("server-timing")
+        assert header is not None
+        names = _server_timing_names(header)
+        assert "parse" in names
+        assert "lookup_service" in names
+        assert names.count("total") == 1
+        assert names[-1] == "total"
+
+    @pytest.mark.asyncio
+    async def test_forwarded_lml_substages_merged(
+        self, app, mock_lookup_client, sample_lookup_response
+    ):
+        """LML's forwarded sub-stages are merged in and its own total is dropped,
+        leaving a strict-parser-safe header with exactly one (rom's) total."""
+        mock_lookup_client.lookup.return_value = _lr(
+            sample_lookup_response,
+            server_timing=(
+                "library_search;dur=41.2, metadata_enrichment;dur=8500.7, "
+                "discogs;dur=806, total;dur=8560.1"
+            ),
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "milkman aphex twin", "skip_slack": True},
+                )
+
+        header = response.headers["server-timing"]
+        entries = [e.strip() for e in header.split(",") if e.strip()]
+        names = _server_timing_names(header)
+        # LML sub-stages surface, verbatim durations preserved
+        assert "library_search" in names
+        assert "metadata_enrichment" in names
+        assert "discogs" in names
+        assert "metadata_enrichment;dur=8500.7" in entries
+        # rom's own stages surface
+        assert "parse" in names
+        assert "lookup_service" in names
+        # LML's total is dropped; exactly one total (rom's), last
+        assert names.count("total") == 1
+        assert names[-1] == "total"
+        # strict-parser-safe wire format (name;dur=<plain-decimal>, ", "-joined)
+        grammar = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*;dur=\d+(?:\.\d+)?$")
+        for entry in entries:
+            assert grammar.match(entry), f"non-conforming Server-Timing entry: {entry!r}"
+
+    @pytest.mark.asyncio
+    async def test_header_absent_when_flag_disabled(
+        self, app, mock_lookup_client, sample_lookup_response
+    ):
+        """ENABLE_SERVER_TIMING=false suppresses the header entirely."""
+        from config.settings import Settings, get_settings
+
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
+        app.dependency_overrides[get_settings] = lambda: Settings(
+            groq_api_key="test", enable_server_timing=False
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play stereolab", "skip_slack": True},
+                )
+
+        assert response.status_code == 200
+        assert "server-timing" not in response.headers
+
+    @pytest.mark.asyncio
+    async def test_search_unavailable_still_emits_rom_only_header(self, app, mock_lookup_client):
+        """When LML is down, the sentinel keeps the request on the degraded path
+        (200, not a 500 from an unbound timing var) and the header carries rom's
+        own stages with no forwarded LML sub-stages."""
+        mock_lookup_client.lookup.side_effect = httpx.ConnectError("LML down")
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play stereolab", "skip_slack": True},
+                )
+
+        assert response.status_code == 200
+        assert response.json()["degraded_mode"] == "search_unavailable"
+        header = response.headers.get("server-timing")
+        assert header is not None
+        names = _server_timing_names(header)
+        assert "parse" in names
+        assert "library_search" not in names
+        assert names.count("total") == 1

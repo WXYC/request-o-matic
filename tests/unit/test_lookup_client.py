@@ -8,6 +8,7 @@ import pytest
 from services.lookup_client import (
     LookupRequest,
     LookupResponse,
+    LookupResult,
     LookupResultItem,
     LookupServiceClient,
 )
@@ -81,7 +82,7 @@ class TestLookupServiceClient:
             return httpx.Response(200, json=SAMPLE_RESPONSE)
 
         client = _make_client(handler)
-        response = await client.lookup(
+        result = await client.lookup(
             LookupRequest(
                 artist="Stereolab",
                 song="Ping Pong",
@@ -89,6 +90,11 @@ class TestLookupServiceClient:
             )
         )
 
+        # lookup() returns a LookupResult pairing the parsed response with the
+        # raw Server-Timing header (None here — the handler sends no header).
+        assert isinstance(result, LookupResult)
+        assert result.server_timing is None
+        response = result.response
         assert isinstance(response, LookupResponse)
         assert response.results is not None
         assert len(response.results) == 1
@@ -99,6 +105,29 @@ class TestLookupServiceClient:
         assert response.search_type == "direct"
         assert response.song_not_found is False
         assert response.found_on_compilation is False
+
+    @pytest.mark.asyncio
+    async def test_lookup_captures_server_timing_header(self):
+        """When LML returns a Server-Timing header, it is captured on the result
+        so the router can forward and merge the sub-stage breakdown."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=SAMPLE_RESPONSE,
+                headers={
+                    "Server-Timing": "library_search;dur=41.2, discogs;dur=806, total;dur=8560.1"
+                },
+            )
+
+        client = _make_client(handler)
+        result = await client.lookup(
+            LookupRequest(artist="Stereolab", raw_message="play stereolab")
+        )
+
+        assert isinstance(result, LookupResult)
+        assert result.server_timing == "library_search;dur=41.2, discogs;dur=806, total;dur=8560.1"
+        assert result.response.search_type == "direct"
 
     @pytest.mark.asyncio
     async def test_successful_lookup_with_all_fields(self):
@@ -135,9 +164,11 @@ class TestLookupServiceClient:
             return httpx.Response(200, json=empty_response)
 
         client = _make_client(handler)
-        response = await client.lookup(
-            LookupRequest(artist="ZZZNONEXISTENT", raw_message="play ZZZNONEXISTENT")
-        )
+        response = (
+            await client.lookup(
+                LookupRequest(artist="ZZZNONEXISTENT", raw_message="play ZZZNONEXISTENT")
+            )
+        ).response
 
         assert response.results == []
         assert response.search_type == "none"
@@ -155,9 +186,11 @@ class TestLookupServiceClient:
             return httpx.Response(200, json=response_data)
 
         client = _make_client(handler)
-        response = await client.lookup(
-            LookupRequest(artist="Living Color", raw_message="play living color")
-        )
+        response = (
+            await client.lookup(
+                LookupRequest(artist="Living Color", raw_message="play living color")
+            )
+        ).response
 
         assert response.corrected_artist == "Living Colour"
 
@@ -346,11 +379,12 @@ class TestLookupRetry:
             return httpx.Response(200, json=SAMPLE_RESPONSE)
 
         client = _make_client(handler)
-        response = await client.lookup(
+        result = await client.lookup(
             LookupRequest(artist="Stereolab", raw_message="play stereolab")
         )
         assert len(calls) == 2
-        assert isinstance(response, LookupResponse)
+        assert isinstance(result, LookupResult)
+        assert isinstance(result.response, LookupResponse)
 
     @pytest.mark.asyncio
     async def test_no_retry_on_timeout(self):
@@ -418,8 +452,9 @@ class TestLookupRetry:
             return httpx.Response(200, json=SAMPLE_RESPONSE)
 
         client = _make_client(handler)
-        response = await client.lookup(
+        result = await client.lookup(
             LookupRequest(artist="Jessica Pratt", raw_message="play jessica pratt")
         )
         assert len(calls) == 1
-        assert isinstance(response, LookupResponse)
+        assert isinstance(result, LookupResult)
+        assert isinstance(result.response, LookupResponse)
