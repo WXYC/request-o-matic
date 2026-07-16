@@ -2,15 +2,16 @@
 """CLI script to test the /request endpoint without posting to Slack.
 
 Usage:
-    python scripts/lookup.py "play bohemian rhapsody by queen"
-    python scripts/lookup.py --staging "the beatles abbey road"
-    python scripts/lookup.py --verbose "the beatles abbey road"
+    python scripts/lookup.py "milkman aphex twin"
+    python scripts/lookup.py --staging "juana molina la paradoja"
+    python scripts/lookup.py --verbose "juana molina la paradoja"
 """
 
 import argparse
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
+from core.server_timing import parse_server_timing
 from scripts._common import LOCAL_URL, PROD_URL, STAGING_URL, set_up_logging
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,46 @@ def print_cache_stats(cache_stats: dict) -> None:
         print(f"  API time:          {api_time:.0f} ms")
 
 
+# Friendly labels + provenance for the stages ROM emits in its merged
+# Server-Timing header. Leaves (parse, slack_post, and the forwarded LML
+# sub-stages) render first; the roll-ups render after them. Unmapped stage
+# names fall through to their raw form so a new stage is never silently dropped.
+_STAGE_LABELS = {
+    "parse": "Parse (Groq)",
+    "slack_post": "Slack post",
+    "library_search": "LML: library search",
+    "metadata_enrichment": "LML: metadata enrichment",
+    "discogs": "LML: Discogs cache/API",
+    "lookup_service": "LML round-trip (server)",
+    "total": "Server total",
+}
+_ROLLUP_STAGES = ("lookup_service", "total")
+
+
+def print_server_timing(header: str | None, round_trip_ms: float) -> None:
+    """Print the `/request` Server-Timing breakdown, client round-trip last.
+
+    ``header`` is the raw ``Server-Timing`` value ROM returns (rom's own stages
+    merged with LML's forwarded sub-stages; see WXYC/request-o-matic#179). The
+    per-stage leaves print in header order, then the roll-ups (LML round-trip,
+    server total), then the client-measured ``round_trip_ms`` — so a reader sees
+    where the time went (e.g. an 8.5s ``metadata_enrichment`` Apple-probe stall)
+    and can reconcile it against the totals. When the server sent no header
+    (older ROM, or ``ENABLE_SERVER_TIMING=false``), only the round-trip shows.
+    """
+    print_section("Server Timing")
+    legs = parse_server_timing(header)
+    if legs:
+        leaves = [(name, dur) for name, dur in legs if name not in _ROLLUP_STAGES]
+        rollups = [(name, dur) for name, dur in legs if name in _ROLLUP_STAGES]
+        for name, dur in leaves + rollups:
+            label = _STAGE_LABELS.get(name, name)
+            print(f"  {label + ':':32s}{dur:8.0f} ms")
+    print(f"  {'Round-trip (client):':32s}{round_trip_ms:8.0f} ms")
+    if not legs:
+        print("  (server sent no Server-Timing header)")
+
+
 async def run_lookup(
     query: str,
     verbose: bool = False,
@@ -170,11 +212,14 @@ async def run_lookup(
                 body["skip_cache"] = True
                 logger.info("Cache bypass enabled (skip_cache=True)")
             logger.info("Calling /request endpoint...")
+            start = time.perf_counter()
             response = await client.post(
                 f"{base_url}/request",
                 json=body,
             )
+            round_trip_ms = (time.perf_counter() - start) * 1000
             response.raise_for_status()
+            server_timing = response.headers.get("Server-Timing")
             data = response.json()
 
             # Display parsed request
@@ -186,6 +231,7 @@ async def run_lookup(
 
             # Skip library results for non-requests
             if not parsed.get("is_request", False):
+                print_server_timing(server_timing, round_trip_ms)
                 return cast(dict[str, Any], data)
 
             # Display library results and context
@@ -201,6 +247,9 @@ async def run_lookup(
             cache_stats = data.get("cache_stats")
             if cache_stats:
                 print_cache_stats(cache_stats)
+
+            # Display the server-side stage breakdown + client round-trip
+            print_server_timing(server_timing, round_trip_ms)
 
             return cast(dict[str, Any], data)
 
