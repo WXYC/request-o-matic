@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import date as date_aliased
 from datetime import time as time_aliased
-from enum import IntEnum, StrEnum
+from enum import Enum, IntEnum, StrEnum
 from typing import Any, Literal
 
 from pydantic import (
@@ -17,6 +17,7 @@ from pydantic import (
     RootModel,
     confloat,
     conint,
+    constr,
 )
 
 
@@ -335,8 +336,15 @@ class FlowsheetV2MessageEntry(FlowsheetV2Base):
     message: str
 
 
+class OnAirInfo(BaseModel):
+    dj_name: str = Field(..., description="Display name of the DJ currently on air.")
+
+
 class OnAirDJ(BaseModel):
-    id: int
+    id: str = Field(
+        ...,
+        description="The DJ's better-auth `auth_user.id` (an opaque `varchar(255)` string), or `null` for a legacy/tubafrenzy-mirrored show whose on-air DJ has no Backend-Service account (their identity is `legacy_dj_name`, surfaced on `/flowsheet/djs-on-air` with a null id). Historically mistyped as `integer`; corrected to the nullable string it is at runtime (BS#1547).",
+    )
     dj_name: str
 
 
@@ -726,6 +734,85 @@ class DeviceRegistration(BaseModel):
 class DeviceToken(BaseModel):
     token: str
     expires_at: AwareDatetime
+
+
+class Venue(BaseModel):
+    id: int
+    slug: str = Field(..., description='Stable scraper seed key (e.g. "cats-cradle").')
+    name: str
+    city: str
+    state: str
+    address: str
+
+
+class ConcertStatus(StrEnum):
+    on_sale = "on_sale"
+    sold_out = "sold_out"
+    cancelled = "cancelled"
+    rescheduled = "rescheduled"
+
+
+class SimilarArtist(BaseModel):
+    artist_id: int = Field(
+        ..., description="WXYC catalog artist id, same keyspace as `Concert.headlining_artist_id`."
+    )
+    weight: float = Field(
+        ...,
+        description="semantic-index affinity score, used for client-side ranking and the similar-tier noise cap. Higher is closer.",
+    )
+
+
+class Concert(BaseModel):
+    id: int
+    venue: Venue
+    starts_on: date_aliased = Field(
+        ..., description="Venue-local (America/New_York) calendar date."
+    )
+    starts_at: AwareDatetime = Field(
+        ..., description="Exact start instant; null for date-only events."
+    )
+    doors_at: AwareDatetime = Field(
+        ..., description="Doors-open instant, when the source publishes one."
+    )
+    headlining_artist_raw: str = Field(
+        ..., description="Headliner billing string exactly as the source displays it."
+    )
+    headlining_artist_id: int = Field(
+        ...,
+        description="WXYC catalog artist id when the resolver matched the headliner; null otherwise. A non-null id is what `curated=true` filters on.",
+    )
+    title: str = Field(
+        ...,
+        description="Event name as the source displays it, when distinct from the artist billing.",
+    )
+    supporting_artists_raw: list[str] = Field(
+        ..., description="Supporting-act billing strings, in source order."
+    )
+    ticket_url: str
+    image_url: str
+    event_url: str = Field(
+        ...,
+        description="The venue's own event-detail page, distinct from `ticket_url` (often a third-party seller like Etix/Ticketmaster). Null when no venue page is known; clients fall back to `ticket_url`.",
+    )
+    price_min: float = Field(..., description="Dollars. Free events carry price_min = 0.")
+    price_max: float = Field(..., description="Dollars.")
+    age_restriction: str = Field(
+        ..., description='Source-displayed age restriction (e.g. "18+", "All Ages").'
+    )
+    status: ConcertStatus
+    genres: list[str] | None = Field(
+        None,
+        description="Discogs genre tags for the resolved headlining artist, aggregated across their releases (LML discogs-cache, majority-take). Null when the headliner is unresolved or enrichment has not run. Optional (not in `required`) so the field can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `FlowsheetV2TrackEntry.upcoming_show`. Same taxonomy as `FlowsheetV2TrackEntry.genres`.",
+    )
+    similar_artists: list[SimilarArtist] | None = Field(
+        None,
+        description="Top-K affinity neighbors of the resolved headliner, computed nightly from the semantic-index graph and ordered by `weight` descending. Null when the headliner is unresolved or enrichment has not run. Powers on-device For You matching (set intersection against liked-artist ids). Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.genres`.",
+    )
+
+
+class ConcertsResponse(BaseModel):
+    concerts: list[Concert]
+    pagination: PaginationInfo
 
 
 class DeviceAuthCodeRequest(BaseModel):
@@ -1291,6 +1378,74 @@ class ArtistSearchAliasesBulkResponse(BaseModel):
     cache_stats: CacheStats | None = None
 
 
+class ArtistResolveMethod(StrEnum):
+    identity_store = "identity_store"
+    api_search = "api_search"
+
+
+class ArtistResolveCacheLeg(StrEnum):
+    cache_exact = "cache_exact"
+    cache_member = "cache_member"
+    cache_alias = "cache_alias"
+    cache_name_variation = "cache_name_variation"
+    cache_trigram = "cache_trigram"
+
+
+class ArtistResolveUnresolvedReason(StrEnum):
+    not_found = "not_found"
+    ambiguous = "ambiguous"
+    escalation_unavailable = "escalation_unavailable"
+
+
+class ArtistResolveResult(BaseModel):
+    name: str = Field(..., description="Verbatim echo of the input name at this index.")
+    discogs_artist_id: int | None = Field(
+        None,
+        description="The resolved Discogs artist id. Non-null iff resolved (serialized as an explicit null on unresolved verdicts — the response never omits fields).\n",
+    )
+    canonical_name: str | None = Field(
+        None,
+        description="The raw Discogs artist title, disambiguation suffix included (e.g. `Popsicle (2)`) — the true Discogs string, kept for provenance; callers render their own input name. Present iff resolved via `api_search`: `entity.identity` rows store no Discogs title, so `identity_store` resolutions omit it.\n",
+    )
+    method: ArtistResolveMethod | None = Field(
+        None,
+        description="What decided the resolution. Non-null iff resolved (serialized as an explicit null on unresolved verdicts).\n",
+    )
+    cache_corroboration: list[ArtistResolveCacheLeg] = Field(
+        ...,
+        description="Cache legs that produced at least one candidate for this name's identity-match form, on BOTH verdict kinds — the per-leg yield telemetry sizing a possible v2 alias arm. On resolved verdicts, listed equality legs necessarily agreed with the deciding tier (a disagreeing equality leg forces `ambiguous`), while `cache_trigram` entries are fuzzy near-misses that never veto (`cache_trigram` is measured against the group's probe string — its lexicographically least sanitized spelling — where the equality legs bind the identity-match form). Empty when no leg produced candidates, and ALWAYS empty — the cache was never consulted, which is not a measured zero-yield — on (a) `identity_store` short-circuits (the store decides before cache evidence is consulted), (b) qualifier-bearing inputs (stripped-form evidence cannot distinguish family members, so the cache tier is skipped), and (c) store-conflict `ambiguous` verdicts.\n",
+    )
+    unresolved_reason: ArtistResolveUnresolvedReason | None = Field(
+        None,
+        description='Why the name did not resolve. Non-null iff unresolved (serialized as an explicit null on resolved verdicts). The response carries every field explicitly — consumers must treat null, not absence, as the "other kind" marker.\n',
+    )
+    candidate_count: int | None = Field(
+        None,
+        description='Exact-form candidates the API tier observed: 1 on resolved via `api_search`, 0 on not_found; on ambiguous, >= 2 for an overloaded family, or exactly 1 when the ambiguity is an equality-leg cache conflict or a qualifier mismatch between the lone candidate\'s own title and the input (a "(N)"-titled singleton answering a bare input, or vice versa, is family evidence — never a resolution). Always serialized — never omitted; null when the API tier did not run: identity_store short-circuit, escalation_unavailable, or an `ambiguous` verdict from conflicting identity-store rows within one deduplicated group (the store contradicting itself is doubt without a measurement; such verdicts also carry an empty `cache_corroboration` — the cache tier was never consulted) — null means "not measured," never zero.\n',
+    )
+
+
+class Name(RootModel[constr(min_length=1, max_length=255)]):
+    root: constr(min_length=1, max_length=255)
+
+
+class ArtistResolveBulkRequest(BaseModel):
+    names: list[Name] = Field(
+        ...,
+        description='Bare artist names to resolve, verbatim (Unicode format characters are dropped and whitespace trimmed for all internal work; responses echo the raw string). Inputs are deduplicated internally on their fixed-point identity-match form PLUS any trailing parenthesized/bracketed qualifier. Qualifier detection mirrors the normalizer: every balanced trailing ()/[] group peels off the NFKC-folded lowercase name (nested tails included), bare-number groups canonicalize across bracket/width/spacing spellings ("[2]", "( 2 )", "（２）" all key as "(2)"; zero-padded "(02)" stays distinct), and multi-group tails concatenate ("(2)(uk)"); non-numeric groups drop internal whitespace, so "(Chk Chk Chk)" and "(ChkChkChk)" share a key. Duplicate positions receive the shared verdict, but a qualified name is its own work unit — a Discogs-style disambiguator denotes a different artist than the bare name, so it never inherits (or supplies) the bare form\'s verdict, and it resolves only when the API candidate\'s own title carries the same qualifier. A name whose only content IS a bracketed group ("(Smog)") is a bare name, not a qualifier — the normalizer makes the same refusal. A verified mint is keyed on the group\'s lexicographically-least sanitized spelling (deterministic in batch content — the same representative the API probe uses; the store\'s read legs are case-insensitive, so any spelling stays findable), EXCEPT when the identity read found an existing row for the name that lacks `discogs_artist_id` — the mint then fills that row\'s stored key in place rather than inserting a near-duplicate key (deterministically, the lexicographically-least stored key when several id-less rows match); qualified names never mint. Names that are blank, contain U+0000 or unencodable code points, normalize to an empty identity-match form, or whose entire identity content is a bare parenthesized ASCII number ("(2)", "[2]", "(2)(3)" — a Discogs disambiguator whose artist name was lost upstream; a fully-bracketed NON-numeric name like "(Smog)" stays resolvable) are rejected with 422 — never given an in-band verdict (`not_found` means the API tier ran and measured zero).\n',
+        max_length=25,
+        min_length=1,
+    )
+    dry_run: bool | None = Field(
+        False,
+        description="Run every tier identically — including live Discogs API verification — but skip the `entity.identity` write-back. No partial-write mode.\n",
+    )
+
+
+class ArtistResolveBulkResponse(BaseModel):
+    results: list[ArtistResolveResult]
+
+
 class CacheRefreshSourceOutcome(StrEnum):
     success = "success"
     error = "error"
@@ -1669,6 +1824,249 @@ class LiveFsRefetchEvent(BaseModel):
     timestamp: AwareDatetime
 
 
+class AutoDJState(StrEnum):
+    BOOTING = "BOOTING"
+    CONNECTING = "CONNECTING"
+    CONNECTED = "CONNECTED"
+    ERROR_STATE = "ERROR_STATE"
+
+
+class AutoDJTransport(StrEnum):
+    ethernet = "ethernet"
+    wifi = "wifi"
+
+
+class AutoDJCommandAction(StrEnum):
+    set_config = "set_config"
+    pause = "pause"
+    resume = "resume"
+    end_show = "end_show"
+    restart = "restart"
+    ping = "ping"
+
+
+class AutoDJErrorLevel(StrEnum):
+    warning = "warning"
+    error = "error"
+    fatal = "fatal"
+
+
+class AutoDJErrorCode(StrEnum):
+    HTTP_TIMEOUT = "HTTP_TIMEOUT"
+    JSON_PARSE = "JSON_PARSE"
+    WIFI_DISCONNECT = "WIFI_DISCONNECT"
+    WS_DISCONNECT = "WS_DISCONNECT"
+    TLS_HANDSHAKE = "TLS_HANDSHAKE"
+    NTP_FAIL = "NTP_FAIL"
+    KVSTORE_WRITE = "KVSTORE_WRITE"
+    FLOWSHEET_POST = "FLOWSHEET_POST"
+    AZURACAST_POLL = "AZURACAST_POLL"
+
+
+class AutoDJActivationSourceType(StrEnum):
+    virtual_switch = "virtual_switch"
+    button = "button"
+    relay = "relay"
+
+
+class AutoDJRelayState(StrEnum):
+    auto_dj_active = "auto_dj_active"
+    dj_live = "dj_live"
+
+
+class AutoDJLastTrack(BaseModel):
+    artist: str
+    title: str
+    posted_at: int = Field(..., description="Unix timestamp")
+
+
+class Type5(StrEnum):
+    heartbeat = "heartbeat"
+
+
+class AutoDJHeartbeat(BaseModel):
+    type: Literal["heartbeat"]
+    state: AutoDJState
+    transport: AutoDJTransport
+    uptime_s: int
+    wifi_rssi: int | None = None
+    free_ram: int
+    radio_show_id: int | None = Field(
+        None, description="Always null in the reporter model; retained for schema compatibility."
+    )
+    last_track: AutoDJLastTrack | None = None
+    last_error: str | None = None
+    firmware_version: str
+    config_hash: str
+    loop_max_ms: int
+    reconnect_count: int
+    tracks_detected: int
+    tracks_posted: int
+    errors_since_boot: int
+    button_press_count: int | None = Field(
+        None,
+        description="Button presses since last heartbeat (HTTP/WiFi fallback; orchestrator toggles if odd). 0 if none.",
+    )
+    relay_auto_dj_active: bool | None = Field(
+        None,
+        description="Current debounced relay level. true = relay reports auto-DJ-active (no live DJ); false = live DJ on air.",
+    )
+
+
+class Type6(StrEnum):
+    command = "command"
+
+
+class AutoDJCommand(BaseModel):
+    type: Literal["command"]
+    id: str = Field(..., description="Unique command ID for ack correlation")
+    action: AutoDJCommandAction
+    key: str | None = Field(None, description="Config key (only for set_config)")
+    value: str | None = Field(None, description="Config value (only for set_config)")
+
+
+class Type7(StrEnum):
+    ack = "ack"
+
+
+class Status1(StrEnum):
+    ok = "ok"
+    error = "error"
+    unknown_command = "unknown_command"
+
+
+class AutoDJAck(BaseModel):
+    type: Literal["ack"]
+    id: str = Field(..., description="The id from the command being acknowledged")
+    status: Status1
+    error: str | None = Field(None, description="Error message (only when status is error)")
+    result: dict[str, Any] | None = Field(
+        None, description="Optional result data (e.g. { active: boolean } for button_toggle acks)"
+    )
+
+
+class Type8(StrEnum):
+    now_playing = "now_playing"
+
+
+class AutoDJNowPlaying(BaseModel):
+    type: Literal["now_playing"]
+    sh_id: int = Field(..., description="AzuraCast song history ID")
+    artist: str
+    title: str
+    album: str
+    is_live: bool = Field(..., description="Whether a live DJ is streaming")
+
+
+class Type9(StrEnum):
+    error = "error"
+
+
+class AutoDJErrorReport(BaseModel):
+    type: Literal["error"]
+    level: AutoDJErrorLevel
+    module: str = Field(..., description="Source module (e.g. mgmt_client, relay_monitor)")
+    code: AutoDJErrorCode
+    message: str
+    state: AutoDJState
+    uptime_s: int
+    free_ram: int
+    count: int = Field(..., description="Occurrences since last report")
+
+
+class Type10(StrEnum):
+    button_toggle = "button_toggle"
+
+
+class AutoDJButtonToggle(BaseModel):
+    type: Literal["button_toggle"]
+    timestamp: int = Field(..., description="Unix timestamp of the button press (from NTP)")
+
+
+class AutoDJWebSocketMessage(
+    RootModel[
+        AutoDJHeartbeat
+        | AutoDJCommand
+        | AutoDJAck
+        | AutoDJNowPlaying
+        | AutoDJErrorReport
+        | AutoDJButtonToggle
+    ]
+):
+    root: (
+        AutoDJHeartbeat
+        | AutoDJCommand
+        | AutoDJAck
+        | AutoDJNowPlaying
+        | AutoDJErrorReport
+        | AutoDJButtonToggle
+    ) = Field(..., discriminator="type")
+
+
+class Transport(StrEnum):
+    ethernet = "ethernet"
+    wifi = "wifi"
+    none = "none"
+
+
+class AutoDJDeviceStatus(BaseModel):
+    connected: bool
+    transport: Transport
+    last_heartbeat_at: AwareDatetime
+    last_heartbeat: AutoDJHeartbeat | None = None
+    pending_commands: int | None = Field(
+        None, description="Number of unacknowledged commands in the queue"
+    )
+    firmware_version: str
+    device_id: str | None = Field(None, description="MAC address or other unique identifier")
+
+
+class AutoDJActivationSource(BaseModel):
+    source: AutoDJActivationSourceType
+    userId: str | None = Field(
+        None, description="Better Auth user ID (only for virtual_switch source)"
+    )
+    userName: str | None = Field(None, description="Display name (only for virtual_switch source)")
+    detail: str | None = Field(
+        None, description='Additional context (e.g. "Live DJ detected" for relay source)'
+    )
+
+
+class AutoDJCurrentTrack(BaseModel):
+    artist: str
+    title: str
+    album: str
+    detectedAt: AwareDatetime
+
+
+class AutoDJDeviceSummary(BaseModel):
+    online: bool
+    transport: AutoDJTransport
+    lastHeartbeat: AwareDatetime
+    relayState: AutoDJRelayState
+
+
+class AutoDJStatus(BaseModel):
+    active: bool
+    activatedBy: AutoDJActivationSource | None = None
+    activatedAt: AwareDatetime | None = None
+    showId: int | None = None
+    currentTrack: AutoDJCurrentTrack | None = None
+    lastDeactivatedAt: AwareDatetime | None = None
+    lastDeactivatedBy: AutoDJActivationSource | None = None
+    device: AutoDJDeviceSummary | None = None
+
+
+class Active(Enum):
+    boolean_False = False
+
+
+class AutoDJDeactivateResponse(BaseModel):
+    active: Active
+    deactivatedBy: AutoDJActivationSource
+    deactivatedAt: AwareDatetime
+
+
 class FlowsheetEntryResponse(FlowsheetEntryBase):
     album_id: int | None = None
     track_title: str | None = None
@@ -1696,6 +2094,18 @@ class FlowsheetEntryResponse(FlowsheetEntryBase):
         description='Track position on the release (e.g., "A1", "B2", "5"). Populated when the flowsheet entry was created via the dj-site picker after release selection (catalog-track-search plan §5.3 / Track 3). String-typed to match Discogs\'s `release_track.position`. Null for free-text entries and legacy rows.\n',
     )
     metadata_status: MetadataStatus | None = None
+    entry_type: FlowsheetEntryType | None = None
+    add_time: AwareDatetime | None = Field(
+        None, description="The instant this row was logged (ISO 8601)."
+    )
+    radio_hour: AwareDatetime | None = Field(
+        None,
+        description="Top-of-hour a breakpoint row marks (ISO 8601), sourced from tubafrenzy's RADIO_HOUR. Null on non-breakpoint rows and rows predating the producer rollout. Mirrors the V2 breakpoint entry.",
+    )
+    dj_name: str | None = Field(
+        None,
+        description="Resolved public display name of the DJ on the row's show. Nullable per the PII-safe resolution chain (BS#1371): user.djName -> shows.legacy_dj_name -> null; never the real-name PII column.",
+    )
 
 
 class FlowsheetV2TrackEntry(FlowsheetV2Base):
@@ -1734,6 +2144,10 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
     styles: list[str] | None = Field(
         None, description="Discogs style tags (finer-grained than genres)."
     )
+    upcoming_show: Concert | None = Field(
+        None,
+        description="An optional embedded upcoming Triangle-area concert whose headliner is this track's resolved catalog artist, attached server-side at feed-assembly time so the iOS \"On Tour\" Box Office CTA renders inline with no second round-trip.\n\nMatch rule (mirrors `GET /concerts?curated=true`): the track's resolved artist — `flowsheet.album_id → library.artist_id` — is matched against `concerts.headlining_artist_id` on curated, non-tombstoned, upcoming rows (`headlining_artist_id IS NOT NULL`, `removed_at IS NULL`, `starts_on >= today` America/New_York). When an artist has several upcoming dates the **soonest** wins (`ORDER BY starts_on ASC LIMIT 1`), so at most one concert rides each playcut.\n\nAbsent/null when the track has no resolved artist (free-form entries with no `album_id`, or an `album_id` whose library row has no matched artist) or when that artist has no curated upcoming date. The field is additive and optional — older app builds that don't decode it are unaffected. Reuses the `Concert` schema verbatim so iOS decodes one type across the On Tour tab and the playcut CTA; the `BoxOfficeTicketPresenter` reads `id`, `title` / `headlining_artist_raw`, `venue` (name + city), `starts_on`, `doors_at`, `status`, `price_min` / `price_max`, `ticket_url`, and `image_url` off it.\n",
+    )
 
 
 class Entries(
@@ -1766,6 +2180,10 @@ class FlowsheetV2PaginatedResponse(BaseModel):
     limit: int
     total: int = Field(..., description="Total number of entries")
     totalPages: int = Field(..., description="Total number of pages")
+    on_air: OnAirInfo | None = Field(
+        None,
+        description='The DJ currently on air, when known. An object with `dj_name` means a named DJ is live; JSON `null` means the station is confirmed on automation ("Auto DJ"); the field being absent entirely means the server does not report on-air status (older backends / non-default query branches) and clients should treat it as unknown rather than asserting automation. Not in `required` so absence stays distinct from an explicit `null`.\n\nCodegen note: this three-way distinction (object / null / absent) survives openapi-typescript (`on_air?: OnAirInfo | null`), but a *synthesized* decoder in Swift (Codable `decodeIfPresent`), Kotlin (kotlinx default value), or Python (pydantic `| None = None`) collapses JSON `null` and an absent key into the same value. A consumer that needs the third state must decode by key presence (e.g. Swift\'s `container.contains` + `decodeNil`), as the iOS app does — do not rely on a generated model to tell `null` from absent.',
+    )
 
 
 class ShowPlaylist(BaseModel):
