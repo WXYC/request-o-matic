@@ -159,9 +159,15 @@ def print_cache_stats(cache_stats: dict) -> None:
 _STAGE_LABELS = {
     "parse": "Parse (Groq)",
     "slack_post": "Slack post",
+    # LML's forwarded sub-stages (order LML emits them within its own header).
+    "album_lookup": "LML: album lookup",
     "library_search": "LML: library search",
+    "track_validation": "LML: track validation",
+    "artwork_fetch": "LML: artwork fetch",
     "metadata_enrichment": "LML: metadata enrichment",
+    "identity_resolution": "LML: identity resolution",
     "discogs": "LML: Discogs cache/API",
+    # Roll-ups.
     "lookup_service": "LML round-trip (server)",
     "total": "Server total",
 }
