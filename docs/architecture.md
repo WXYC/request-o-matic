@@ -18,6 +18,9 @@ Slack is the only hard dependency. When Groq or LML are unavailable the listener
 
 If Slack itself fails the endpoint returns `502` — there is no further fallback. PostHog events for degraded requests carry `degraded_mode` and `degraded_reason` (the exception class name) so outages are visible in telemetry.
 
+## Server-Timing (observability, [Backend-Service#881](https://github.com/WXYC/Backend-Service/issues/881))
+`POST /request` attaches a `Server-Timing` response header (flag `ENABLE_SERVER_TIMING`, default on) that combines ROM's own per-stage timings (`parse`, `lookup_service`, `slack_post`) with the sub-stages LML forwards in its own `Server-Timing` header (`library_search`, `metadata_enrichment`, `discogs`), dropping LML's `total` so the merged header keeps exactly one (ROM's). It re-surfaces the `RequestTelemetry.track_step` durations already shipped to PostHog — no new capture layer — so a caller can localize latency (e.g. an ~8.5s `metadata_enrichment` Apple-probe stall) the JSON body doesn't reveal. The merge (`routers/request._emit_server_timing_header` + `core/server_timing.parse_server_timing`) is out-of-band and can never raise into the request path. Flag reference + wire-format example: [`docs/env-vars.md`](env-vars.md).
+
 ## Key Files
 - `models.py` - Re-exports `LibraryItem` (alias for `LibraryCatalogItem`) and `ReleaseMetadata` (alias for `DiscogsMatchResult`) from `generated.api_models`, plus the `preview_url(metadata)` helper for streaming-priority logic.
 - `generated/api_models.py` - Pydantic v2 models generated from `wxyc-shared/api.yaml`. Do not edit by hand; regenerate via `bash scripts/generate_api_models.sh`. The script prefers a sibling `wxyc-shared/` directory and falls back to downloading `api.yaml` from GitHub.
@@ -25,7 +28,8 @@ If Slack itself fails the endpoint returns `502` — there is no further fallbac
 - `routers/request.py` - Request handling: parse, delegate to lookup service, post to Slack
 - `routers/health.py` - Health check endpoints: `GET /health` (shallow liveness probe, no external calls) and `GET /health/ready` (deep readiness check: groq, lookup, slack services). Railway's `healthcheckPath` uses `/health` so the container becomes routable immediately on boot.
 - `services/parser.py` - Groq AI message parsing
-- `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation
+- `services/lookup_client.py` - HTTP client for library-metadata-lookup delegation. `lookup()` returns a `LookupResult(response, server_timing)` pairing the parsed body with LML's raw `Server-Timing` header value (returned by value, not stashed on the shared client, to stay race-free under concurrent requests).
+- `core/server_timing.py` - `parse_server_timing(header)`: stdlib-only, defensive parse of an upstream `Server-Timing` header into ordered `(name, dur_ms)` legs (None/malformed → `[]`), used to merge LML's forwarded stages into ROM's header.
 - `services/ban_check_client.py` - HTTP client for Backend-Service `POST /auth/check-request-ban` (BS#1261). Fails open (raises `BanCheckUnavailableError`) on network errors, timeouts, or 5xx; treats BS 401/404 as proceed-as-unauth so the caller is never 401'd on `POST /request`.
 - `services/ua_gate.py` - Pure-function matcher `is_known_strict_client(user_agent)` for the UA gate (#155). Maintains the `_STRICT_CLIENT_REGISTRY` of product-token → minimum-version pairs. Adding `WXYC-Android` here is a one-line change when that team ships ban-aware code.
 - `services/slack.py` - Slack message formatting and posting

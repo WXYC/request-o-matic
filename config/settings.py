@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     # Feature Flags
     enable_slack_integration: bool = Field(default=True, description="Enable Slack notifications")
     enable_telemetry: bool = Field(default=True, description="Enable PostHog telemetry")
+    enable_server_timing: bool = Field(
+        default=True,
+        description=(
+            "Emit a Server-Timing response header on /request that merges rom's own "
+            "per-stage telemetry (parse, lookup_service, slack_post) with the sub-stage "
+            "breakdown LML forwards in its Server-Timing header (Backend-Service#881). "
+            "Purely additive/out-of-band; the JSON body is unchanged. Set "
+            "ENABLE_SERVER_TIMING=false to disable (the Railway kill switch)."
+        ),
+    )
 
     # PostHog Configuration
     posthog_api_key: str | None = Field(None, description="PostHog API key for telemetry")

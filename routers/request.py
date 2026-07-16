@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import sentry_sdk
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from groq import AsyncGroq
 from pydantic import BaseModel
 from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
@@ -40,6 +40,7 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
+from core.server_timing import parse_server_timing
 
 if TYPE_CHECKING:
     from posthog import Posthog
@@ -176,6 +177,42 @@ async def _post_degraded_to_slack(
         raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}") from e
 
 
+def _emit_server_timing_header(
+    http_response: Response,
+    telemetry: RequestTelemetry,
+    *,
+    enabled: bool,
+    lml_server_timing: str | None = None,
+) -> None:
+    """Attach a Server-Timing header from rom's telemetry + forwarded LML stages.
+
+    Merges the sub-stages LML returned in its own ``Server-Timing`` header into
+    rom's per-stage timings, so a caller (e.g. the ``lookup`` CLI) can attribute
+    a slow ``/request`` round-trip to a named server stage (Backend-Service#881).
+
+    Flag-gated and fully defensive: a disabled flag skips it, and any failure to
+    build the header is logged and swallowed so this observability path can never
+    break the request.
+    """
+    if not enabled:
+        return
+    try:
+        # Forwarded LML legs become ``extra`` legs in ``as_server_timing`` —
+        # appended after rom's own steps and before rom's canonical ``total``.
+        # Drop LML's ``total`` (rom appends its own) and any name that collides
+        # with a rom step (rom's own measurement wins) so the header stays
+        # single-total and strict-parser-safe. rom/LML stage names are disjoint
+        # today; the collision guard future-proofs against a rename.
+        extra = {
+            name: dur
+            for name, dur in parse_server_timing(lml_server_timing)
+            if name != "total" and name not in telemetry.steps
+        }
+        http_response.headers["Server-Timing"] = telemetry.as_server_timing(extra=extra or None)
+    except Exception:
+        logger.warning("Failed to build Server-Timing header", exc_info=True)
+
+
 @router.post(
     "/request",
     response_model=UnifiedResponse,
@@ -213,6 +250,7 @@ async def _post_degraded_to_slack(
 )
 async def handle_request(
     request: RequestBody,
+    http_response: Response,
     groq_client: AsyncGroq = Depends(get_groq_client),
     slack_service: SlackService | None = Depends(get_slack_service),
     posthog_client: Posthog | None = Depends(get_posthog_client),
@@ -368,6 +406,7 @@ async def handle_request(
                 posthog_client,
                 parse_props,
             )
+        _emit_server_timing_header(http_response, telemetry, enabled=settings.enable_server_timing)
         return UnifiedResponse(
             parsed=None,
             cache_stats=get_cache_stats(),
@@ -377,6 +416,7 @@ async def handle_request(
     if not parsed.is_request:
         if not request.skip_slack:
             await post_results_to_slack(slack_service, request.message, parsed, [], context=None)
+        _emit_server_timing_header(http_response, telemetry, enabled=settings.enable_server_timing)
         return UnifiedResponse(
             parsed=parsed,
             cache_stats=get_cache_stats(),
@@ -391,6 +431,11 @@ async def handle_request(
     search_type = "none"
     lookup_response = None
     lookup_failure: Exception | None = None
+    # Sentinel: the LML-outage path below (lookup_client is None, or the call
+    # raises) skips the assignment inside the try, so this must be bound before
+    # the merged-header emit at the final return — else an UnboundLocalError 500s
+    # the degraded path instead of returning the graceful search-unavailable 200.
+    lml_server_timing: str | None = None
 
     if lookup_client is None:
         # Treat missing LOOKUP_SERVICE_URL as a permanent LML outage rather than
@@ -406,9 +451,11 @@ async def handle_request(
                 raw_message=request.message,
             )
             try:
-                lookup_response = await lookup_client.lookup(
+                lookup_result = await lookup_client.lookup(
                     lookup_request, skip_cache=request.skip_cache
                 )
+                lookup_response = lookup_result.response
+                lml_server_timing = lookup_result.server_timing
             except _LML_TRANSIENT_ERRORS as e:
                 logger.warning(
                     "Search unavailable (%s: %s); posting parsed message to Slack",
@@ -496,6 +543,12 @@ async def handle_request(
             properties["ban_check_degraded"] = True
         telemetry.send_to_posthog(posthog_client, properties)
 
+    _emit_server_timing_header(
+        http_response,
+        telemetry,
+        enabled=settings.enable_server_timing,
+        lml_server_timing=lml_server_timing,
+    )
     return UnifiedResponse(
         parsed=parsed,
         artwork=artwork,

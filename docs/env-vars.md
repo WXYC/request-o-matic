@@ -13,6 +13,7 @@ Optional:
 - `POSTHOG_HOST` - PostHog host URL (default: `https://us.i.posthog.com`)
 - `ENABLE_SLACK_INTEGRATION` - Enable/disable Slack notifications (default: `true`)
 - `ENABLE_TELEMETRY` - Enable/disable PostHog telemetry (default: `true`)
+- `ENABLE_SERVER_TIMING` - Enable/disable the `Server-Timing` response header on `POST /request` (default: `true`). See "Server-Timing header" below.
 
 Admin API for request-line bans (see [`docs/admin-bans.md`](admin-bans.md)):
 - `ADMIN_TOKEN` - Bearer token gating the `/admin/bans` endpoints. When unset, every admin request is rejected with 403 (fail-closed). Rotate by updating the Railway service variable.
@@ -34,3 +35,11 @@ Operator flip sequence (after iOS 3.2 ships):
 3. Wait for App Store rollout to reach ~90% (App Store Connect → Analytics → App Versions).
 4. Flip `STRICT_FINGERPRINT_FOR_KNOWN_CLIENTS=true` on staging, watch PostHog for `request_blocked` events keyed on `ban_source='rom_strict_mode'`. Spikes here indicate either a 3.2 fingerprint regression or active evasion attempts; a slow trickle is expected.
 5. Flip on production. Rollback recipe: set the var to `false` and restart; legitimate traffic recovers within one restart cycle.
+
+## Server-Timing header ([Backend-Service#881](https://github.com/WXYC/Backend-Service/issues/881))
+
+When `ENABLE_SERVER_TIMING=true` (default), `POST /request` attaches a [`Server-Timing`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Server-Timing) response header that merges ROM's own per-stage timings (`parse`, `lookup_service`, `slack_post`) with the sub-stage breakdown LML forwards in *its* `Server-Timing` header (`library_search`, `metadata_enrichment`, `discogs`). LML's `total` is dropped and ROM appends its own, so the header carries exactly one `total`, last — e.g. `parse;dur=3.1, lookup_service;dur=8560, slack_post;dur=42, library_search;dur=41, metadata_enrichment;dur=8500, discogs;dur=806, total;dur=8610`.
+
+This surfaces the same `RequestTelemetry.track_step` durations ROM and LML already ship to PostHog — no new capture layer — so a caller (e.g. the `lookup` CLI) can attribute a slow round-trip to a named server stage (the motivating case: an ~8.5s `metadata_enrichment` Apple-Music-probe stall the JSON body never revealed). It is purely additive/out-of-band: the response body is byte-identical whether the flag is on or off, so it is safe to toggle in production. Set `ENABLE_SERVER_TIMING=false` as the kill switch.
+
+Implementation: the shared serializer is `RequestTelemetry.as_server_timing` in [wxyc-fastapi](https://github.com/WXYC/wxyc-fastapi) (>=1.1.0); the forward/merge lives in `routers/request._emit_server_timing_header` + `core/server_timing.parse_server_timing`. The building of the header can never raise into the request path (all exceptions are logged and swallowed).

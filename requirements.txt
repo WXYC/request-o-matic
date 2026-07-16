@@ -101,5 +101,5 @@ urllib3==2.6.3
     #   sentry-sdk
 uvicorn==0.41.0
     # via request-o-matic
-wxyc-fastapi==1.0.0
+wxyc-fastapi==1.1.0
     # via request-o-matic

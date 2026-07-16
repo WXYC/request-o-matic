@@ -38,7 +38,7 @@ from services.ban_check_client import (
     BanCheckResult,
     BanCheckUnavailableError,
 )
-from services.lookup_client import LookupResponse, LookupServiceClient
+from services.lookup_client import LookupResponse, LookupResult, LookupServiceClient
 from tests.conftest import make_parsed_request
 
 SAMPLE_PARSED = make_parsed_request(
@@ -90,7 +90,7 @@ def mock_ban_check_client():
 @pytest.fixture
 def mock_lookup_client():
     client = AsyncMock(spec=LookupServiceClient)
-    client.lookup.return_value = EMPTY_LOOKUP
+    client.lookup.return_value = LookupResult(response=EMPTY_LOOKUP, server_timing=None)
     return client
 
 
