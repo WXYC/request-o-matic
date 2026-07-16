@@ -57,6 +57,15 @@ class TestPrintServerTiming:
         assert "mystery_stage" in out
         assert "12" in out
 
+    def test_present_but_unparseable_header_is_noted_as_such(self, capsys):
+        """A present-but-corrupt header (every entry rejected) is reported as
+        unparseable, not as absent — the two situations mean different things to
+        someone debugging why the trace is empty."""
+        print_server_timing("no_dur_here, another_no_dur", round_trip_ms=10.0)
+        out = capsys.readouterr().out
+        assert "unparseable" in out.lower()
+        assert "10" in out
+
     def test_all_forwarded_lml_substages_get_friendly_labels(self, capsys):
         """Every sub-stage LML forwards renders with an ``LML:`` provenance label,
         not its raw snake_case name. Regression guard: the map originally covered

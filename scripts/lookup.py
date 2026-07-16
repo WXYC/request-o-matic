@@ -195,7 +195,10 @@ def print_server_timing(header: str | None, round_trip_ms: float) -> None:
             print(f"  {label + ':':32s}{dur:8.0f} ms")
     print(f"  {'Round-trip (client):':32s}{round_trip_ms:8.0f} ms")
     if not legs:
-        print("  (server sent no Server-Timing header)")
+        # Distinguish an absent header (older ROM / flag off) from a present but
+        # unparseable one (every entry rejected) — different debugging signals.
+        note = "no" if not header else "an unparseable"
+        print(f"  (server sent {note} Server-Timing header)")
 
 
 async def run_lookup(
@@ -272,9 +275,9 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "play bohemian rhapsody by queen"
-  %(prog)s "the beatles abbey road"
-  %(prog)s --verbose "Play 'Abele Dance (85 Remix)' by Manu Dibango"
+  %(prog)s "milkman aphex twin"
+  %(prog)s "jessica pratt on your own love again"
+  %(prog)s --verbose "Play 'la paradoja' by Juana Molina"
         """,
     )
     parser.add_argument(
