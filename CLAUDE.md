@@ -11,7 +11,7 @@ CLAUDE.md is a router for the always-loaded reference card. Topic depth lives in
 - **[`docs/admin-bans.md`](docs/admin-bans.md)** — Operator runbook for `/admin/bans` (request-line ban management): endpoints, curl examples, status codes, where to find a fingerprint. Both the HTTP admin router (#151) and the future Slack-native router (#152) share `services/ban_service.py`.
 - **[`docs/testing.md`](docs/testing.md)** — Unit / integration / performance test layout, pytest markers (`external_api`, `slow`, `contract`), TEST_ENV configuration, local server testing, bug-fix protocol
 - **[`docs/deployment.md`](docs/deployment.md)** — Railway hosting, branch → environment mapping, dependency management (`uv.lock` source of truth, generated `requirements*.txt`, regenerate/bump procedure, `deps-sync` gate), CI pin maintenance (Railway CLI version, workflow `permissions:`, `@gha/v1` reusable refs)
-- **[`docs/scripts.md`](docs/scripts.md)** — `scripts/lookup.py`, `scripts/repl.py`, `scripts/create_posthog_dashboard.py`
+- **[`docs/scripts.md`](docs/scripts.md)** — `scripts/install-lookup.sh` (install `lookup` as a global command), `scripts/lookup.py`, `scripts/repl.py`, `scripts/create_posthog_dashboard.py`
 
 Read the relevant topic doc before doing work in that area.
 

@@ -120,7 +120,7 @@ warn_required_dynamic_aliases = true
 # and are run manually against staging/production.
 #
 # ci-sync-skip: contract reason: manual-only; verifies external Slack/Groq API contract shape against deployed staging/production
-# ci-sync-skip: slow reason: only the performance suite is slow and it is run manually against staging/production with TEST_ENV set
+# ci-sync-skip: slow reason: slow tests build a real venv (install-lookup.sh e2e) or hit staging/production perf endpoints; both are run manually, never in the fast CI lane
 [tool.pytest.ini_options]
 markers = [
     "external_api: needs network egress + a real third-party API key (Groq, Slack)",
