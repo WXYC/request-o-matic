@@ -14,7 +14,17 @@ natural thing to promote into wxyc-fastapi alongside ``as_server_timing``.
 
 from __future__ import annotations
 
+import math
+import re
+
 __all__ = ["parse_server_timing"]
+
+# A Server-Timing metric name is an RFC 7230 token (the same grammar HTTP header
+# field-names use). Validating against it means a peer value with an interior
+# space, comma, or — critically — a CR/LF never gets copied verbatim into rom's
+# response header, where latin-1 would encode the CR/LF and fail at the ASGI
+# send layer (outside the caller's try/except).
+_TOKEN_RE = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+")
 
 
 def parse_server_timing(header: str | None) -> list[tuple[str, float]]:
@@ -31,10 +41,15 @@ def parse_server_timing(header: str | None) -> list[tuple[str, float]]:
     rom's own response:
 
     * ``None`` / empty / whitespace-only -> ``[]``.
+    * An entry whose name is not a valid RFC 7230 token (interior whitespace,
+      comma, control chars) is skipped — it cannot be re-emitted into rom's own
+      ``Server-Timing`` header without corrupting it.
     * An entry with no ``dur`` (a bare metric name) is skipped: it cannot merge
       into ``as_server_timing(extra=...)``, which requires a float.
-    * An entry with a non-numeric ``dur`` is skipped without affecting the
-      other entries.
+    * An entry whose ``dur`` is non-numeric, non-finite (``inf`` / ``nan``), or
+      negative is skipped without affecting the other entries — ``float()``
+      accepts those spellings but they are not valid Server-Timing durations and
+      would render as e.g. ``dur=inf`` downstream.
 
     Order and duplicate names are preserved (a list, not a dict) so the caller
     decides how to de-duplicate before merging.
@@ -50,7 +65,7 @@ def parse_server_timing(header: str | None) -> list[tuple[str, float]]:
 
         parts = entry.split(";")
         name = parts[0].strip()
-        if not name:
+        if not _TOKEN_RE.fullmatch(name):
             continue
 
         dur: float | None = None
@@ -58,9 +73,11 @@ def parse_server_timing(header: str | None) -> list[tuple[str, float]]:
             key, sep, value = param.partition("=")
             if sep and key.strip().lower() == "dur":
                 try:
-                    dur = float(value.strip())
+                    parsed = float(value.strip())
                 except ValueError:
-                    dur = None
+                    break
+                if math.isfinite(parsed) and parsed >= 0:
+                    dur = parsed
                 break
 
         if dur is None:

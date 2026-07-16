@@ -25,8 +25,9 @@ class LookupResult(NamedTuple):
     ``server_timing`` is the verbatim header value LML returns (or ``None`` when
     absent), carried alongside the body so the router can forward and merge LML's
     per-stage timings without re-fetching. Returned by value rather than stashed
-    on the client instance because ``get_lookup_client`` may hand the same client
-    to concurrent requests — a per-instance attribute would race.
+    on the client instance so ``lookup()`` stays a pure function of its inputs —
+    the client wraps a shared ``httpx.AsyncClient`` singleton, so per-call state
+    on the instance would be fragile if the wrapper were ever cached too.
     """
 
     response: LookupResponse

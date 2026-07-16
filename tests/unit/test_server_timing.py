@@ -74,10 +74,43 @@ class TestParseServerTiming:
 
     def test_realistic_lml_header(self):
         """A realistic forwarded LML header parses in full."""
-        header = "library_search;dur=41.2, metadata_enrichment;dur=8500.7, discogs;dur=806, total;dur=8560.1"
+        header = (
+            "library_search;dur=41.2, metadata_enrichment;dur=8500.7, "
+            "discogs;dur=806, total;dur=8560.1"
+        )
         assert parse_server_timing(header) == [
             ("library_search", 41.2),
             ("metadata_enrichment", 8500.7),
             ("discogs", 806.0),
             ("total", 8560.1),
+        ]
+
+    def test_non_finite_dur_is_skipped(self):
+        """``float()`` accepts 'inf'/'nan', but they are not valid Server-Timing
+        durations — emitting ``dur=inf`` would break a strict downstream parser,
+        so they are skipped like any other malformed dur."""
+        assert parse_server_timing("a;dur=inf, b;dur=nan, c;dur=5") == [("c", 5.0)]
+
+    def test_negative_dur_is_skipped(self):
+        """A negative dur is not a valid measurement; skip it, keep the rest."""
+        assert parse_server_timing("a;dur=-3, b;dur=5") == [("b", 5.0)]
+
+    def test_name_with_interior_whitespace_is_skipped(self):
+        """A name that is not a valid RFC token (e.g. contains a space) cannot be
+        emitted verbatim into a Server-Timing header, so the entry is skipped."""
+        assert parse_server_timing("cache hit;dur=5, discogs;dur=10") == [("discogs", 10.0)]
+
+    def test_name_with_control_chars_is_skipped(self):
+        """A CR/LF-bearing name (header-injection shaped) is skipped rather than
+        copied into rom's response header — latin-1 encodes CR/LF, so letting it
+        through would fail at the ASGI send layer, outside the caller's guard."""
+        injected = "foo\r\nX-Evil: bar;dur=1, discogs;dur=10"
+        assert parse_server_timing(injected) == [("discogs", 10.0)]
+
+    def test_rfc_token_names_are_kept(self):
+        """Valid RFC 7230 token names (letters, digits, and tchars) survive the
+        token filter — the guard rejects only genuinely non-token names."""
+        assert parse_server_timing("db.query_1;dur=2, cache-hit;dur=3") == [
+            ("db.query_1", 2.0),
+            ("cache-hit", 3.0),
         ]
