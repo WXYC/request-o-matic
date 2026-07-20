@@ -46,6 +46,14 @@ class LookupServiceClient:
         max_attempts: Total attempts per lookup (1 = no retry, 2 = one retry)
         retry_delay: Seconds to wait between retries
         per_attempt_timeout: Per-attempt timeout in seconds (overrides the client default)
+        caller_budget_ms: Value sent as the ``X-Caller-Budget-Ms`` header on every
+            ``POST /lookup``. LML uses it to bound its search-pipeline budget instead
+            of falling back to its ``LML_SEARCH_BUDGET_MS`` default. When ``None``
+            (the default), it is derived from ``per_attempt_timeout``:
+            ``max(int(per_attempt_timeout * 1000) - 200, 1000)`` — the 200 ms trims
+            transport overhead so LML returns a graceful in-budget result before ROM's
+            httpx client times out, and the 1000 ms floor guards tiny/zero timeouts.
+            An explicit value is used verbatim.
     """
 
     # Only retry transient connection-establishment failures. TimeoutException
@@ -64,6 +72,7 @@ class LookupServiceClient:
         max_attempts: int = 2,
         retry_delay: float = 1.0,
         per_attempt_timeout: float = 20.0,
+        caller_budget_ms: int | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
@@ -71,6 +80,14 @@ class LookupServiceClient:
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
         self.per_attempt_timeout = per_attempt_timeout
+        # An explicit budget wins verbatim; otherwise derive it from the per-attempt
+        # timeout, shaving 200ms of transport overhead so LML can return a graceful
+        # in-budget result before ROM's httpx client times out, with a 1000ms floor.
+        self._effective_caller_budget_ms = (
+            caller_budget_ms
+            if caller_budget_ms is not None
+            else max(int(self.per_attempt_timeout * 1000) - 200, 1000)
+        )
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -103,7 +120,10 @@ class LookupServiceClient:
                     f"{self.base_url}/lookup",
                     json=request.model_dump(exclude_none=True),
                     params=params,
-                    headers=self._auth_headers(),
+                    headers={
+                        **self._auth_headers(),
+                        "X-Caller-Budget-Ms": str(self._effective_caller_budget_ms),
+                    },
                     timeout=self.per_attempt_timeout,
                 )
                 response.raise_for_status()
