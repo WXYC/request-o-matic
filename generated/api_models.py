@@ -808,10 +808,61 @@ class Concert(BaseModel):
         None,
         description="Top-K affinity neighbors of the resolved headliner, computed nightly from the semantic-index graph and ordered by `weight` descending. Null when the headliner is unresolved or enrichment has not run. Powers on-device For You matching (set intersection against liked-artist ids). Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.genres`.",
     )
+    station_plays: int | None = Field(
+        None,
+        description='All-time WXYC flowsheet play count of the resolved (in-library) headliner, computed nightly from the semantic-index graph; null when the headliner is not in the library or has no play count. Identical for every listener — the station-affinity signal behind the On Tour "For You" shelf. Not personalized; carries no listener data. Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.similar_artists`.',
+    )
 
 
 class ConcertsResponse(BaseModel):
     concerts: list[Concert]
+    pagination: PaginationInfo
+
+
+class AlbumReview(BaseModel):
+    id: int
+    album_id: int = Field(
+        ...,
+        description="WXYC library album id when the free-text artist/album resolved to exactly one catalog row; null otherwise.",
+    )
+    artist_name: str = Field(..., description="Artist name exactly as the reviewer entered it.")
+    album_title: str = Field(..., description="Album title exactly as the reviewer entered it.")
+    record_label: str
+    artist_blurb: str = Field(..., description="Short reviewer-written background on the artist.")
+    review: str = Field(..., description="The review body.")
+    recommended_tracks: str = Field(
+        ...,
+        description='Raw recommended-tracks text, including the form\'s `!`-rating notation (1–5 exclamation marks) and "Play All" shorthand.',
+    )
+    buzzwords: str = Field(..., description="Comma-separated reviewer-chosen descriptors.")
+    fcc_violations: str = Field(
+        ...,
+        description='Verbatim reviewer answer listing FCC-violating track numbers. Blank (unanswered) is distinct from "None"/"N/A" (affirmatively clean); values are not normalized.',
+    )
+    review_purpose: str = Field(
+        ...,
+        description='Raw multi-select of "Rotation", "New DJ Assignment", "Album in the Library"; comma-joined when multiple were selected.',
+    )
+    rotated: bool = Field(
+        ...,
+        description='Curator-maintained "was this album rotated" flag; null when the sheet cell is blank or unparseable.',
+    )
+    released_within_six_months: bool = Field(
+        ...,
+        description="Whether the album was released within 6 months of the review; null when unanswered (question added mid-2024).",
+    )
+    social_consent: bool = Field(
+        ...,
+        description="Whether the reviewer consented to the review being shared on station social media (always anonymously); null when unanswered.",
+    )
+    submitted_at: AwareDatetime = Field(
+        ...,
+        description="Form submission instant. Null only for the rare row whose sheet timestamp is missing.",
+    )
+
+
+class AlbumReviewsResponse(BaseModel):
+    album_reviews: list[AlbumReview]
     pagination: PaginationInfo
 
 
@@ -1444,6 +1495,46 @@ class ArtistResolveBulkRequest(BaseModel):
 
 class ArtistResolveBulkResponse(BaseModel):
     results: list[ArtistResolveResult]
+
+
+class ArtistGenresSource(StrEnum):
+    cache = "cache"
+    discogs_api = "discogs_api"
+    not_found = "not_found"
+    unavailable = "unavailable"
+
+
+class ArtistGenresInput(BaseModel):
+    artist_name: constr(min_length=1) = Field(..., description="Artist display name.")
+    discogs_artist_id: int | None = Field(
+        None,
+        description="Discogs artist ID. Optional but strongly preferred: when present the cache aggregation keys on it (stable Discogs artist entity, homonym-safe); when absent it falls back to a case-insensitive exact `artist_name` match. Backend-Service resolves it via `POST /api/v1/artists/resolve/bulk` (LML#759) before calling this endpoint, so it is usually present.\n",
+    )
+
+
+class BulkArtistGenresRequest(BaseModel):
+    artists: list[ArtistGenresInput] = Field(..., max_length=25, min_length=1)
+
+
+class ArtistGenresResultItem(BaseModel):
+    artist_name: str = Field(..., description="Echoed from the request for index alignment.")
+    discogs_artist_id: int | None = Field(
+        None,
+        description="Echoed from the request (explicit null when not supplied). Kept out of `required` deliberately: datamodel-codegen (LML's generator) types a required-plus-nullable field as non-nullable and would reject the null this field must carry — the same treatment as `ArtistResolveResult.discogs_artist_id`.\n",
+    )
+    genres: list[str] = Field(
+        ...,
+        description="Top coarse Discogs genres (majority-take, frequency-ranked, truncated to the top-K). Empty when unknown. The ~15-value Discogs genre taxonomy the iOS On Tour filter chips render.\n",
+    )
+    styles: list[str] = Field(
+        ...,
+        description="Frequency-ranked Discogs styles (full list, untruncated). Empty when unknown. The finer Discogs style taxonomy; the iOS filter ignores it — it is a detail-view treatment.\n",
+    )
+    source: ArtistGenresSource
+
+
+class BulkArtistGenresResponse(BaseModel):
+    results: list[ArtistGenresResultItem]
 
 
 class CacheRefreshSourceOutcome(StrEnum):
@@ -2112,6 +2203,10 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
     entry_type: Literal["track"]
     album_id: int | None = None
     rotation_id: int | None = None
+    artist_id: int | None = Field(
+        None,
+        description="The played release's resolved WXYC catalog artist id (`flowsheet.album_id → library.artist_id`), computed server-side on the same join that powers `upcoming_show`. Shares the catalog artist-id keyspace with `Concert.headlining_artist_id` and `SimilarArtist.artist_id`, so on-device features — the On Tour likes match — can intersect a liked playcut's artist against concert headliners and their affinity neighbors in one id space.\n\nNull for free-form entries (no `album_id`) and for library rows whose album has no linked artist. Additive and optional: older app builds that don't decode it are unaffected.\n",
+    )
     artist_name: str | None = None
     album_title: str | None = None
     track_title: str | None = None
