@@ -315,6 +315,68 @@ class TestLookupServiceClient:
         await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
         assert calls == ["Bearer retry-token", "Bearer retry-token"]
 
+    @pytest.mark.asyncio
+    async def test_caller_budget_header_default_from_timeout(self):
+        """With the default 20s per-attempt timeout, X-Caller-Budget-Ms is 19800."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["x-caller-budget-ms"] == "19800"
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)  # per_attempt_timeout defaults to 20.0
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
+    @pytest.mark.asyncio
+    async def test_caller_budget_header_explicit_wins(self):
+        """An explicit caller_budget_ms is sent verbatim, independent of the timeout."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["x-caller-budget-ms"] == "5000"
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        # per_attempt_timeout that would derive 9800 is overridden by the explicit budget.
+        client = _make_client(handler, per_attempt_timeout=10.0, caller_budget_ms=5000)
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
+    @pytest.mark.asyncio
+    async def test_caller_budget_header_is_integer_string(self):
+        """The header value is a plain integer string, never a float like '19800.0'."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            value = request.headers["x-caller-budget-ms"]
+            assert "." not in value
+            assert int(value) == 19800
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
+    @pytest.mark.asyncio
+    async def test_caller_budget_header_sent_on_retry(self):
+        """The X-Caller-Budget-Ms header rides every attempt, not just the first."""
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.headers.get("x-caller-budget-ms"))
+            if len(calls) == 1:
+                raise httpx.ConnectError("Connection refused")
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler)  # per_attempt_timeout defaults to 20.0
+        await client.lookup(LookupRequest(artist="Cat Power", raw_message="play cat power"))
+        assert calls == ["19800", "19800"]
+
+    @pytest.mark.asyncio
+    async def test_caller_budget_header_clamps_to_floor(self):
+        """A tiny per-attempt timeout clamps the derived budget to the 1000ms floor."""
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers["x-caller-budget-ms"] == "1000"
+            return httpx.Response(200, json=SAMPLE_RESPONSE)
+
+        client = _make_client(handler, per_attempt_timeout=0.5)
+        await client.lookup(LookupRequest(artist="Stereolab", raw_message="play stereolab"))
+
 
 class TestLookupModels:
     """Tests for lookup models."""
