@@ -32,6 +32,7 @@ from tests.scenarios import (
     PLUG_COMMA_FORMAT,
     PLUG_NO_ALBUM,
     QUIXOTIC_SPECIAL_CHARS,
+    RAGA_UNSPECIFIED_ARTIST,
     SARA_FLEETWOOD_MAC_GREETING,
     SNEAKER_PIMPS_TRACK_VALIDATION,
     SOME_PHIL_COLLINS_FILLER,
@@ -369,6 +370,44 @@ class TestParserIntegration:
         )
 
         print("  ✅ Filler word 'something' correctly ignored!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_unspecified_artist_nulls_artist_slot(self):
+        """A generically-described performer must null the artist, keeping the song.
+
+        Bug: "Raga Bharavi by any Hindustani classical musician" parsed with
+        artist="any Hindustani classical musician" (the descriptive phrase
+        captured as a literal artist), producing a doomed exact-artist search
+        and a "No results found | Artist: any Hindustani classical musician"
+        Slack reply.
+
+        Expected: song="Raga Bharavi", artist=null -- so the search runs
+        song-only across all performers. See RAGA_UNSPECIFIED_ARTIST.
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = RAGA_UNSPECIFIED_ARTIST
+
+        result = await parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is None, (
+            f"Expected artist to be null (unspecified performer), got: {result.artist}"
+        )
+        assert result.song is not None and "raga bharavi" in result.song.lower(), (
+            f"Expected song 'Raga Bharavi' to be retained, got: {result.song}"
+        )
+
+        print("  ✅ Unspecified performer correctly nulled the artist slot!")
 
     @pytest.mark.asyncio
     @skip_if_no_groq
