@@ -810,7 +810,16 @@ class Concert(BaseModel):
     )
     station_plays: int | None = Field(
         None,
-        description='All-time WXYC flowsheet play count of the resolved (in-library) headliner, computed nightly from the semantic-index graph; null when the headliner is not in the library or has no play count. Identical for every listener — the station-affinity signal behind the On Tour "For You" shelf. Not personalized; carries no listener data. Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.similar_artists`.',
+        deprecated=True,
+        description='Deprecated — use `station_recommended` instead. Play counts were rejected as the station-tier signal in the "WXYC recommends" redesign (WXYC/wxyc-ios-64#576); the tier now keys on rotation membership. All-time WXYC flowsheet play count of the resolved (in-library) headliner, computed nightly from the semantic-index graph; null when the headliner is not in the library or has no play count. Identical for every listener. Stays on the wire until the removal ticket (WXYC/Backend-Service#1732) clears its adoption gate; will be removed in a future major version.',
+    )
+    station_recommended: bool | None = Field(
+        None,
+        description='True when the concert\'s resolved headliner (`headlining_artist_id`) has at least one WXYC library release that has been in rotation — any rotation row, past or present ("has been in rotation", not "currently in rotation"). Omitted or false for concerts with no library-resolved headliner, including Discogs-only resolutions (`headlining_discogs_artist_id` without `headlining_artist_id` in the Backend), which by construction have no library releases to hold rotation membership. The rotation-membership signal behind the On Tour "For You" station tier ("WXYC recommends", WXYC/wxyc-ios-64#576); replaces the deprecated `station_plays`. Identical for every listener; carries no listener data. Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.similar_artists`.',
+    )
+    artist_bio: str | None = Field(
+        None,
+        description='Artist biography from the resolved headliner\'s Discogs profile (raw Discogs markup, parsed client-side), keyed on the effective Discogs artist id and cached nightly on `artist_metadata`. Null when the headliner is unresolved, has no Discogs profile, or enrichment has not run. Identical for every listener; carries no listener data. Renders the On Tour concert-detail "About the Artist" card. Optional (not in `required`) so it can land ahead of the Backend-Service emitter and older clients decode forward-compatibly — same discipline as `Concert.similar_artists`.',
     )
 
 
@@ -1837,6 +1846,23 @@ class TrackListItem(BaseModel):
     duration: str | None = Field(None, description='Track duration (e.g. "5:23")')
 
 
+class CriticReviewItem(BaseModel):
+    source: str = Field(..., description='Publication name (e.g. "The Quietus")')
+    url: str = Field(
+        ..., description="Link to the original review on the publisher's site (mandatory link-out)"
+    )
+    snippet: str = Field(
+        ..., description="Short attributed excerpt (<= ~300 chars); never the full review body"
+    )
+    author: str | None = Field(None, description="Review author, when available")
+    publishedDate: str | None = Field(
+        None, description='Review publication date when available (e.g. "2024-03-15")'
+    )
+    rating: str | None = Field(
+        None, description='Source-native rating string when available (e.g. "8.0")'
+    )
+
+
 class AlbumMetadataResponse(BaseModel):
     discogsReleaseId: int | None = Field(None, description="Discogs release ID")
     discogsUrl: str | None = Field(None, description="Discogs release page URL")
@@ -1854,6 +1880,10 @@ class AlbumMetadataResponse(BaseModel):
         None, description='Full release date when available (e.g. "2024-03-15")'
     )
     tracklist: list[TrackListItem] | None = Field(None, description="Release tracklist")
+    criticReviews: list[CriticReviewItem] | None = Field(
+        None,
+        description="Attributed external critic-review snippets, each linking out to the original",
+    )
     spotifyUrl: str | None = Field(None, description="Spotify URL for the album or track")
     appleMusicUrl: str | None = Field(None, description="Apple Music URL for the album or track")
     youtubeMusicUrl: str | None = Field(None, description="YouTube Music search URL")
