@@ -533,6 +533,46 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
         expected_album="doga",
         expected_stripped="la paradoja by juana molina",
     ),
+    # Leading "album"/"record"/"the album" descriptor after the preposition is a
+    # noun that introduces the title, not part of it -- strip it. (Mirrors the
+    # trailing "lp"/"cd" format-descriptor rule the Groq prompt already applies.)
+    AlbumPrepassCase(
+        id="juana_from_album_descriptor",
+        raw_message="la paradoja by juana molina from album doga",
+        preposition="from",
+        expected_album="doga",
+        expected_stripped="la paradoja by juana molina",
+    ),
+    AlbumPrepassCase(
+        id="orb_on_the_album_descriptor",
+        raw_message="tower of dub by the orb on the album live '93",
+        preposition="on",
+        expected_album="live '93",
+        expected_stripped="tower of dub by the orb",
+    ),
+    # A whole feedback sentence appended after the request must not be swallowed
+    # into the album. The trailing-politeness trim only caught a single trailing
+    # token; a clause introduced by a politeness word after a sentence boundary
+    # ("...doga.  thanks for the great set!") is cut in full.
+    AlbumPrepassCase(
+        id="jessica_off_trailing_feedback_clause",
+        raw_message="back, baby by jessica pratt off on your own love again, thanks for the great set!",
+        preposition="off",
+        expected_album="on your own love again",
+        expected_stripped="back, baby by jessica pratt",
+    ),
+    # Regression repro of the production miss (WXYC/request-o-matic): a leading
+    # "album" descriptor AND a trailing feedback sentence in the same message.
+    AlbumPrepassCase(
+        id="harveymilk_album_descriptor_and_feedback",
+        raw_message=(
+            "anvil will fall by harvey milk from album my love is....     "
+            "thanks for your set we're enjoying it!!!"
+        ),
+        preposition="from",
+        expected_album="my love is",
+        expected_stripped="anvil will fall by harvey milk",
+    ),
     # -- Negatives: pre-pass must decline (idioms, greetings, bare short-forms).
     # The id documents the tail that a false-fire would wrongly capture as album.
     AlbumPrepassCase(
