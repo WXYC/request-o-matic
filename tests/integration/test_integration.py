@@ -14,6 +14,7 @@ from services.parser import SUPPORTED_ALBUM_PREPOSITIONS
 from tests.scenarios import (
     ALBUM_PREPASS_POSITIVES,
     AMPS_FOR_CHRIST_AMBIGUOUS,
+    ANY_TROUBLE_DETERMINER_ARTIST,
     BECK_EDITORIAL_ALBUM,
     BIOSPHERE_ALBUM_FILTER,
     ECHO_BUNNYMEN_ARTIST_ONLY,
@@ -408,6 +409,42 @@ class TestParserIntegration:
         )
 
         print("  ✅ Unspecified performer correctly nulled the artist slot!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_determiner_prefixed_band_name_not_nulled(self):
+        """A real band whose name begins with a determiner must NOT be nulled.
+
+        Regression guard for the unspecified-performer rule: it must null the
+        artist only for a generic role/genre/pronoun, never for a proper name
+        that happens to start with a determiner. "Any Trouble" is a real band,
+        so "Second Choice by Any Trouble" must keep artist="Any Trouble" rather
+        than mistaking the leading "Any" for the "any <descriptor>" shape.
+
+        Expected: song="Second Choice", artist="Any Trouble".
+        See ANY_TROUBLE_DETERMINER_ARTIST.
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = ANY_TROUBLE_DETERMINER_ARTIST
+
+        result = await parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Is Request: {result.is_request}")
+
+        assert result.is_request is True, "Should recognize as a request"
+        assert result.artist is not None and "any trouble" in result.artist.lower(), (
+            "Expected the real band 'Any Trouble' to be preserved as the artist, "
+            f"got: {result.artist}"
+        )
+
+        print("  ✅ Determiner-prefixed band name correctly preserved!")
 
     @pytest.mark.asyncio
     @skip_if_no_groq
