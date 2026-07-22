@@ -312,6 +312,16 @@ SOMETHING_BY_HELDEN_FILLER = _register(
     tags=frozenset({"parser", "filler_word"}),
 )
 
+RAGA_UNSPECIFIED_ARTIST = _register(
+    id="raga_unspecified_artist",
+    description="'Raga Bharavi by any Hindustani classical musician' - unspecified performer nulls the artist",
+    raw_message="Raga Bharavi by any Hindustani classical musician",
+    song="Raga Bharavi",
+    artist=None,
+    bug="Parser captured 'any Hindustani classical musician' as a literal artist, producing 'No results found | Artist: any Hindustani classical musician' instead of a song-only search",
+    tags=frozenset({"parser", "filler_word", "unspecified_artist"}),
+)
+
 MJ_LENDERMAN_BARE_ARTIST = _register(
     id="mj_lenderman_bare_artist",
     description="Bare artist name 'MJ Lenderman' should parse as artist, not song",

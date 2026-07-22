@@ -35,3 +35,23 @@ def test_prompt_documents_short_temporal_word_as_song() -> None:
         "SYSTEM_PROMPT no longer documents that a short temporal-adverb-like word "
         "can be the song title (regression guard for #162)"
     )
+
+
+def test_prompt_documents_unspecified_artist_as_null() -> None:
+    """A generically-described / unspecified performer must null the artist.
+
+    Mirror of the existing filler rule (which nulls the *song* for "any song by
+    X"): when the listener names a song/album but leaves the performer open --
+    "Raga Bharavi by any Hindustani classical musician", "some jazz trio", "any
+    artist", "whoever" -- the descriptive phrase must NOT be captured as a
+    literal artist name (that produces a doomed exact-artist search and a
+    "No results found | Artist: any Hindustani classical musician" reply).
+    Instead the artist slot is nulled so the search runs song-only across all
+    performers. "unspecified performer" is the distinguishing concept the rule
+    introduces; if it disappears the parser regresses.
+    """
+    assert "unspecified performer" in _PROMPT, (
+        "SYSTEM_PROMPT no longer documents that a generically-described or "
+        "unspecified performer nulls the artist slot (song search across all "
+        "artists)"
+    )
