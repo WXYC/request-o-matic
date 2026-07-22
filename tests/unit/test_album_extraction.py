@@ -101,14 +101,58 @@ def test_leading_descriptor_strip_leaves_single_word_titles_intact() -> None:
 def test_trailing_feedback_strip_preserves_politeness_word_inside_title() -> None:
     """A politeness word mid-title (no sentence boundary) is part of the title.
 
-    The trailing-feedback trim only fires after a sentence boundary (punctuation,
-    comma, or a 2+ space gap), so a single space before a politeness word -- as in
+    The trailing-feedback trim only fires after a sentence boundary (terminal
+    punctuation or a comma), so a single space before a politeness word -- as in
     an album whose title merely contains one -- does not truncate the title.
     """
     result = extract_album_prefix("some song by stereolab off pretty please goodbye")
     assert result is not None
     album, _ = result
     assert album.strip().lower() == "pretty please goodbye"
+
+
+def test_trailing_feedback_strip_ignores_double_space_before_politeness_word() -> None:
+    """A run of spaces is NOT a feedback boundary -- only punctuation/comma is.
+
+    A double-space typo in a title ("pretty  please goodbye") must not be read as
+    an appended feedback clause and truncated; a genuine feedback clause is
+    introduced by punctuation or a comma instead.
+    """
+    result = extract_album_prefix("some song by stereolab off pretty  please goodbye")
+    assert result is not None
+    album, _ = result
+    assert "please goodbye" in album.strip().lower()
+
+
+def test_leading_descriptor_strip_preserves_titles_that_begin_with_the_noun() -> None:
+    """Real titles beginning with the descriptor word keep their first word.
+
+    "Album of the Year" and "Record Collection" are real albums; the strip fires
+    only for the determiner-led form or a bare "album" not followed by "of", so
+    the title-word usage survives.
+    """
+    # bare "album" + "of ..." is the title pattern, not a descriptor
+    r1 = extract_album_prefix("some song by stereolab off album of the year")
+    assert r1 is not None and r1[0].strip().lower() == "album of the year"
+    # bare "record <word>" is left intact (only "the record" reads as a descriptor)
+    r2 = extract_album_prefix("some song by cat power off record collection")
+    assert r2 is not None and r2[0].strip().lower() == "record collection"
+
+
+def test_leading_descriptor_strip_preserves_ep_lp_volume_titles() -> None:
+    """ "EP 3" / "LP 2" volume-named releases: "ep"/"lp" are not descriptors."""
+    r1 = extract_album_prefix("some track by chuquimamani-condori off ep 3")
+    assert r1 is not None and r1[0].strip().lower() == "ep 3"
+    r2 = extract_album_prefix("some track by juana molina off lp 2")
+    assert r2 is not None and r2[0].strip().lower() == "lp 2"
+
+
+def test_leading_descriptor_strip_fires_on_determiner_led_forms() -> None:
+    """ "the album X" / "the record X" are unambiguous descriptors -> stripped."""
+    r1 = extract_album_prefix("some song by cat power on the album moon pix")
+    assert r1 is not None and r1[0].strip().lower() == "moon pix"
+    r2 = extract_album_prefix("some song by stereolab off the record collection")
+    assert r2 is not None and r2[0].strip().lower() == "collection"
 
 
 def test_returns_none_for_messages_without_album_marker() -> None:

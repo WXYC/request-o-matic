@@ -45,14 +45,17 @@ _TRAILING_POLITENESS_RE = re.compile(
 # listener writes "<song> by <artist> from <album>....  thanks for your set!".
 # The trailing-politeness trim above only removes a single trailing token; this
 # removes the politeness lead-in word AND everything after it. It fires ONLY when
-# a sentence boundary -- punctuation, a comma, or a run of 2+ spaces -- precedes
-# the politeness word. That boundary requirement is what distinguishes an
-# appended clause from a title that merely *contains* a politeness word
-# ("Pretty Please Goodbye"), where the word sits behind a single space.
-# The lead-in set mirrors _TRAILING_POLITENESS_RE so the two stay consistent.
+# a sentence boundary -- terminal punctuation or a comma -- precedes the
+# politeness word. That boundary requirement is what distinguishes an appended
+# clause from a title that merely *contains* a politeness word ("Pretty Please
+# Goodbye"). A run of spaces is deliberately NOT a boundary: a double-space typo
+# inside a title ("pretty  please goodbye") would otherwise truncate it, and a
+# genuine appended clause is reliably introduced by punctuation or a comma
+# anyway. The lead-in set mirrors _TRAILING_POLITENESS_RE so the two stay
+# consistent.
 _TRAILING_FEEDBACK_RE = re.compile(
     r"""
-    (?: [.!?…]+ | ,+ | \s{2,} )         # a clause boundary (never a lone space)
+    (?: [.!?…]+ | ,+ )                   # a clause boundary (punctuation or comma)
     \s*
     (?: please | thanks | thank\ you | thx )   # feedback lead-in
     \b
@@ -63,13 +66,33 @@ _TRAILING_FEEDBACK_RE = re.compile(
 )
 
 # A descriptor noun introducing the album title -- "from album <title>", "off
-# the record <title>". The noun (with an optional leading "the") is a lead-in,
-# not part of the title, so strip it. Anchored with a trailing `\s+` so it only
-# fires when title text follows: a real album literally titled "Album" (PiL) or
-# "Record" survives the bare "off album" phrasing.
+# the record <title>". The noun is a lead-in, not part of the title, so strip it.
+# The tricky part is that "album"/"record"/"lp"/"ep" are also legitimate *title*
+# words ("Album of the Year", "Record Collection", "EP 3", "LP 2"), so the strip
+# is deliberately narrow -- it fires in only two unambiguous shapes:
+#
+#   1. determiner-led -- "the album <title>" / "the record <title>". A real title
+#      virtually never begins "the album ..."/"the record ...", so "the" is a
+#      confident descriptor signal.
+#   2. bare "album <title>" -- the attested telegraphic form listeners actually
+#      type ("from album my love is"). Guarded by a negative lookahead so the
+#      "Album of ..." title pattern ("Album of the Year") keeps its first word.
+#
+# Bare "record"/"lp"/"ep" are intentionally NOT stripped: their bare descriptor
+# use is unattested and they collide with real titles ("Record Collection",
+# "EP 3", "LP 2"). The trailing `\s+` requires title text to follow, so a bare
+# album titled "Album" (PiL) survives "off album".
 _LEADING_ALBUM_DESCRIPTOR_RE = re.compile(
-    r"^(?:the\s+)?(?:album|record|lp|ep)\s+",
-    re.IGNORECASE,
+    r"""
+    ^
+    (?:
+        the \s+ (?: album | record )   # 1. determiner-led descriptor
+      |
+        album (?! \s+ of \b )          # 2. bare "album", but not "Album of ..."
+    )
+    \s+
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 # Single source of truth for the album prepositions the pre-pass recognises.
