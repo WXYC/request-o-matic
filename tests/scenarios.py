@@ -322,6 +322,16 @@ RAGA_UNSPECIFIED_ARTIST = _register(
     tags=frozenset({"parser", "filler_word", "unspecified_artist"}),
 )
 
+ANY_TROUBLE_DETERMINER_ARTIST = _register(
+    id="any_trouble_determiner_artist",
+    description="'Second Choice by Any Trouble' - a real band whose name begins with a determiner must NOT be nulled by the unspecified-performer rule",
+    raw_message="Second Choice by Any Trouble",
+    song="Second Choice",
+    artist="Any Trouble",
+    bug="Guards against the unspecified-performer rule over-triggering on 'Any Trouble' (a real band whose name starts with the determiner 'Any') and nulling a searchable artist",
+    tags=frozenset({"parser", "unspecified_artist"}),
+)
+
 MJ_LENDERMAN_BARE_ARTIST = _register(
     id="mj_lenderman_bare_artist",
     description="Bare artist name 'MJ Lenderman' should parse as artist, not song",
