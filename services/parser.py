@@ -41,6 +41,37 @@ _TRAILING_POLITENESS_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# A whole feedback/greeting clause appended after the request -- e.g. the
+# listener writes "<song> by <artist> from <album>....  thanks for your set!".
+# The trailing-politeness trim above only removes a single trailing token; this
+# removes the politeness lead-in word AND everything after it. It fires ONLY when
+# a sentence boundary -- punctuation, a comma, or a run of 2+ spaces -- precedes
+# the politeness word. That boundary requirement is what distinguishes an
+# appended clause from a title that merely *contains* a politeness word
+# ("Pretty Please Goodbye"), where the word sits behind a single space.
+# The lead-in set mirrors _TRAILING_POLITENESS_RE so the two stay consistent.
+_TRAILING_FEEDBACK_RE = re.compile(
+    r"""
+    (?: [.!?…]+ | ,+ | \s{2,} )         # a clause boundary (never a lone space)
+    \s*
+    (?: please | thanks | thank\ you | thx )   # feedback lead-in
+    \b
+    [\s\S]*                              # ... and the rest of the appended clause
+    $
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# A descriptor noun introducing the album title -- "from album <title>", "off
+# the record <title>". The noun (with an optional leading "the") is a lead-in,
+# not part of the title, so strip it. Anchored with a trailing `\s+` so it only
+# fires when title text follows: a real album literally titled "Album" (PiL) or
+# "Record" survives the bare "off album" phrasing.
+_LEADING_ALBUM_DESCRIPTOR_RE = re.compile(
+    r"^(?:the\s+)?(?:album|record|lp|ep)\s+",
+    re.IGNORECASE,
+)
+
 # Single source of truth for the album prepositions the pre-pass recognises.
 # Order matters: multi-word forms must precede their own prefixes ("off of"
 # before "off") so the regex alternation is greedy-correct.
@@ -158,8 +189,19 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
         return None
 
     album_raw = match.group("album").strip()
-    # Trim trailing politeness ("please", "thanks") that listeners append.
+    # Trim a trailing feedback clause ("...doga.  thanks for the set!") first,
+    # then any bare trailing politeness token ("...doga please"). The feedback
+    # trim requires a sentence boundary before the politeness word, so a title
+    # that merely contains one ("Pretty Please Goodbye") is left intact.
+    album_raw = _TRAILING_FEEDBACK_RE.sub("", album_raw)
     album_raw = _TRAILING_POLITENESS_RE.sub("", album_raw).strip()
+    if not album_raw:
+        return None
+
+    # Drop a leading album-descriptor noun ("from album <title>" -> "<title>").
+    # The noun introduces the title rather than being part of it. The regex is
+    # anchored so it only fires when title text follows (see its definition).
+    album_raw = _LEADING_ALBUM_DESCRIPTOR_RE.sub("", album_raw).strip()
     if not album_raw:
         return None
 

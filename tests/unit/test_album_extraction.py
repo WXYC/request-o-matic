@@ -86,6 +86,31 @@ def test_does_not_extract_album_for_idioms_or_short_forms(case) -> None:
     )
 
 
+def test_leading_descriptor_strip_leaves_single_word_titles_intact() -> None:
+    """A bare "album"/"record" title (no trailing text) must not be stripped away.
+
+    The leading-descriptor strip requires trailing title text after the noun, so
+    a real album literally titled "Album" (PiL) survives the "off album" phrasing.
+    """
+    result = extract_album_prefix("metal box by public image ltd off album")
+    assert result is not None
+    album, _ = result
+    assert album.strip().lower() == "album"
+
+
+def test_trailing_feedback_strip_preserves_politeness_word_inside_title() -> None:
+    """A politeness word mid-title (no sentence boundary) is part of the title.
+
+    The trailing-feedback trim only fires after a sentence boundary (punctuation,
+    comma, or a 2+ space gap), so a single space before a politeness word -- as in
+    an album whose title merely contains one -- does not truncate the title.
+    """
+    result = extract_album_prefix("some song by stereolab off pretty please goodbye")
+    assert result is not None
+    album, _ = result
+    assert album.strip().lower() == "pretty please goodbye"
+
+
 def test_returns_none_for_messages_without_album_marker() -> None:
     """No "on" / "from" / "off" -> pre-pass declines to fire."""
     assert extract_album_prefix("la paradoja by juana molina") is None

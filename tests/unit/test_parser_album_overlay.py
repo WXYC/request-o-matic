@@ -174,6 +174,45 @@ async def test_overlay_works_for_off_phrasing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_overlay_strips_descriptor_and_trailing_feedback() -> None:
+    """Production repro: "<song> by <artist> from album <title>....  <feedback>".
+
+    The pre-pass must (a) drop the leading "album" descriptor noun and (b) not
+    swallow the appended feedback sentence into the album, while Groq -- which
+    only ever sees the stripped song+artist prefix -- returns song/artist cleanly.
+    """
+    client = _make_mock_groq(
+        {
+            "song": "Anvil Will Fall",
+            "album": None,
+            "artist": "Harvey Milk",
+            "is_request": True,
+            "message_type": "request",
+        }
+    )
+
+    message = (
+        "anvil will fall by harvey milk from album my love is....     "
+        "thanks for your set we're enjoying it!!!"
+    )
+    result = await parse_request(message, client)
+
+    assert result.album is not None
+    assert result.album.strip().lower() == "my love is"
+    assert result.song == "Anvil Will Fall"
+    assert result.artist == "Harvey Milk"
+
+    # Groq saw only the song+artist prefix -- no descriptor, no album, no feedback.
+    call_args = client.chat.completions.create.await_args
+    user_msg = next(m for m in call_args.kwargs["messages"] if m["role"] == "user")
+    user_content = user_msg["content"].lower()
+    assert "album" not in user_content
+    assert "my love is" not in user_content
+    assert "thanks" not in user_content
+    assert "anvil will fall by harvey milk" in user_content
+
+
+@pytest.mark.asyncio
 async def test_overlay_works_for_off_of_phrasing() -> None:
     client = _make_mock_groq(
         {
