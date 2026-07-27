@@ -189,6 +189,10 @@ def _emit_server_timing_header(
     Merges the sub-stages LML returned in its own ``Server-Timing`` header into
     rom's per-stage timings, so a caller (e.g. the ``lookup`` CLI) can attribute
     a slow ``/request`` round-trip to a named server stage (Backend-Service#881).
+    LML's own self-measured ``total`` is forwarded too, renamed to
+    ``lml_total`` — comparing it against rom's ``lookup_service`` leg isolates
+    the rom<->LML transport + LML framework overhead that neither side's own
+    timing otherwise explains.
 
     Flag-gated and fully defensive: a disabled flag skips it, and any failure to
     build the header is logged and swallowed so this observability path can never
@@ -199,14 +203,15 @@ def _emit_server_timing_header(
     try:
         # Forwarded LML legs become ``extra`` legs in ``as_server_timing`` —
         # appended after rom's own steps and before rom's canonical ``total``.
-        # Drop LML's ``total`` (rom appends its own) and any name that collides
-        # with a rom step (rom's own measurement wins) so the header stays
-        # single-total and strict-parser-safe. rom/LML stage names are disjoint
+        # Rename LML's ``total`` to ``lml_total`` (rather than dropping it) so
+        # both totals survive; still drop any name that collides with a rom
+        # step (rom's own measurement wins) so the header stays single-total
+        # and strict-parser-safe. rom/LML stage names are otherwise disjoint
         # today; the collision guard future-proofs against a rename.
         extra = {
-            name: dur
+            ("lml_total" if name == "total" else name): dur
             for name, dur in parse_server_timing(lml_server_timing)
-            if name != "total" and name not in telemetry.steps
+            if name not in telemetry.steps
         }
         http_response.headers["Server-Timing"] = telemetry.as_server_timing(extra=extra or None)
     except Exception:

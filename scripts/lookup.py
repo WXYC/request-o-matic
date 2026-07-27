@@ -167,11 +167,15 @@ _STAGE_LABELS = {
     "metadata_enrichment": "LML: metadata enrichment",
     "identity_resolution": "LML: identity resolution",
     "discogs": "LML: Discogs cache/API",
+    "queue_wait": "LML: queue wait",
+    "event_loop_lag": "LML: event-loop lag",
     # Roll-ups.
     "lookup_service": "LML round-trip (server)",
+    "lml_wall": "LML: wall (incl. framework)",
+    "lml_total": "LML: total (self-measured)",
     "total": "Server total",
 }
-_ROLLUP_STAGES = ("lookup_service", "total")
+_ROLLUP_STAGES = ("lookup_service", "lml_wall", "lml_total", "total")
 
 
 def print_server_timing(header: str | None, round_trip_ms: float) -> None:
