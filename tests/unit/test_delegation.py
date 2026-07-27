@@ -626,8 +626,11 @@ class TestServerTimingForwarding:
     """Server-Timing emission + LML sub-stage merge on /request (Backend-Service#881).
 
     /request combines rom's own per-stage telemetry (parse, lookup_service,
-    slack_post) with the sub-stages LML forwards in its own Server-Timing header,
-    dropping LML's total so the merged header carries exactly one (rom's) total.
+    slack_post) with the sub-stages LML forwards in its own Server-Timing header.
+    LML's self-measured total is renamed to ``lml_total`` (not dropped) so a
+    reader can compute ``lookup_service - lml_total`` = ROM<->LML transport +
+    LML framework overhead; the merged header still carries exactly one
+    rom-owned ``total``.
     """
 
     @pytest.mark.asyncio
@@ -659,8 +662,9 @@ class TestServerTimingForwarding:
     async def test_forwarded_lml_substages_merged(
         self, app, mock_lookup_client, sample_lookup_response
     ):
-        """LML's forwarded sub-stages are merged in and its own total is dropped,
-        leaving a strict-parser-safe header with exactly one (rom's) total."""
+        """LML's forwarded sub-stages are merged in and its own total is renamed
+        to ``lml_total`` (not dropped), leaving a strict-parser-safe header with
+        exactly one rom-owned ``total``."""
         mock_lookup_client.lookup.return_value = _lr(
             sample_lookup_response,
             server_timing=(
@@ -691,13 +695,50 @@ class TestServerTimingForwarding:
         # rom's own stages surface
         assert "parse" in names
         assert "lookup_service" in names
-        # LML's total is dropped; exactly one total (rom's), last
+        # LML's self-measured total is forwarded, renamed to lml_total, with
+        # its original value preserved
+        assert "lml_total" in names
+        assert "lml_total;dur=8560.1" in entries
+        # exactly one total (rom's own), last
         assert names.count("total") == 1
         assert names[-1] == "total"
         # strict-parser-safe wire format (name;dur=<plain-decimal>, ", "-joined)
         grammar = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*;dur=\d+(?:\.\d+)?$")
         for entry in entries:
             assert grammar.match(entry), f"non-conforming Server-Timing entry: {entry!r}"
+
+    @pytest.mark.asyncio
+    async def test_new_lml_legs_pass_through(self, app, mock_lookup_client, sample_lookup_response):
+        """Forward-looking legs LML is about to start emitting (queue_wait,
+        lml_wall, event_loop_lag) pass through the merge untouched, same as any
+        other forwarded sub-stage."""
+        mock_lookup_client.lookup.return_value = _lr(
+            sample_lookup_response,
+            server_timing=(
+                "queue_wait;dur=12.5, library_search;dur=41.2, event_loop_lag;dur=3.1, "
+                "lml_wall;dur=8600.9, total;dur=8560.1"
+            ),
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "milkman aphex twin", "skip_slack": True},
+                )
+
+        header = response.headers["server-timing"]
+        entries = [e.strip() for e in header.split(",") if e.strip()]
+        names = _server_timing_names(header)
+        assert "queue_wait;dur=12.5" in entries
+        assert "event_loop_lag;dur=3.1" in entries
+        assert "lml_wall;dur=8600.9" in entries
+        assert names.count("total") == 1
+        assert names[-1] == "total"
 
     @pytest.mark.asyncio
     async def test_header_absent_when_flag_disabled(

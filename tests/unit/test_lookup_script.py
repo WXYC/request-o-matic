@@ -89,3 +89,47 @@ class TestPrintServerTiming:
         # the raw snake_case forms must not leak once the stage is mapped
         for raw in ("album_lookup", "track_validation", "artwork_fetch", "identity_resolution"):
             assert raw not in out
+
+    def test_lml_total_and_new_legs_get_friendly_labels(self, capsys):
+        """LML's forwarded self-measured total (renamed lml_total) and the new
+        queue_wait / lml_wall / event_loop_lag legs render with friendly
+        labels rather than raw snake_case."""
+        header = (
+            "parse;dur=3, queue_wait;dur=12, library_search;dur=41, "
+            "event_loop_lag;dur=3, lml_wall;dur=8600, lml_total;dur=8560, "
+            "lookup_service;dur=8610, total;dur=8620"
+        )
+        print_server_timing(header, round_trip_ms=8990.0)
+        out = capsys.readouterr().out
+        for label in (
+            "LML: total (self-measured)",
+            "LML: wall (incl. framework)",
+            "LML: queue wait",
+            "LML: event-loop lag",
+        ):
+            assert label in out
+        for raw in ("lml_total", "lml_wall", "queue_wait", "event_loop_lag"):
+            assert raw not in out
+
+    def test_lml_wall_and_lml_total_print_as_rollups(self, capsys):
+        """lml_wall and lml_total print after the LML leaf sub-stages, alongside
+        the other roll-ups (lookup_service, total)."""
+        header = (
+            "parse;dur=3, queue_wait;dur=12, library_search;dur=41, "
+            "event_loop_lag;dur=3, lml_wall;dur=8600, lml_total;dur=8560, "
+            "lookup_service;dur=8610, total;dur=8620"
+        )
+        print_server_timing(header, round_trip_ms=8990.0)
+        lines = capsys.readouterr().out.splitlines()
+        idx_leaf = next(i for i, ln in enumerate(lines) if "queue wait" in ln.lower())
+        idx_lml_wall = next(i for i, ln in enumerate(lines) if "wall (incl" in ln.lower())
+        idx_lml_total = next(
+            i for i, ln in enumerate(lines) if "total (self-measured)" in ln.lower()
+        )
+        idx_lookup_service_rollup = next(
+            i for i, ln in enumerate(lines) if "lml round-trip" in ln.lower()
+        )
+        assert idx_leaf < idx_lml_wall
+        assert idx_leaf < idx_lml_total
+        assert idx_lml_wall < idx_lookup_service_rollup
+        assert idx_lml_total < idx_lookup_service_rollup
