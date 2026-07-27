@@ -112,8 +112,12 @@ class TestPrintServerTiming:
             assert raw not in out
 
     def test_lml_wall_and_lml_total_print_as_rollups(self, capsys):
-        """lml_wall and lml_total print after the LML leaf sub-stages, alongside
-        the other roll-ups (lookup_service, total)."""
+        """Roll-ups render in a fixed nesting order (lookup_service, lml_wall,
+        lml_total, total), independent of header order. The synthetic header
+        below deliberately lists lml_wall/lml_total *before* lookup_service, so
+        this also guards that ordering follows ``_ROLLUP_STAGES``, not the
+        header — a regression here would otherwise pass on an unrealistic
+        header while breaking on real ROM output (lookup_service first)."""
         header = (
             "parse;dur=3, queue_wait;dur=12, library_search;dur=41, "
             "event_loop_lag;dur=3, lml_wall;dur=8600, lml_total;dur=8560, "
@@ -122,14 +126,15 @@ class TestPrintServerTiming:
         print_server_timing(header, round_trip_ms=8990.0)
         lines = capsys.readouterr().out.splitlines()
         idx_leaf = next(i for i, ln in enumerate(lines) if "queue wait" in ln.lower())
+        idx_lookup_service_rollup = next(
+            i for i, ln in enumerate(lines) if "lml round-trip" in ln.lower()
+        )
         idx_lml_wall = next(i for i, ln in enumerate(lines) if "wall (incl" in ln.lower())
         idx_lml_total = next(
             i for i, ln in enumerate(lines) if "total (self-measured)" in ln.lower()
         )
-        idx_lookup_service_rollup = next(
-            i for i, ln in enumerate(lines) if "lml round-trip" in ln.lower()
-        )
-        assert idx_leaf < idx_lml_wall
-        assert idx_leaf < idx_lml_total
-        assert idx_lml_wall < idx_lookup_service_rollup
-        assert idx_lml_total < idx_lookup_service_rollup
+        idx_total = next(i for i, ln in enumerate(lines) if "server total" in ln.lower())
+        # Leaves precede every roll-up regardless of header order.
+        assert idx_leaf < idx_lookup_service_rollup
+        # Roll-ups follow _ROLLUP_STAGES order, NOT header order.
+        assert idx_lookup_service_rollup < idx_lml_wall < idx_lml_total < idx_total

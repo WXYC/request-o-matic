@@ -195,6 +195,10 @@ def print_server_timing(header: str | None, round_trip_ms: float) -> None:
     if legs:
         leaves = [(name, dur) for name, dur in legs if name not in _ROLLUP_STAGES]
         rollups = [(name, dur) for name, dur in legs if name in _ROLLUP_STAGES]
+        # Roll-ups render in a fixed nesting order (lookup_service, lml_wall,
+        # lml_total, then the grand total) regardless of where they landed in the
+        # merged header, so the breakdown always reads outer -> inner -> total.
+        rollups.sort(key=lambda nd: _ROLLUP_STAGES.index(nd[0]))
         for name, dur in leaves + rollups:
             label = _STAGE_LABELS.get(name, name)
             print(f"  {label + ':':32s}{dur:8.0f} ms")
