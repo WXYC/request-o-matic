@@ -163,6 +163,7 @@ _STAGE_LABELS = {
     "album_lookup": "LML: album lookup",
     "library_search": "LML: library search",
     "track_validation": "LML: track validation",
+    "streaming_status": "LML: streaming status",
     "artwork_fetch": "LML: artwork fetch",
     "metadata_enrichment": "LML: metadata enrichment",
     "identity_resolution": "LML: identity resolution",
