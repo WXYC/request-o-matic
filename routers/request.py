@@ -204,15 +204,17 @@ def _emit_server_timing_header(
         # Forwarded LML legs become ``extra`` legs in ``as_server_timing`` —
         # appended after rom's own steps and before rom's canonical ``total``.
         # Rename LML's ``total`` to ``lml_total`` (rather than dropping it) so
-        # both totals survive; still drop any name that collides with a rom
-        # step (rom's own measurement wins) so the header stays single-total
-        # and strict-parser-safe. rom/LML stage names are otherwise disjoint
-        # today; the collision guard future-proofs against a rename.
-        extra = {
-            ("lml_total" if name == "total" else name): dur
-            for name, dur in parse_server_timing(lml_server_timing)
-            if name not in telemetry.steps
-        }
+        # both totals survive. Drop any leg whose *emitted* key collides with a
+        # rom step (rom's own measurement wins) so the header stays single-total
+        # and strict-parser-safe. Guarding the post-rename key — not the raw
+        # forwarded name — is what actually future-proofs against a future rom
+        # step named ``lml_total`` (rom/LML stage names are otherwise disjoint).
+        extra: dict[str, float] = {}
+        for name, dur in parse_server_timing(lml_server_timing):
+            key = "lml_total" if name == "total" else name
+            if key in telemetry.steps:
+                continue
+            extra[key] = dur
         http_response.headers["Server-Timing"] = telemetry.as_server_timing(extra=extra or None)
     except Exception:
         logger.warning("Failed to build Server-Timing header", exc_info=True)
