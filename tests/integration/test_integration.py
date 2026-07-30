@@ -32,6 +32,7 @@ from tests.scenarios import (
     PLUG_ALIAS,
     PLUG_COMMA_FORMAT,
     PLUG_NO_ALBUM,
+    PRINCE_JAMMY_REVERSE_ARTIST,
     QUIXOTIC_SPECIAL_CHARS,
     RAGA_UNSPECIFIED_ARTIST,
     SARA_FLEETWOOD_MAC_GREETING,
@@ -261,6 +262,52 @@ class TestParserIntegration:
         assert result.album is None, f"Expected album to be null, got: {result.album}"
 
         print("  ✅ Parser extracted only names from the original message!")
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_reverse_order_album_by_artist_does_not_null_artist(self):
+        """Reverse-order "<song> on <album> by <artist>" recovers the artist.
+
+        Bug: "conspiracy on neptune by prince jammy" fired the album pre-pass,
+        which greedily swallowed the trailing "by <artist>" clause into the album
+        ("neptune by prince jammy") and left artist null -- so the search fell back
+        to the compilation strategy and returned unrelated 'various' comps.
+
+        Fix: the pre-pass declines this shape (prefix names no artist yet), so Groq
+        parses the whole message and recovers the artist. This asserts the two
+        defects the listener saw are gone -- the artist is non-null and the album is
+        no longer polluted with the artist name -- without pinning Groq's exact
+        song/album split (it merges "conspiracy on neptune" into the song title).
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = PRINCE_JAMMY_REVERSE_ARTIST
+        assert s.artist is not None
+
+        result = await parse_request(s.raw_message, client)
+
+        print("\n📝 Parsed result:")
+        print(f"  Song: {result.song}")
+        print(f"  Artist: {result.artist}")
+        print(f"  Album: {result.album}")
+
+        assert result.is_request is True, "Should recognize as a request"
+
+        # Defect 1 gone: the artist is recovered (was null).
+        assert result.artist is not None, "Artist must not be null for the reverse-order shape"
+        assert "prince jammy" in result.artist.lower(), (
+            f"Expected artist 'Prince Jammy', got: {result.artist}"
+        )
+
+        # Defect 2 gone: the album is no longer polluted with the "by <artist>" clause.
+        assert result.album is None or "prince jammy" not in result.album.lower(), (
+            f"Album must not carry the artist clause, got: {result.album}"
+        )
+
+        print("  ✅ Reverse-order shape recovers the artist, album not polluted!")
 
     @pytest.mark.asyncio
     @skip_if_no_groq

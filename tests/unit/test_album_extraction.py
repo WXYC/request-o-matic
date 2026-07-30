@@ -162,6 +162,36 @@ def test_returns_none_for_messages_without_album_marker() -> None:
     assert extract_album_prefix("Spoonful-Cream-Wheels of Fire lp") is None
 
 
+def test_declines_when_album_tail_carries_an_unclaimed_artist_clause() -> None:
+    """Reverse-order "<song> {prep} <album> by <artist>" declines -> defers to Groq.
+
+    The greedy album group swallows the trailing "by <artist>" authorship clause
+    ("neptune by prince jammy"), which pollutes the album *and* starves Groq of the
+    artist (it only ever sees the "conspiracy" prefix). An album title can
+    legitimately contain "by" ("Death By Chocolate", "One By One"), so the pre-pass
+    cannot safely split it here -- it declines whenever the prefix has not already
+    named an artist, handing the whole message to Groq's world knowledge instead.
+    """
+    assert extract_album_prefix("conspiracy on neptune by prince jammy") is None
+    # Same shape, but the "by" belongs to a real album title -- also declined, so
+    # Groq (not the regex) decides album vs artist.
+    assert extract_album_prefix("conspiracy on death by chocolate") is None
+
+
+def test_still_fires_when_prefix_already_names_the_artist() -> None:
+    """A "by <artist>" already in the prefix means the album's own "by" is title text.
+
+    "moon pix by cat power off death by chocolate" already identifies the artist
+    before the preposition, so the album's "by" ("Death By Chocolate") is part of
+    the title, not an unclaimed artist -- the pre-pass keeps extracting the album.
+    """
+    result = extract_album_prefix("moon pix by cat power off death by chocolate")
+    assert result is not None
+    album, stripped = result
+    assert album.strip().lower() == "death by chocolate"
+    assert stripped.strip().lower() == "moon pix by cat power"
+
+
 def test_returns_none_for_empty_input() -> None:
     """Defensive: empty input returns None instead of raising."""
     assert extract_album_prefix("") is None
