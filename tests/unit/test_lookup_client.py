@@ -36,7 +36,7 @@ SAMPLE_RESPONSE = {
                 "genre": "Rock",
                 "format": "CD",
                 "call_number": "Rock CD S 1/2",
-                "library_url": "http://www.wxyc.info/wxycdb/libraryRelease?id=42",
+                "library_url": "https://dj.wxyc.org/dashboard/album/legacy/42",
             },
             "artwork": {
                 "album": "Aluminum Tunes",

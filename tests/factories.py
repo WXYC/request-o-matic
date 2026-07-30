@@ -48,7 +48,7 @@ def make_library_item(
         "call_number",
         _compute_call_number(genre, format, call_letters, artist_call_number, release_call_number),
     )
-    kwargs.setdefault("library_url", f"http://www.wxyc.info/wxycdb/libraryRelease?id={id}")
+    kwargs.setdefault("library_url", f"https://dj.wxyc.org/dashboard/album/legacy/{id}")
     return LibraryCatalogItem(
         id=id,
         artist=artist,

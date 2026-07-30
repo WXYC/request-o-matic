@@ -62,7 +62,7 @@ class TestMakeLibraryItem:
 
     def test_default_library_url_includes_id(self):
         item = make_library_item(id=42)
-        assert item.library_url == "http://www.wxyc.info/wxycdb/libraryRelease?id=42"
+        assert item.library_url == "https://dj.wxyc.org/dashboard/album/legacy/42"
 
     def test_call_number_recomputed_when_components_change(self):
         item = make_library_item(genre=None, format=None, release_call_number=None)
