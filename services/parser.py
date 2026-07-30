@@ -132,6 +132,11 @@ _PREP_TOKEN_PRESCREEN_RE = re.compile(
 # prepositions themselves carry enough signal.
 _REQUEST_SIGNAL_RE = re.compile(r"\bby\b|,", re.IGNORECASE)
 
+# A standalone "by" authorship token. In the album text it marks a trailing
+# "by <artist>" clause (the reverse-order shape below); it is not matched inside
+# words ("baby", "goodbye", "rugby") thanks to the word boundaries.
+_ARTIST_BY_TOKEN_RE = re.compile(r"\bby\b", re.IGNORECASE)
+
 
 # Trailing words that look like an album in surface form but are idioms.
 # Compare against the *first* significant token after the preposition.
@@ -241,6 +246,19 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
         return None
 
     prefix = match.group("prefix").strip()
+
+    # Reverse-order shape "<song> {prep} <album> by <artist>": the album group is
+    # anchored to end-of-string, so a trailing "by <artist>" authorship clause is
+    # swallowed into the album ("neptune by prince jammy") and Groq -- handed only
+    # the "<song>" prefix -- cannot recover the artist. An album title can itself
+    # contain "by" ("Death By Chocolate", "One By One"), so we cannot safely split
+    # the clause off here; decline instead and defer the whole message to Groq's
+    # world knowledge. Gate on the prefix NOT already naming an artist (no "by"/
+    # comma before the preposition): when it has -- the pre-pass's core case, e.g.
+    # "moon pix by cat power off death by chocolate" -- the album's "by" is title
+    # text, so keep firing. WXYC/request-o-matic#193 (sibling of #188).
+    if _ARTIST_BY_TOKEN_RE.search(album_raw) and _REQUEST_SIGNAL_RE.search(prefix) is None:
+        return None
 
     # `from` has a different false-positive surface than `on`/`off`/`off of`:
     # the album side after `from` is typically a proper noun (boston, new york),

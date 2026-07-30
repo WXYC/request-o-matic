@@ -283,6 +283,21 @@ ETERNAL_HALLUCINATION = _register(
     tags=frozenset({"parser", "hallucination"}),
 )
 
+PRINCE_JAMMY_REVERSE_ARTIST = _register(
+    id="prince_jammy_reverse_artist",
+    description="Reverse-order '<song> on <album> by <artist>' must not null the artist",
+    raw_message="conspiracy on neptune by prince jammy",
+    artist="Prince Jammy",
+    song="Conspiracy",
+    album="Neptune",
+    bug=(
+        "Album pre-pass fired on the reverse-order shape and swallowed the trailing "
+        "'by <artist>' clause into the album ('neptune by prince jammy'), leaving artist "
+        "null. The pre-pass now declines this shape so Groq recovers the artist."
+    ),
+    tags=frozenset({"parser", "prepass", "reverse_artist"}),
+)
+
 SPOONFUL_DASH_FORMAT = _register(
     id="spoonful_dash_format",
     description="Dash-separated 'Spoonful-Cream-Wheels of Fire lp' parsed correctly",
@@ -575,6 +590,24 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
     ),
     # -- Negatives: pre-pass must decline (idioms, greetings, bare short-forms).
     # The id documents the tail that a false-fire would wrongly capture as album.
+    # Reverse-order "<song> {prep} <album> by <artist>": the greedy album group
+    # swallows the trailing "by <artist>" clause, so the album becomes
+    # "neptune by prince jammy" and Groq -- handed only the "conspiracy" prefix --
+    # cannot recover the artist. Because an album title may legitimately contain
+    # "by" ("Death By Chocolate"), the pre-pass cannot safely split it; it declines
+    # whenever the prefix has not already named an artist and defers the whole
+    # message to Groq's world knowledge. See PRINCE_JAMMY_REVERSE_ARTIST and
+    # WXYC/request-o-matic#193.
+    AlbumPrepassCase(
+        id="prince_jammy_on_neptune_by_artist",
+        raw_message="conspiracy on neptune by prince jammy",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="conspiracy_on_death_by_chocolate",
+        raw_message="conspiracy on death by chocolate",
+        preposition="on",
+    ),
     AlbumPrepassCase(
         id="catpower_on_the_radio",
         raw_message="moon pix by cat power on the radio",

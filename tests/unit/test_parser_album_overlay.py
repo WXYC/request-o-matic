@@ -101,6 +101,39 @@ async def test_no_overlay_when_pre_pass_declines() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_overlay_and_full_message_when_album_tail_carries_artist() -> None:
+    """Reverse-order "<song> on <album> by <artist>": pre-pass declines.
+
+    The trailing "by <artist>" clause would otherwise be swallowed into the album
+    (and the artist nulled). The pre-pass declines, so Groq sees the *whole*
+    message -- artist clause intact -- and its artist survives. No album overlay.
+    """
+    client = _make_mock_groq(
+        {
+            "song": "Conspiracy on Neptune",
+            "album": None,
+            "artist": "Prince Jammy",
+            "is_request": True,
+            "message_type": "request",
+        }
+    )
+
+    result = await parse_request("conspiracy on neptune by prince jammy", client)
+
+    # No overlay: Groq's null album stands (not the polluted "neptune by prince jammy").
+    assert result.album is None
+    assert result.artist == "Prince Jammy"
+
+    # Pre-pass declined -> Groq received the whole message, "by <artist>" and album
+    # text both present (nothing was stripped).
+    call_args = client.chat.completions.create.await_args
+    user_msg = next(m for m in call_args.kwargs["messages"] if m["role"] == "user")
+    user_content = user_msg["content"].lower()
+    assert "by prince jammy" in user_content
+    assert "neptune" in user_content
+
+
+@pytest.mark.asyncio
 async def test_groq_receives_stripped_message_when_pre_pass_fires() -> None:
     """Pre-pass strips the trailing 'on <album>' suffix before Groq sees it.
 
