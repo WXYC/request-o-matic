@@ -1226,6 +1226,12 @@ class SearchType(StrEnum):
     none = "none"
 
 
+class DegradedReason(StrEnum):
+    deadline_exceeded = "deadline_exceeded"
+    cache_only = "cache_only"
+    upstream_unavailable = "upstream_unavailable"
+
+
 class IdentitySource(StrEnum):
     discogs = "discogs"
     musicbrainz = "musicbrainz"
@@ -1867,6 +1873,22 @@ class CriticReviewItem(BaseModel):
     )
 
 
+class WxycReviewItem(BaseModel):
+    review: str = Field(..., description="The DJ review body")
+    artistBlurb: str | None = Field(
+        None, description="Reviewer-written artist background, when provided"
+    )
+    recommendedTracks: str | None = Field(
+        None, description='Raw recommended-tracks text, including the form\'s "!"-rating notation'
+    )
+    buzzwords: str | None = Field(
+        None, description="Comma-separated descriptors chosen by the reviewer"
+    )
+    submittedDate: str | None = Field(
+        None, description='Form submission date when available (e.g. "2024-03-15")'
+    )
+
+
 class AlbumMetadataResponse(BaseModel):
     discogsReleaseId: int | None = Field(None, description="Discogs release ID")
     discogsUrl: str | None = Field(None, description="Discogs release page URL")
@@ -1887,6 +1909,10 @@ class AlbumMetadataResponse(BaseModel):
     criticReviews: list[CriticReviewItem] | None = Field(
         None,
         description="Attributed external critic-review snippets, each linking out to the original",
+    )
+    wxycReviews: list[WxycReviewItem] | None = Field(
+        None,
+        description="Consented WXYC DJ album reviews (social_consent = true) for this album. Reviewer identity is never included.",
     )
     spotifyUrl: str | None = Field(None, description="Spotify URL for the album or track")
     appleMusicUrl: str | None = Field(None, description="Apple Music URL for the album or track")
@@ -2281,6 +2307,10 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
         None,
         description="An optional embedded upcoming Triangle-area concert whose headliner is this track's resolved catalog artist, attached server-side at feed-assembly time so the iOS \"On Tour\" Box Office CTA renders inline with no second round-trip.\n\nMatch rule (mirrors `GET /concerts?curated=true`): the track's resolved artist — `flowsheet.album_id → library.artist_id` — is matched against `concerts.headlining_artist_id` on curated, non-tombstoned, upcoming rows (`headlining_artist_id IS NOT NULL`, `removed_at IS NULL`, `starts_on >= today` America/New_York). When an artist has several upcoming dates the **soonest** wins (`ORDER BY starts_on ASC LIMIT 1`), so at most one concert rides each playcut.\n\nAbsent/null when the track has no resolved artist (free-form entries with no `album_id`, or an `album_id` whose library row has no matched artist) or when that artist has no curated upcoming date. The field is additive and optional — older app builds that don't decode it are unaffected. Reuses the `Concert` schema verbatim so iOS decodes one type across the On Tour tab and the playcut CTA; the `BoxOfficeTicketPresenter` reads `id`, `title` / `headlining_artist_raw`, `venue` (name + city), `starts_on`, `doors_at`, `status`, `price_min` / `price_max`, `ticket_url`, and `image_url` off it.\n",
     )
+    critic_reviews: list[CriticReviewItem] | None = Field(
+        None,
+        description="An optional array of attributed external critic-review snippets for this track's resolved album, attached server-side at feed-assembly time so the iOS Reviews card can render inline for enriched playcuts with no second round-trip — iOS skips the `/proxy/metadata/album` fetch for terminal rows (wxyc-ios-64#685/#691).\n\nPopulated only on `track` entries whose linked `album_id` has rows in Backend-Service's `album_critic_reviews` table; attached via one batched query per page (no per-row lookups). Capped at 5 items (`CRITIC_REVIEWS_LIMIT`), ordered `published_at DESC NULLS LAST`. Absent — never `null` or empty — when the track has no matching album, when the attach is skipped, or on servers where Backend's `CRITIC_REVIEWS_ENABLED` env flag (ADR 0012) is off, including older servers that predate this field. Reuses the `CriticReviewItem` schema verbatim — the same shape `AlbumMetadataResponse.criticReviews` already serves — so clients decode one type across both surfaces.\n",
+    )
 
 
 class Entries(
@@ -2495,7 +2525,15 @@ class LookupResponse(BaseModel):
     identity: LookupIdentityBlock | None = None
     timeout: bool | None = Field(
         False,
-        description='True when LML\'s server-side hard cap fired and the search pipeline was abandoned mid-execution (LML#370). `results` may be partial or empty in that case. Callers can use this to distinguish "no match" (empty `results`, `timeout: false`) from "ran out of time" (`results` may be empty, `timeout: true`). The hard cap is an internal LML safety floor independent of the caller\'s `X-Caller-Budget-Ms` header; see LML#338 / LML#340 / LML#370 for the cascade-budget design.\n',
+        description="True when LML's server-side hard cap fired and the search pipeline was abandoned mid-execution (LML#370). `results` may be partial or empty in that case. Callers can use this to distinguish \"no match\" (empty `results`, `timeout: false`) from \"ran out of time\" (`results` may be empty, `timeout: true`). The hard cap is an internal LML safety floor independent of the caller's `X-Caller-Budget-Ms` header; see LML#338 / LML#340 / LML#370 for the cascade-budget design. Backend also forwards two sibling informal headers on the same `/lookup` and `/lookup/bulk` requests, both prose-referenced here rather than formal parameters (matching `X-Caller-Budget-Ms`'s own precedent): `X-Caller-Class` (the resolved BS→LML traffic class, an integer 1-5 per Backend-Service's per-caller policy, BS#1826) and `X-Caller-Reason` (the `caller` label string itself, e.g. `proxy-library-search` or `catalog-popularity-freetext-resolve`). Both are sent only when Backend has a registered caller for the request and are otherwise omitted; sending them is inert until LML reads them (LML#928 for `X-Caller-Class`-driven lane routing, LML#931 for `X-Caller-Reason` caller telemetry) — see BS#1843.\n",
+    )
+    degraded: bool | None = Field(
+        False,
+        description="True when LML returned partial or cache-only data because it intentionally shed the enrichment tail — under a caller deadline, admission-control pressure, or an unavailable upstream (LML#930). Distinguishes a degraded/cache-only result from a full success (`degraded: false`) and from a genuine no-match (empty `results`, `degraded: false`, `timeout: false`). Distinct from `timeout`, which signals the internal hard cap fired and the pipeline was abandoned mid-execution; `degraded` is a deliberate shed-the-tail outcome where the returned data is trustworthy but incomplete. Default false, so existing consumers see a byte-identical response.\n",
+    )
+    degraded_reason: DegradedReason | None = Field(
+        None,
+        description="Why the response was degraded. Present only when `degraded: true`; omitted otherwise. Non-exhaustive — LML may add reasons in a later minor version. The Swift and Kotlin codegen decode an unknown value into an `unknownDefault` case and TypeScript consumers see a widened string-literal union, but the Python (datamodel-codegen → pydantic) consumers use strict enums and must regenerate against the new `@wxyc/shared` minor before LML emits a newly added reason. `deadline_exceeded` — the caller's budget or LML's spine deadline elapsed and the enrichment tail was skipped; `cache_only` — LML served cached data without refreshing from upstream; `upstream_unavailable` — an upstream (Discogs, streaming providers) was rate limited or down and its contribution was omitted. Set by LML#930's caller-deadline / admission path; read by LML#931 (`degraded-mode-result` telemetry) and wxyc-canary#82.\n",
     )
 
 
