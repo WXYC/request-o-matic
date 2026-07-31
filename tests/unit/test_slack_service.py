@@ -2,9 +2,22 @@
 
 import pytest
 
+from generated.api_models import LibraryLocation
 from models import ReleaseMetadata
 from services.slack import build_simple_slack_blocks, build_slack_blocks
 from tests.factories import make_library_item, make_release_metadata
+
+
+def _location(library_id, album_title, artist, track_position=None):
+    """Build a LibraryLocation the way LML returns it in also_available_on."""
+    return LibraryLocation(
+        library_id=library_id,
+        album_title=album_title,
+        artist=artist,
+        track_position=track_position,
+        track_title="tommib",
+        track_artist="Squarepusher",
+    )
 
 
 @pytest.fixture
@@ -199,6 +212,71 @@ class TestBuildSlackBlocks:
 
         item_block = blocks[1]
         assert "Unknown Artist" in item_block["text"]["text"]
+
+
+class TestAlsoAvailableOn:
+    """Tests for rendering LookupResponse.also_available_on (ROM#199)."""
+
+    def test_absent_locations_are_byte_identical(self, sample_library_item):
+        """No also_available_on (None, [], or omitted) leaves the blocks unchanged."""
+        baseline = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+        assert (
+            build_slack_blocks(
+                message="Here's what I found:",
+                items_with_artwork=[(sample_library_item, None)],
+                also_available_on=None,
+            )
+            == baseline
+        )
+        assert (
+            build_slack_blocks(
+                message="Here's what I found:",
+                items_with_artwork=[(sample_library_item, None)],
+                also_available_on=[],
+            )
+            == baseline
+        )
+
+    def test_renders_ranked_locations_in_order(self, sample_library_item):
+        """A populated also_available_on appends one section listing each location."""
+        locations = [
+            _location(60654, "Lost in Translation", "Soundtracks - L", track_position="A1"),
+            _location(70001, "Go Plastic", "Squarepusher"),
+        ]
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+            also_available_on=locations,
+        )
+        # An extra block beyond the header + single item.
+        assert len(blocks) == 3
+        extra = blocks[-1]
+        assert extra["type"] == "section"
+        text = extra["text"]["text"]
+        # Both releases are named, and the ranked order is preserved.
+        assert "Lost in Translation" in text
+        assert "Go Plastic" in text
+        assert text.index("Lost in Translation") < text.index("Go Plastic")
+        # Each entry links to the dj.wxyc.org shelf permalink built from library_id.
+        assert "https://dj.wxyc.org/dashboard/album/legacy/60654" in text
+        assert "https://dj.wxyc.org/dashboard/album/legacy/70001" in text
+        # The shelf artist and position are surfaced for the DJ pulling the copy.
+        assert "Soundtracks - L" in text
+        assert "A1" in text
+
+    def test_caps_long_lists_with_overflow_note(self, sample_library_item):
+        """A pathologically long union is capped so the Slack section stays lean."""
+        locations = [_location(1000 + i, f"Compilation {i}", "Various Artists") for i in range(25)]
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+            also_available_on=locations,
+        )
+        text = blocks[-1]["text"]["text"]
+        assert "more" in text.lower()
 
 
 class TestBuildSimpleSlackBlocks:
