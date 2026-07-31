@@ -2044,6 +2044,10 @@ class LiveFsRefetchEvent(BaseModel):
     timestamp: AwareDatetime
 
 
+class Type5(StrEnum):
+    insert = "insert"
+
+
 class AutoDJState(StrEnum):
     BOOTING = "BOOTING"
     CONNECTING = "CONNECTING"
@@ -2100,7 +2104,7 @@ class AutoDJLastTrack(BaseModel):
     posted_at: int = Field(..., description="Unix timestamp")
 
 
-class Type5(StrEnum):
+class Type6(StrEnum):
     heartbeat = "heartbeat"
 
 
@@ -2133,7 +2137,7 @@ class AutoDJHeartbeat(BaseModel):
     )
 
 
-class Type6(StrEnum):
+class Type7(StrEnum):
     command = "command"
 
 
@@ -2145,7 +2149,7 @@ class AutoDJCommand(BaseModel):
     value: str | None = Field(None, description="Config value (only for set_config)")
 
 
-class Type7(StrEnum):
+class Type8(StrEnum):
     ack = "ack"
 
 
@@ -2165,7 +2169,7 @@ class AutoDJAck(BaseModel):
     )
 
 
-class Type8(StrEnum):
+class Type9(StrEnum):
     now_playing = "now_playing"
 
 
@@ -2178,7 +2182,7 @@ class AutoDJNowPlaying(BaseModel):
     is_live: bool = Field(..., description="Whether a live DJ is streaming")
 
 
-class Type9(StrEnum):
+class Type10(StrEnum):
     error = "error"
 
 
@@ -2194,7 +2198,7 @@ class AutoDJErrorReport(BaseModel):
     count: int = Field(..., description="Occurrences since last report")
 
 
-class Type10(StrEnum):
+class Type11(StrEnum):
     button_toggle = "button_toggle"
 
 
@@ -2621,8 +2625,14 @@ class LiveFsUpdateEvent(BaseModel):
     timestamp: AwareDatetime
 
 
-class LiveFsEvent(RootModel[LiveFsUpdateEvent | LiveFsRefetchEvent]):
-    root: LiveFsUpdateEvent | LiveFsRefetchEvent = Field(
+class LiveFsInsertEvent(BaseModel):
+    type: Literal["insert"]
+    payload: FlowsheetEntryResponse
+    timestamp: AwareDatetime
+
+
+class LiveFsEvent(RootModel[LiveFsUpdateEvent | LiveFsRefetchEvent | LiveFsInsertEvent]):
+    root: LiveFsUpdateEvent | LiveFsRefetchEvent | LiveFsInsertEvent = Field(
         ...,
         description="Discriminated union of events emitted on the `live-fs-topic`. Every event has the same `{ type, payload, timestamp }` envelope — pinned by `CONTRACTS.LIVE_FS_EVENT_ENVELOPE_SHAPE`.\n",
         discriminator="type",
