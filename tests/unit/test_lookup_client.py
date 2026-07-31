@@ -401,10 +401,9 @@ class TestLookupModels:
             "song": "la paradoja",
             "album": "DOGA",
             "raw_message": "msg",
-            # include_identity and include_locations both default to False (not None),
-            # so they survive exclude_none — the request builder here leaves them unset.
+            # include_identity is a non-optional bool with a False default, so it
+            # survives exclude_none (added to the LookupRequest contract upstream).
             "include_identity": False,
-            "include_locations": False,
         }
 
     def test_lookup_response_defaults(self):

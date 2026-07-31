@@ -1,23 +1,12 @@
 """Unit tests for services/slack.py."""
 
+import json
+
 import pytest
 
-from generated.api_models import LibraryLocation
 from models import ReleaseMetadata
 from services.slack import build_simple_slack_blocks, build_slack_blocks
 from tests.factories import make_library_item, make_release_metadata
-
-
-def _location(library_id, album_title, artist, track_position=None):
-    """Build a LibraryLocation the way LML returns it in also_available_on."""
-    return LibraryLocation(
-        library_id=library_id,
-        album_title=album_title,
-        artist=artist,
-        track_position=track_position,
-        track_title="tommib",
-        track_artist="Squarepusher",
-    )
 
 
 @pytest.fixture
@@ -214,69 +203,56 @@ class TestBuildSlackBlocks:
         assert "Unknown Artist" in item_block["text"]["text"]
 
 
-class TestAlsoAvailableOn:
-    """Tests for rendering LookupResponse.also_available_on (ROM#199)."""
+class TestLocationUnionFoldedIntoResults:
+    """Regression guard for the reverted separate-field "Also available on" design
+    (request-o-matic#199, reverted per the location-union-transparent plan).
 
-    def test_absent_locations_are_byte_identical(self, sample_library_item):
-        """No also_available_on (None, [], or omitted) leaves the blocks unchanged."""
-        baseline = build_slack_blocks(
-            message="Here's what I found:",
-            items_with_artwork=[(sample_library_item, None)],
-        )
-        assert (
-            build_slack_blocks(
-                message="Here's what I found:",
-                items_with_artwork=[(sample_library_item, None)],
-                also_available_on=None,
-            )
-            == baseline
-        )
-        assert (
-            build_slack_blocks(
-                message="Here's what I found:",
-                items_with_artwork=[(sample_library_item, None)],
-                also_available_on=[],
-            )
-            == baseline
+    Alternate WXYC shelf locations for a track are no longer a bespoke
+    ``also_available_on`` collection with its own Slack section -- LML now folds
+    them directly into the ordinary ``results`` array, so from this module's
+    perspective they are just more ``items_with_artwork`` entries. This test pins
+    that an extra, physical-shelf-only row (no streaming links -- exactly what a
+    folded compilation-track location looks like, per the plan's honest
+    "streaming URLs stay null" design) renders through the normal per-item loop,
+    and that no separate "Also available on" section is ever emitted.
+    """
+
+    def test_extra_result_row_renders_through_normal_loop_with_no_separate_section(
+        self, sample_library_item
+    ):
+        # A second row shaped like a folded compilation-track location: a real
+        # shelf item, no artwork/streaming metadata (LML's lean, physical-only
+        # union entries carry no live URL resolution).
+        location_item = make_library_item(
+            id=60654,
+            artist="Soundtracks - L",
+            title="Lost in Translation",
+            call_letters="L",
+            release_call_number=654,
         )
 
-    def test_renders_ranked_locations_in_order(self, sample_library_item):
-        """A populated also_available_on appends one section listing each location."""
-        locations = [
-            _location(60654, "Lost in Translation", "Soundtracks - L", track_position="A1"),
-            _location(70001, "Go Plastic", "Squarepusher"),
-        ]
         blocks = build_slack_blocks(
             message="Here's what I found:",
-            items_with_artwork=[(sample_library_item, None)],
-            also_available_on=locations,
+            items_with_artwork=[(sample_library_item, None), (location_item, None)],
         )
-        # An extra block beyond the header + single item.
+
+        # Header + 2 ordinary item blocks -- nothing else appended.
         assert len(blocks) == 3
-        extra = blocks[-1]
-        assert extra["type"] == "section"
-        text = extra["text"]["text"]
-        # Both releases are named, and the ranked order is preserved.
-        assert "Lost in Translation" in text
-        assert "Go Plastic" in text
-        assert text.index("Lost in Translation") < text.index("Go Plastic")
-        # Each entry links to the dj.wxyc.org shelf permalink built from library_id.
-        assert "https://dj.wxyc.org/dashboard/album/legacy/60654" in text
-        assert "https://dj.wxyc.org/dashboard/album/legacy/70001" in text
-        # The shelf artist and position are surfaced for the DJ pulling the copy.
-        assert "Soundtracks - L" in text
-        assert "A1" in text
+        rendered = json.dumps(blocks)
+        assert "Also available on" not in rendered
+        # Both rows rendered through the same per-item loop, with equal standing.
+        assert "Stereolab" in rendered
+        assert "Soundtracks - L" in rendered
+        assert "Lost in Translation" in rendered
 
-    def test_caps_long_lists_with_overflow_note(self, sample_library_item):
-        """A pathologically long union is capped so the Slack section stays lean."""
-        locations = [_location(1000 + i, f"Compilation {i}", "Various Artists") for i in range(25)]
-        blocks = build_slack_blocks(
-            message="Here's what I found:",
-            items_with_artwork=[(sample_library_item, None)],
-            also_available_on=locations,
-        )
-        text = blocks[-1]["text"]["text"]
-        assert "more" in text.lower()
+    def test_build_slack_blocks_no_longer_accepts_also_available_on(self, sample_library_item):
+        """The separate-field parameter is fully removed, not merely unused."""
+        with pytest.raises(TypeError):
+            build_slack_blocks(
+                message="Here's what I found:",
+                items_with_artwork=[(sample_library_item, None)],
+                also_available_on=[],  # type: ignore[call-arg]
+            )
 
 
 class TestBuildSimpleSlackBlocks:
