@@ -44,6 +44,7 @@ from core.server_timing import parse_server_timing
 
 if TYPE_CHECKING:
     from posthog import Posthog
+from generated.api_models import LibraryLocation
 from models import LibraryItem, ReleaseMetadata
 from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.lookup_client import LookupRequest, LookupServiceClient
@@ -120,6 +121,7 @@ async def post_results_to_slack(
     parsed: ParsedRequest,
     items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]],
     context: str | None = None,
+    also_available_on: list[LibraryLocation] | None = None,
 ) -> None:
     """Post formatted results to Slack.
 
@@ -129,6 +131,8 @@ async def post_results_to_slack(
         parsed: Parsed request
         items_with_artwork: Library items with their artwork
         context: Optional context message
+        also_available_on: Ranked alternate WXYC shelf locations for the track,
+            appended as an extra block when present (LML#1018/#1022)
 
     Raises:
         HTTPException: If posting to Slack fails
@@ -138,7 +142,7 @@ async def post_results_to_slack(
         return
 
     if items_with_artwork:
-        blocks = build_slack_blocks(message, items_with_artwork, context)
+        blocks = build_slack_blocks(message, items_with_artwork, context, also_available_on)
     elif not parsed.is_request:
         label = MESSAGE_TYPE_LABELS.get(parsed.message_type, "Other")
         blocks = build_simple_slack_blocks(message, f"_{label}_")
@@ -431,6 +435,7 @@ async def handle_request(
 
     library_results: list[LibraryItem] = []
     items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]] = []
+    also_available_on: list[LibraryLocation] = []
     song_not_found = False
     found_on_compilation = False
     context: str | None = None
@@ -456,6 +461,11 @@ async def handle_request(
                 song=parsed.song,
                 album=parsed.album,
                 raw_message=request.message,
+                # DJ-facing request fan-out: opt into the comprehensive multi-location
+                # union so the Slack post can show alternate WXYC shelf locations for the
+                # track (LML#1018/#1022). Not the enrichment path, so opting in is fine;
+                # absent/empty also_available_on renders nothing extra.
+                include_locations=True,
             )
             try:
                 lookup_result = await lookup_client.lookup(
@@ -488,6 +498,10 @@ async def handle_request(
         results = [item for item in results if item.library_item.id > 0]
         library_results = [item.library_item for item in results]
         items_with_artwork = [(item.library_item, item.artwork) for item in results]
+        # Alternate WXYC shelf locations for the track, ranked by LML (LML#1018/#1022).
+        # Present only when include_locations was set and a song was resolved; empty
+        # otherwise, so the Slack post is byte-identical to before.
+        also_available_on = lookup_response.also_available_on or []
         search_type = str(lookup_response.search_type or "none")
         song_not_found = bool(lookup_response.song_not_found)
         found_on_compilation = bool(lookup_response.found_on_compilation)
@@ -515,7 +529,12 @@ async def handle_request(
                 )
             else:
                 await post_results_to_slack(
-                    slack_service, request.message, parsed, items_with_artwork, context
+                    slack_service,
+                    request.message,
+                    parsed,
+                    items_with_artwork,
+                    context,
+                    also_available_on=also_available_on,
                 )
 
     # Extract main artwork from first result
