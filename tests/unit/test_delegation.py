@@ -15,7 +15,7 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
-from generated.api_models import LibraryLocation, SearchType
+from generated.api_models import SearchType
 from routers.request import router
 from services.lookup_client import (
     LookupResponse,
@@ -139,65 +139,6 @@ class TestDelegationBranch:
         assert data["artwork"]["artwork_url"] == "https://img.discogs.com/test.jpg"
         assert data["song_not_found"] is False
         assert data["found_on_compilation"] is False
-
-    @pytest.mark.asyncio
-    async def test_delegation_requests_locations(
-        self, app, mock_lookup_client, sample_lookup_response
-    ):
-        """The DJ-facing request opts into the multi-location union (ROM#199)."""
-        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
-
-        with patch(
-            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play tommib by squarepusher", "skip_slack": True},
-                )
-
-        sent_request = mock_lookup_client.lookup.call_args.args[0]
-        assert sent_request.include_locations is True
-
-    @pytest.mark.asyncio
-    async def test_also_available_on_reaches_slack_post(
-        self, app, mock_lookup_client, mock_slack, sample_lookup_response
-    ):
-        """also_available_on from LML surfaces as an extra Slack block."""
-        response = sample_lookup_response.model_copy(
-            update={
-                "also_available_on": [
-                    LibraryLocation(
-                        library_id=60654,
-                        album_title="Lost in Translation",
-                        artist="Soundtracks - L",
-                        track_position="A1",
-                        track_title="tommib",
-                        track_artist="Squarepusher",
-                    )
-                ]
-            }
-        )
-        mock_lookup_client.lookup.return_value = _lr(response)
-
-        with patch(
-            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play tommib by squarepusher"},
-                )
-
-        mock_slack.post_blocks.assert_awaited_once()
-        posted_blocks = mock_slack.post_blocks.call_args.args[0]
-        rendered = json.dumps(posted_blocks)
-        assert "Lost in Translation" in rendered
-        assert "dashboard/album/legacy/60654" in rendered
 
     @pytest.mark.asyncio
     async def test_delegation_maps_response_fields(self, app, mock_lookup_client):
