@@ -204,17 +204,17 @@ class TestBuildSlackBlocks:
 
 
 class TestLocationUnionFoldedIntoResults:
-    """Regression guard for the reverted separate-field "Also available on" design
+    """Regression guard for the reverted separate-field location design
     (request-o-matic#199, reverted per the location-union-transparent plan).
 
-    Alternate WXYC shelf locations for a track are no longer a bespoke
-    ``also_available_on`` collection with its own Slack section -- LML now folds
-    them directly into the ordinary ``results`` array, so from this module's
-    perspective they are just more ``items_with_artwork`` entries. This test pins
-    that an extra, physical-shelf-only row (no streaming links -- exactly what a
-    folded compilation-track location looks like, per the plan's honest
-    "streaming URLs stay null" design) renders through the normal per-item loop,
-    and that no separate "Also available on" section is ever emitted.
+    Alternate WXYC shelf locations for a track are no longer a bespoke separate
+    collection with its own Slack section -- LML now folds them directly into
+    the ordinary ``results`` array, so from this module's perspective they are
+    just more ``items_with_artwork`` entries. This test pins that an extra,
+    physical-shelf-only row (no streaming links -- exactly what a folded
+    compilation-track location looks like, per the plan's honest "streaming URLs
+    stay null" design) renders through the normal per-item loop, and that no
+    separate location section is ever emitted.
     """
 
     def test_extra_result_row_renders_through_normal_loop_with_no_separate_section(
@@ -245,7 +245,7 @@ class TestLocationUnionFoldedIntoResults:
         assert "Soundtracks - L" in rendered
         assert "Lost in Translation" in rendered
 
-    def test_build_slack_blocks_no_longer_accepts_also_available_on(self, sample_library_item):
+    def test_build_slack_blocks_rejects_the_removed_locations_kwarg(self, sample_library_item):
         """The separate-field parameter is fully removed, not merely unused."""
         with pytest.raises(TypeError):
             build_slack_blocks(
