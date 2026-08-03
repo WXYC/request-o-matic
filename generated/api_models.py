@@ -1154,6 +1154,18 @@ class StreamingLinks(BaseModel):
     soundcloud_url: str | None = Field(None, description="SoundCloud search URL")
 
 
+class StreamingResolutionStatus(StrEnum):
+    verified = "verified"
+    absent = "absent"
+    unresolved = "unresolved"
+
+
+class StreamingResolution(BaseModel):
+    spotify: StreamingResolutionStatus | None = None
+    apple_music: StreamingResolutionStatus | None = None
+    bandcamp: StreamingResolutionStatus | None = None
+
+
 class ReconciledIdentity(BaseModel):
     discogs_artist_id: int | None = Field(None, description="Discogs artist ID")
     musicbrainz_artist_id: str | None = Field(None, description="MusicBrainz artist UUID")
@@ -1949,6 +1961,17 @@ class AlbumMetadataResponse(BaseModel):
     youtubeMusicUrl: str | None = Field(None, description="YouTube Music search URL")
     bandcampUrl: str | None = Field(None, description="Bandcamp search URL")
     soundcloudUrl: str | None = Field(None, description="SoundCloud search URL")
+    discogsUnavailable: bool | None = Field(
+        None,
+        description="True when a music director has marked this release as not on Discogs; downstream render surfaces should suppress Discogs-derived artwork/links/tracklist. Mirrors the `Album` schema's MD-set marker (WXYC/wiki plans/rotation-discogs-unavailable.md).",
+    )
+    discogsUnavailableNote: constr(max_length=500) | None = Field(
+        None, description="Optional free-text reason for `discogsUnavailable`."
+    )
+    lastDiscogsRecheckAt: AwareDatetime | None = Field(
+        None,
+        description="Stamped on every recheck attempt by the\n`library-discogs-unavailable-recheck` cron. Read-only from the\nclient side.\n",
+    )
 
 
 class ArtistMetadataResponse(BaseModel):
@@ -2271,6 +2294,13 @@ class FlowsheetEntryResponse(FlowsheetEntryBase):
     artwork_url: str | None = None
     discogs_url: str | None = None
     release_year: int | None = None
+    discogsUnavailable: bool | None = Field(
+        None,
+        description='Rides the same MD-set "not on Discogs" flag as the Album surfaces (see `Album.discogsUnavailable`), non-nullable to match them. Deliberately camelCase — unlike its snake_case siblings in this block — to match Backend\'s `withDiscogsUnavailableCamelCase` serializer. Contract-first: the V2 flowsheet album embed will carry this field once the BS-emit piece (WXYC/Backend-Service#1908) lands; it is not emitted there yet.',
+    )
+    discogsUnavailableNote: constr(max_length=500) | None = Field(
+        None, description="Optional free-text reason for `discogsUnavailable`."
+    )
     spotify_url: str | None = None
     apple_music_url: str | None = None
     youtube_music_url: str | None = None
@@ -2434,6 +2464,17 @@ class AlbumSearchResult(BaseModel):
         None,
         description="Album cover artwork URL from Discogs. Null if artwork has not been fetched yet or is unavailable.",
     )
+    discogsUnavailable: bool | None = Field(
+        None,
+        description="MD-set marker indicating this release is intentionally not on\nDiscogs (embargoed promo, audience-segment release, etc.). When\ntrue, the LML runtime-lookup chokepoint does not attempt Discogs\nresolution for this release. See WXYC/wiki plans/rotation-discogs-unavailable.md.\n",
+    )
+    discogsUnavailableNote: constr(max_length=500) | None = Field(
+        None, description="Optional free-text reason for `discogsUnavailable`."
+    )
+    lastDiscogsRecheckAt: AwareDatetime | None = Field(
+        None,
+        description="Stamped on every recheck attempt by the\n`library-discogs-unavailable-recheck` cron. Read-only from the\nclient side.\n",
+    )
     matched_via: list[TrackMatchHint] | None = Field(
         None,
         description="Populated by Backend's catalog `/library/` search when a track-title match (CTA or LML proxy fallback) drove this release into the results, per catalog-track-search plan §5.1. Empty or absent on normal artist/album hits. Backward-compatible — existing consumers ignore the field.\n",
@@ -2483,6 +2524,10 @@ class DiscogsMatchResult(BaseModel):
     youtube_music_url: str | None = Field(None, description="YouTube Music search URL")
     bandcamp_url: str | None = Field(None, description="Bandcamp album URL")
     soundcloud_url: str | None = Field(None, description="SoundCloud search URL")
+    streaming_status: StreamingResolution | None = Field(
+        None,
+        description="Per-service streaming resolution status (verified / absent / unresolved) for this result, disambiguating WHY a sibling `*_url` field is null. A service marked `unresolved` timed out, had its enrichment tail shed, or was a cold cache miss — its null url is transient and MAY resolve on a later retry; `absent` means the service was consulted and genuinely has no match — its null url is terminal and must NOT be re-probed (re-asking `absent` is the per-play LML-call amplifier BS#1747 killed). A service whose key is OMITTED from this object was never consulted (e.g. Bandcamp on the `/lookup/bulk` path, or the library.db override skipped for a non-library row) and must not be treated as `absent`. Additive and optional: null/omitted on responses from an LML predating the producer rollout, or on paths that resolve no per-service status. Does not change the meaning of the `*_url` fields — it only annotates them. Emitted identically on `/lookup` and `/lookup/bulk` (the LML#681 parity rule). Mirrors the per-service verdict vocabulary of `/api/v1/streaming-check` (LML#376). See LML#1053 / BS#1819.\n",
+    )
     discogs_artist_id: int | None = Field(
         None,
         description="Discogs artist ID for this release. Populated only when the originating `LookupRequest.extended` is true. Lets a caller key an artist-metadata cache without a follow-up release fetch.\n",
