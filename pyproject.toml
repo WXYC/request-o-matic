@@ -29,9 +29,12 @@ dev = [
     "pytest-httpx>=0.22.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
-    "ruff>=0.1.0",
+    # ruff is pinned (not >=) because scripts/generate_api_models.sh runs `ruff format` and `ruff check --fix` over the generated file, so a different local ruff would reformat generated/api_models.py and read as drift. 0.15.1 is what uv.lock already resolves; keep it in step with .pre-commit-config.yaml's ruff-pre-commit `rev`, which carries the same literal. library-metadata-lookup pins 0.15.6 -- the two repos are not aligned on ruff and don't need to be. See WXYC/library-metadata-lookup#249 for the underlying rationale.
+    "ruff==0.15.1",
     "mypy>=1.0.0",
-    "datamodel-code-generator[http]>=0.26.0",
+    # datamodel-code-generator is pinned (not >=) so a new upstream release can't silently reformat generated/api_models.py on an unrelated PR -- bumps should be deliberate, reviewable PRs. WXYC/library-metadata-lookup#249 documents the failure mode this prevents: there, 0.55.0 emitted `Field([], validate_default=True)` where 0.56.1 emitted `Field(default_factory=list)`, and Codegen Freshness failed on a PR that had nothing to do with either.
+    # 0.57.0 is the version generated/api_models.py was last regenerated with. library-metadata-lookup pins 0.56.1; that divergence is incidental rather than a designed split -- each repo pins whatever it last regenerated with. Nothing currently blocks aligning them: as of 2026-08-04, generator 0.56.1 / 0.57.0 / 0.72.0 each produce a byte-identical file from this spec. Regenerate and diff before changing this value rather than assuming either way.
+    "datamodel-code-generator[http]==0.57.0",
 ]
 
 [build-system]
