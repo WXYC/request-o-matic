@@ -165,10 +165,34 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.58.0
 
+      # `--detach --json` returns as soon as the upload is accepted, prints
+      # {"deploymentId": ..., "logsUrl": ...} and nothing else on stdout, and never opens a log
+      # stream. Plain `railway up` streams build logs and hard-exits 1 if that stream drops --
+      # and only in "CI mode", which $CI auto-enables on every Actions runner. That turned
+      # transient log-transport hiccups into a red deploy while the deployment went live
+      # (railwayapp/cli v4.58.0 src/commands/up.rs:240, :275-279), and took the smoke test below
+      # down with it. The wait step is the real gate.
       - name: Deploy to Railway
-        run: railway up --service request-o-matic
+        id: deploy
+        run: |
+          railway up --detach --json --service request-o-matic > "$RUNNER_TEMP/deploy.json"
+          jq -e . "$RUNNER_TEMP/deploy.json"
+          {
+            echo "deployment_id=$(jq -er .deploymentId "$RUNNER_TEMP/deploy.json")"
+            echo "logs_url=$(jq -er .logsUrl "$RUNNER_TEMP/deploy.json")"
+          } >> "$GITHUB_OUTPUT"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+
+      # Polls the deployment API for the real terminal status. Stronger than the old gate:
+      # `railway up` returned when the *build* finished, SUCCESS here means Railway's healthcheck
+      # passed and the revision is serving -- so the smoke test below no longer races the rollout.
+      - name: Wait for deployment to go live
+        run: ./scripts/wait_for_railway_deployment.sh request-o-matic "$DEPLOYMENT_ID" "$LOGS_URL"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          LOGS_URL: ${{ steps.deploy.outputs.logs_url }}
 
       - name: Smoke test
         run: |
@@ -238,10 +262,25 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.58.0
 
+      # See deploy-staging for why this is `--detach --json` plus an explicit wait.
       - name: Deploy to Railway
-        run: railway up --service request-o-matic
+        id: deploy
+        run: |
+          railway up --detach --json --service request-o-matic > "$RUNNER_TEMP/deploy.json"
+          jq -e . "$RUNNER_TEMP/deploy.json"
+          {
+            echo "deployment_id=$(jq -er .deploymentId "$RUNNER_TEMP/deploy.json")"
+            echo "logs_url=$(jq -er .logsUrl "$RUNNER_TEMP/deploy.json")"
+          } >> "$GITHUB_OUTPUT"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+
+      - name: Wait for deployment to go live
+        run: ./scripts/wait_for_railway_deployment.sh request-o-matic "$DEPLOYMENT_ID" "$LOGS_URL"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          LOGS_URL: ${{ steps.deploy.outputs.logs_url }}
 
       - name: Smoke test
         run: |
