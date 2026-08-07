@@ -463,6 +463,8 @@ class TestSlackServiceBotToken:
         with pytest.raises(SlackPostError, match="not_in_channel") as exc_info:
             await service.post_blocks([{"type": "section"}])
         assert "C123" in str(exc_info.value)
+        # Regression: the bot token must never leak into an error message.
+        assert "xoxb-" not in str(exc_info.value)
 
 
 class TestGetSlackService:
