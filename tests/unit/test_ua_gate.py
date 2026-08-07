@@ -33,6 +33,7 @@ from services.lookup_client import LookupResponse, LookupResult, LookupServiceCl
 from services.ua_gate import (
     UA_GATE_BAN_REASON,
     UA_GATE_BAN_SOURCE,
+    UA_GATE_MALFORMED_BAN_REASON,
     is_known_strict_client,
 )
 from tests.conftest import make_parsed_request
@@ -393,6 +394,83 @@ class TestUAGateBlocks:
         assert call_kwargs["properties"]["ban_source"] == UA_GATE_BAN_SOURCE
         assert call_kwargs["properties"]["ban_reason"] == UA_GATE_BAN_REASON
         assert call_kwargs["properties"]["user_agent"] == "WXYC-iOS/3.2.0"
+        # Missing header: nothing to describe, so neither property is set
+        # (WXYC/request-o-matic#226) -- no permanent null column on every
+        # legitimately-absent-header rejection.
+        assert "fingerprint_prefix" not in call_kwargs["properties"]
+        assert "fingerprint_length" not in call_kwargs["properties"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_header_emits_distinct_reason_and_redacted_prefix(
+        self,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+    ):
+        """A present-but-unusable fingerprint gets its own ban_reason plus a
+        bounded, redacted indication of what arrived -- distinguishing an
+        active evader from a client that simply omitted the header
+        (WXYC/request-o-matic#226).
+        """
+        app = _make_app(
+            strict_flag=True,
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/request",
+                json={"message": "play la paradoja"},
+                headers={
+                    "User-Agent": "WXYC-iOS/3.2.0",
+                    "X-Device-Fingerprint": "not-a-uuid-but-quite-long-garbage",
+                },
+            )
+
+        assert response.status_code == 403
+        mock_posthog.capture.assert_called_once()
+        properties = mock_posthog.capture.call_args.kwargs["properties"]
+        assert properties["ban_reason"] == UA_GATE_MALFORMED_BAN_REASON
+        # fingerprint stays None -- existing queries against it keep working.
+        assert properties["fingerprint"] is None
+        # Bounded to 8 chars and never the raw value verbatim.
+        assert properties["fingerprint_prefix"] == "not-a-uu"
+        assert len(properties["fingerprint_prefix"]) == 8
+        assert properties["fingerprint_length"] == len("not-a-uuid-but-quite-long-garbage")
+
+    @pytest.mark.asyncio
+    async def test_empty_header_is_treated_as_malformed_not_missing(
+        self,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+    ):
+        # FastAPI binds a present-but-empty header to "", not None -- that is a
+        # value that arrived, distinct from the header being omitted entirely.
+        app = _make_app(
+            strict_flag=True,
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/request",
+                json={"message": "play la paradoja"},
+                headers={"User-Agent": "WXYC-iOS/3.2.0", "X-Device-Fingerprint": ""},
+            )
+
+        properties = mock_posthog.capture.call_args.kwargs["properties"]
+        assert properties["ban_reason"] == UA_GATE_MALFORMED_BAN_REASON
+        assert properties["fingerprint_prefix"] == ""
+        assert properties["fingerprint_length"] == 0
 
     @pytest.mark.asyncio
     async def test_posthog_capture_failure_does_not_flip_response(
