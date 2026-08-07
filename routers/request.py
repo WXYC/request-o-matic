@@ -516,6 +516,27 @@ async def handle_request(
                 context=None,
                 fingerprint=x_device_fingerprint,
             )
+        if posthog_client:
+            # A distinct event, not `request_completed` with `is_request=False`
+            # (WXYC/request-o-matic#228): that series went silent on
+            # 2026-02-18, and resuming it here would silently change the
+            # meaning of every `request_completed` query written since. This
+            # is the only telemetry this branch emits -- track_step("slack_post")
+            # sits after the early return above, so it never covers this path.
+            non_request_props: dict = {
+                "message_type": parsed.message_type.value if parsed.message_type else None,
+            }
+            # Normalized, and full-length on purpose -- see the fingerprint
+            # comment on the parsing-degraded emit above for both rationales.
+            if normalized_fingerprint:
+                non_request_props["fingerprint"] = normalized_fingerprint
+            if ban_check_degraded:
+                non_request_props["ban_check_degraded"] = True
+            posthog_client.capture(
+                distinct_id="request-o-matic-service",
+                event="request_non_request",
+                properties=non_request_props,
+            )
         _emit_server_timing_header(http_response, telemetry, enabled=settings.enable_server_timing)
         return UnifiedResponse(
             parsed=parsed,

@@ -8,12 +8,12 @@ The Slack-native action (filed at #152) is the primary operator UX once it lands
 
 ## Where to find a fingerprint
 
-**PostHog, via a HogQL query — this is the interim mechanism.** Every `request_completed` event carries a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
+**PostHog, via a HogQL query — this is the interim mechanism.** Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
 ```sql
 SELECT properties.fingerprint AS fp, count() AS requests, max(timestamp) AS last_seen
 FROM events
-WHERE event = 'request_completed'
+WHERE event IN ('request_completed', 'request_non_request')
   AND timestamp > now() - INTERVAL 7 DAY
   AND properties.fingerprint IS NOT NULL
 GROUP BY fp
@@ -24,7 +24,6 @@ Copy the `fp` value for the offending device into `POST /admin/bans` below. It i
 
 ### What this query does not cover
 
-- **Non-request messages — the biggest gap.** When the parser classifies a message as something other than a request (feedback, a DJ shout-out, chatter), `handle_request` posts it to Slack and returns early **without emitting `request_completed` at all**. Abusive free text is the likeliest abuse shape, and it is exactly the traffic this query is blind to: a listener can flood the request channel and never appear in the results above. If you can see the abuse in Slack but the query finds nothing, this is why.
 - **Malformed fingerprints.** A caller sending anything that isn't a UUID is treated as though it sent no header at all, here and everywhere else in ROM. That is deliberate — a non-UUID cannot be banned, because `POST /admin/bans` types the field as `UUID` and rejects it — but it does mean a client deliberately sending junk stays invisible.
 - **Clients that send no fingerprint.** iOS 3.1 and older, browsers, and `curl` don't send the header, so they never appear.
 
