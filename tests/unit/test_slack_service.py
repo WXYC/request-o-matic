@@ -5,7 +5,12 @@ import json
 import pytest
 
 from models import ReleaseMetadata
-from services.slack import build_simple_slack_blocks, build_slack_blocks
+from services.slack import (
+    SLACK_METADATA_EVENT_TYPE,
+    build_simple_slack_blocks,
+    build_slack_blocks,
+    build_slack_metadata,
+)
 from tests.factories import make_library_item, make_release_metadata
 
 
@@ -253,6 +258,35 @@ class TestLocationUnionFoldedIntoResults:
                 items_with_artwork=[(sample_library_item, None)],
                 also_available_on=[],  # type: ignore[call-arg]
             )
+
+
+class TestBuildSlackMetadata:
+    """Tests for build_slack_metadata (request-o-matic#209)."""
+
+    def test_returns_none_without_fingerprint(self):
+        """Absent fingerprints attach nothing -- callers must be able to omit
+        the ``metadata`` key entirely rather than sending an empty/null one."""
+        assert build_slack_metadata(None) is None
+
+    def test_returns_envelope_with_fingerprint(self):
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        assert build_slack_metadata(fingerprint) == {
+            "event_type": SLACK_METADATA_EVENT_TYPE,
+            "event_payload": {"fingerprint": fingerprint},
+        }
+
+    def test_fingerprint_never_appears_in_rendered_blocks(self, sample_library_item):
+        """The metadata envelope is a separate chat.postMessage parameter, not a
+        block -- build_slack_blocks has no way to receive or leak it."""
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        metadata = build_slack_metadata(fingerprint)
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        assert fingerprint not in json.dumps(blocks)
+        assert fingerprint in json.dumps(metadata)
 
 
 class TestBuildSimpleSlackBlocks:

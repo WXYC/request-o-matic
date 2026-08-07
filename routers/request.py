@@ -48,7 +48,7 @@ from models import LibraryItem, ReleaseMetadata
 from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
-from services.slack import build_simple_slack_blocks, build_slack_blocks
+from services.slack import build_simple_slack_blocks, build_slack_blocks, build_slack_metadata
 from services.ua_gate import (
     UA_GATE_BAN_REASON,
     UA_GATE_BAN_SOURCE,
@@ -120,6 +120,7 @@ async def post_results_to_slack(
     parsed: ParsedRequest,
     items_with_artwork: list[tuple[LibraryItem, ReleaseMetadata | None]],
     context: str | None = None,
+    fingerprint: str | None = None,
 ) -> None:
     """Post formatted results to Slack.
 
@@ -129,6 +130,9 @@ async def post_results_to_slack(
         parsed: Parsed request
         items_with_artwork: Library items with their artwork
         context: Optional context message
+        fingerprint: Requester's ``X-Device-Fingerprint``, if any. Carried as
+            private ``chat.postMessage`` metadata (request-o-matic#209) --
+            never rendered into the blocks themselves.
 
     Raises:
         HTTPException: If posting to Slack fails
@@ -148,7 +152,7 @@ async def post_results_to_slack(
         blocks = build_simple_slack_blocks(message, f"_No results found_ {ctx or ''}")
 
     try:
-        await slack_service.post_blocks(blocks)
+        await slack_service.post_blocks(blocks, metadata=build_slack_metadata(fingerprint))
     except Exception as e:
         logger.error(f"Failed to post to Slack: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}") from e
@@ -159,6 +163,7 @@ async def _post_degraded_to_slack(
     message: str,
     parsed: ParsedRequest | None,
     note: str,
+    fingerprint: str | None = None,
 ) -> None:
     if not slack_service:
         logger.info("Slack integration disabled, skipping degraded post")
@@ -171,7 +176,7 @@ async def _post_degraded_to_slack(
     blocks = build_simple_slack_blocks(message, context)
 
     try:
-        await slack_service.post_blocks(blocks)
+        await slack_service.post_blocks(blocks, metadata=build_slack_metadata(fingerprint))
     except Exception as e:
         logger.error(f"Failed to post degraded message to Slack: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to post to Slack: {e}") from e
@@ -394,6 +399,7 @@ async def handle_request(
                 request.message,
                 parsed=None,
                 note="Parsing unavailable",
+                fingerprint=x_device_fingerprint,
             )
         if posthog_client:
             parse_props: dict = {
@@ -422,7 +428,14 @@ async def handle_request(
 
     if not parsed.is_request:
         if not request.skip_slack:
-            await post_results_to_slack(slack_service, request.message, parsed, [], context=None)
+            await post_results_to_slack(
+                slack_service,
+                request.message,
+                parsed,
+                [],
+                context=None,
+                fingerprint=x_device_fingerprint,
+            )
         _emit_server_timing_header(http_response, telemetry, enabled=settings.enable_server_timing)
         return UnifiedResponse(
             parsed=parsed,
@@ -512,10 +525,16 @@ async def handle_request(
                     request.message,
                     parsed=parsed,
                     note="Search unavailable",
+                    fingerprint=x_device_fingerprint,
                 )
             else:
                 await post_results_to_slack(
-                    slack_service, request.message, parsed, items_with_artwork, context
+                    slack_service,
+                    request.message,
+                    parsed,
+                    items_with_artwork,
+                    context,
+                    fingerprint=x_device_fingerprint,
                 )
 
     # Extract main artwork from first result

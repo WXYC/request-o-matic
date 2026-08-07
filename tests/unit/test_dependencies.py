@@ -1,6 +1,7 @@
 """Unit tests for core/dependencies.py."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -406,6 +407,29 @@ class TestSlackService:
         with pytest.raises(httpx.HTTPStatusError):
             await service.post_blocks([{"type": "section"}])
 
+    @pytest.mark.asyncio
+    async def test_post_blocks_webhook_ignores_metadata(self):
+        """``metadata`` is a chat.postMessage-only parameter (#215); the
+        incoming webhook transport must never receive it (#209) -- webhooks
+        silently ignore unknown fields, so this must not even be attempted."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            webhook_url="https://hooks.slack.com/test",
+            http_client=mock_client,
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        metadata = {"event_type": "request_posted", "event_payload": {"fingerprint": "x"}}
+        await service.post_blocks(blocks, metadata=metadata)
+
+        mock_client.post.assert_called_once_with(
+            "https://hooks.slack.com/test", json={"blocks": blocks}
+        )
+
 
 class TestSlackServiceBotToken:
     """Tests for SlackService's chat.postMessage bot-token transport (#215)."""
@@ -473,6 +497,64 @@ class TestSlackServiceBotToken:
         assert "C123" in str(exc_info.value)
         # Regression: the bot token must never leak into an error message.
         assert "xoxb-" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_attaches_metadata(self):
+        """metadata (#209) rides alongside blocks in the payload, never inside
+        the blocks themselves."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678", "channel": "C123"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        metadata = {"event_type": "request_posted", "event_payload": {"fingerprint": fingerprint}}
+
+        result = await service.post_blocks(blocks, metadata=metadata)
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "blocks": blocks, "metadata": metadata},
+        )
+        assert result == "1234.5678"
+        posted_blocks = mock_client.post.call_args.kwargs["json"]["blocks"]
+        assert fingerprint not in json.dumps(posted_blocks)
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_omits_metadata_when_absent(self):
+        """No fingerprint -> no ``metadata`` key at all, not an empty/null one
+        (#209) -- WXYC/request-o-matic#152 keys the ban button's presence off
+        this, so an empty-but-present payload would produce buttons that fail
+        on click."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678", "channel": "C123"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        await service.post_blocks(blocks)
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "blocks": blocks},
+        )
 
 
 class TestGetSlackService:

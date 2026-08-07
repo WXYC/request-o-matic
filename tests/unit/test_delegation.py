@@ -511,6 +511,58 @@ class TestDelegationBranch:
         assert "Not In Library" not in posted
 
 
+class TestFingerprintMetadata:
+    """The X-Device-Fingerprint header reaches Slack as chat.postMessage
+    metadata, never as visible block text (request-o-matic#209)."""
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_header_attaches_metadata(
+        self, app, mock_lookup_client, mock_slack, sample_lookup_response
+    ):
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play stereolab"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
+
+        assert response.status_code == 200
+        mock_slack.post_blocks.assert_awaited_once()
+        call = mock_slack.post_blocks.call_args
+        assert call.kwargs["metadata"] == {
+            "event_type": "request_posted",
+            "event_payload": {"fingerprint": fingerprint},
+        }
+        # Never rendered into the visible blocks -- metadata is the only carrier.
+        assert fingerprint not in json.dumps(call.args[0])
+
+    @pytest.mark.asyncio
+    async def test_no_fingerprint_header_omits_metadata(
+        self, app, mock_lookup_client, mock_slack, sample_lookup_response
+    ):
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/api/v1/request", json={"message": "play stereolab"})
+
+        assert response.status_code == 200
+        mock_slack.post_blocks.assert_awaited_once()
+        assert mock_slack.post_blocks.call_args.kwargs["metadata"] is None
+
+
 class TestDelegatedCacheStats:
     """Tests for cache stats propagation in delegated mode.
 

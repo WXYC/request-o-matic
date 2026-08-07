@@ -5,6 +5,31 @@ from models import LibraryItem, ReleaseMetadata, preview_url
 
 logger = logging.getLogger(__name__)
 
+# chat.postMessage metadata event_type carrying the requester's device
+# fingerprint (request-o-matic#209). WXYC/request-o-matic#152's "Ban
+# requester" button matches on this string to find the fingerprint in a
+# message's metadata.event_payload -- do not rename without updating that
+# consumer, or every existing button silently stops finding a fingerprint.
+SLACK_METADATA_EVENT_TYPE = "request_posted"
+
+
+def build_slack_metadata(fingerprint: str | None) -> dict[str, Any] | None:
+    """Build the chat.postMessage ``metadata`` envelope for a requester's
+    device fingerprint (request-o-matic#209).
+
+    Returns None when there is no fingerprint so callers can omit the
+    ``metadata`` key entirely rather than sending an empty/null-valued one --
+    WXYC/request-o-matic#152 keys the ban button's presence off that
+    distinction. The fingerprint must never appear in the rendered blocks;
+    this metadata envelope is the only carrier.
+    """
+    if fingerprint is None:
+        return None
+    return {
+        "event_type": SLACK_METADATA_EVENT_TYPE,
+        "event_payload": {"fingerprint": fingerprint},
+    }
+
 
 def build_slack_blocks(
     message: str,

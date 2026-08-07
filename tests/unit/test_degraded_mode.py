@@ -301,6 +301,98 @@ class TestGroqDegradedMode:
 
 
 # -----------------------------------------------------------------------------
+# Fingerprint metadata on degraded posts (request-o-matic#209)
+# -----------------------------------------------------------------------------
+
+
+class TestFingerprintOnDegradedPaths:
+    """Degraded-mode posts carry the fingerprint metadata on the same terms as
+    a normal post -- an abuser is more likely to hit degraded paths than less."""
+
+    @pytest.mark.asyncio
+    async def test_parsing_unavailable_attaches_fingerprint_metadata(
+        self, mock_lookup_client, mock_slack_service
+    ):
+        fingerprint = "22222222-2222-4222-8222-222222222222"
+        app = _make_app(lookup_client=mock_lookup_client, slack_service=mock_slack_service)
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            side_effect=ValueError("broken"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
+
+        assert response.status_code == 200
+        mock_slack_service.post_blocks.assert_awaited_once()
+        call = mock_slack_service.post_blocks.call_args
+        assert call.kwargs["metadata"] == {
+            "event_type": "request_posted",
+            "event_payload": {"fingerprint": fingerprint},
+        }
+        assert fingerprint not in str(call.args[0])
+
+    @pytest.mark.asyncio
+    async def test_search_unavailable_attaches_fingerprint_metadata(
+        self, mock_lookup_client, mock_slack_service
+    ):
+        fingerprint = "33333333-3333-4333-8333-333333333333"
+        mock_lookup_client.lookup.side_effect = httpx.ConnectError("boom")
+        app = _make_app(lookup_client=mock_lookup_client, slack_service=mock_slack_service)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja by juana molina"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
+
+        assert response.status_code == 200
+        mock_slack_service.post_blocks.assert_awaited_once()
+        call = mock_slack_service.post_blocks.call_args
+        assert call.kwargs["metadata"] == {
+            "event_type": "request_posted",
+            "event_payload": {"fingerprint": fingerprint},
+        }
+        assert fingerprint not in str(call.args[0])
+
+    @pytest.mark.asyncio
+    async def test_no_fingerprint_header_omits_metadata_on_degraded_path(
+        self, mock_lookup_client, mock_slack_service
+    ):
+        app = _make_app(lookup_client=mock_lookup_client, slack_service=mock_slack_service)
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            side_effect=ValueError("broken"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                )
+
+        assert response.status_code == 200
+        mock_slack_service.post_blocks.assert_awaited_once()
+        assert mock_slack_service.post_blocks.call_args.kwargs["metadata"] is None
+
+
+# -----------------------------------------------------------------------------
 # Slack-down: still surfaces as 502.
 # -----------------------------------------------------------------------------
 

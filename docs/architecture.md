@@ -9,6 +9,9 @@
 6. **Filter to library**: Non-library results are dropped. LML can surface albums not in the WXYC catalog as row-less items (LML#631: `library_item.id == 0`, empty `library_url`, `call_number="(external)"`); a DJ can't pull a non-shelved album, so the request channel keeps only real library releases (`library_item.id > 0`). If this leaves nothing, the Slack post falls through to the "No results found" message.
 7. **Slack**: Post enriched results with artwork to Slack
 
+### Fingerprint metadata on Slack posts ([#209](https://github.com/WXYC/request-o-matic/issues/209))
+Every Slack post carries the requester's `X-Device-Fingerprint`, when present, as private `chat.postMessage` metadata -- never as visible block text. `services/slack.build_slack_metadata(fingerprint)` builds the envelope `{"event_type": "request_posted", "event_payload": {"fingerprint": "<uuid>"}}` (the `event_type` string is `services.slack.SLACK_METADATA_EVENT_TYPE`); it returns `None` when there is no fingerprint so the `metadata` key is omitted entirely rather than sent empty. `SlackService.post_blocks` only forwards `metadata` on the bot-token transport ([#215](https://github.com/WXYC/request-o-matic/issues/215)) -- incoming webhooks don't support `chat.postMessage` parameters, so it is dropped on that path. **[WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152)'s "Ban requester" button matches on the `request_posted` event_type to locate the fingerprint; changing that string breaks every existing button.**
+
 ## Degraded Modes
 Slack is the only hard dependency. When Groq or LML are unavailable the listener's message still reaches Slack, with a context line explaining what's missing. The response is `200` with a `degraded_mode` field:
 
