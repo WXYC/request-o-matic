@@ -53,7 +53,7 @@ def parsed_request():
     """
     return make_parsed_request(
         song="la paradoja",
-        artist="Juana Molina",
+        artist="juana molina",
         raw_message=MESSAGE,
     )
 
@@ -117,8 +117,13 @@ def _captured_distinct_id(posthog):
 
 class TestCleanPathFingerprint:
     """The main return at the end of handle_request, with LML answering
-    normally. `corrected_artist` is set so the router's in-place mutation of
-    `parsed` actually fires, which is what the per-test fixture guards."""
+    normally -- no degraded mode of any kind.
+
+    `corrected_artist` differs from the fixture's `artist` so the router's
+    in-place `parsed.artist = ...` mutation actually fires and is observable.
+    That is precisely what the per-test `parsed_request` fixture guards against
+    leaking into the other classes.
+    """
 
     @pytest.mark.asyncio
     async def test_fingerprint_present_is_included(
@@ -146,6 +151,35 @@ class TestCleanPathFingerprint:
         properties = _captured_properties(posthog)
         assert properties.get("fingerprint") == FINGERPRINT
         assert _captured_distinct_id(posthog) == "request-o-matic-service"
+        # Pin that this really is the clean path and not a degraded one
+        # wearing its name -- the defect the previous revision of this file had.
+        assert "degraded_mode" not in properties
+        # The router mutated the shared-if-not-for-the-fixture ParsedRequest.
+        assert parsed_request.artist == "Juana Molina"
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_absent_is_omitted(
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
+    ):
+        mock_lookup_client.lookup.return_value = LookupResult(
+            response=LookupResponse(results=[], search_type=SearchType.none),
+            server_timing=None,
+        )
+        app = _make_app(
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
+        ):
+            await _post(app)
+
+        properties = _captured_properties(posthog)
+        assert "fingerprint" not in properties
+        assert _captured_distinct_id(posthog) == "request-o-matic-service"
+        assert "degraded_mode" not in properties
 
     @pytest.mark.asyncio
     async def test_malformed_fingerprint_is_not_recorded(
@@ -172,6 +206,7 @@ class TestCleanPathFingerprint:
         properties = _captured_properties(posthog)
         assert "fingerprint" not in properties
         assert _captured_distinct_id(posthog) == "request-o-matic-service"
+        assert "degraded_mode" not in properties
 
 
 class TestSearchDegradedPathFingerprint:
