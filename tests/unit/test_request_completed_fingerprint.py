@@ -1,10 +1,21 @@
 """Unit tests for the ``fingerprint`` property on ``request_completed`` telemetry.
 
 WXYC/request-o-matic#216. `request_completed` fires from two places in
-`handle_request`: the parsing-degraded early return and the main/search-degraded
-return at the end. Both must carry `fingerprint` when the caller sent
-`X-Device-Fingerprint`, and must omit it (never the string "None") when absent.
-`distinct_id` must stay the constant `request-o-matic-service` either way.
+`handle_request`: the parsing-degraded early return and the main return at the
+end (shared by the clean path and the search-degraded path). Both must carry
+`fingerprint` when the caller sent a usable `X-Device-Fingerprint`, and must
+omit it (never the string "None") when absent.
+
+"Usable" means "a UUID `POST /admin/bans` will accept" -- the router records
+`normalize_fingerprint(header)`, not the raw header, so a malformed value is
+recorded exactly like an absent one. A garbage value would be unbannable
+through the very flow docs/admin-bans.md documents, and a caller rotating
+garbage would fragment into count-1 rows that never surface in that runbook's
+leaderboard.
+
+`distinct_id` must stay the constant `request-o-matic-service` throughout:
+promoting the fingerprint to `distinct_id` would mint a PostHog person per
+device and retroactively re-attribute every historical event.
 """
 
 from unittest.mock import AsyncMock, Mock, patch
@@ -20,17 +31,31 @@ from core.dependencies import (
     get_posthog_client,
     get_slack_service,
 )
+from generated.api_models import SearchType
 from routers.request import router
-from services.lookup_client import LookupServiceClient
+from services.lookup_client import LookupResponse, LookupResult, LookupServiceClient
 from tests.conftest import make_parsed_request
 
-SAMPLE_PARSED = make_parsed_request(
-    song="la paradoja",
-    artist="Juana Molina",
-    raw_message="play la paradoja by juana molina",
-)
+MESSAGE = "play la paradoja by juana molina"
 
 FINGERPRINT = "11111111-2222-3333-4444-555555555555"
+MALFORMED_FINGERPRINT = "not-a-uuid"
+
+
+@pytest.fixture
+def parsed_request():
+    """A fresh ParsedRequest per test.
+
+    Deliberately not a module-level constant: on the clean path the router
+    mutates `parsed.artist` in place from `LookupResponse.corrected_artist`, so
+    a shared instance would leak that mutation into every later test in the
+    file.
+    """
+    return make_parsed_request(
+        song="la paradoja",
+        artist="Juana Molina",
+        raw_message=MESSAGE,
+    )
 
 
 def _make_app(*, lookup_client, slack_service, posthog_client):
@@ -63,6 +88,13 @@ def posthog():
     return client
 
 
+async def _post(app, *, fingerprint: str | None = None):
+    """POST /request, optionally with an ``X-Device-Fingerprint`` header."""
+    headers = {} if fingerprint is None else {"X-Device-Fingerprint": fingerprint}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.post("/api/v1/request", json={"message": MESSAGE}, headers=headers)
+
+
 def _request_completed_call(posthog):
     """`posthog.capture` also fires per-step `request_parse` events; find the
     `request_completed` call specifically."""
@@ -83,12 +115,73 @@ def _captured_distinct_id(posthog):
     return call.kwargs.get("distinct_id") or (call.args[0] if call.args else None)
 
 
-class TestMainPathFingerprint:
-    """The main/search-degraded return at the end of handle_request."""
+class TestCleanPathFingerprint:
+    """The main return at the end of handle_request, with LML answering
+    normally. `corrected_artist` is set so the router's in-place mutation of
+    `parsed` actually fires, which is what the per-test fixture guards."""
 
     @pytest.mark.asyncio
     async def test_fingerprint_present_is_included(
-        self, mock_lookup_client, mock_slack_service, posthog
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
+    ):
+        mock_lookup_client.lookup.return_value = LookupResult(
+            response=LookupResponse(
+                results=[],
+                search_type=SearchType.none,
+                corrected_artist="Juana Molina",
+            ),
+            server_timing=None,
+        )
+        app = _make_app(
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
+        ):
+            await _post(app, fingerprint=FINGERPRINT)
+
+        properties = _captured_properties(posthog)
+        assert properties.get("fingerprint") == FINGERPRINT
+        assert _captured_distinct_id(posthog) == "request-o-matic-service"
+
+    @pytest.mark.asyncio
+    async def test_malformed_fingerprint_is_not_recorded(
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
+    ):
+        """A non-UUID is unbannable via POST /admin/bans (422) and, if
+        rotated, would bury real devices in the runbook's leaderboard. It is
+        recorded exactly like an absent header: not at all."""
+        mock_lookup_client.lookup.return_value = LookupResult(
+            response=LookupResponse(results=[], search_type=SearchType.none),
+            server_timing=None,
+        )
+        app = _make_app(
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
+        ):
+            await _post(app, fingerprint=MALFORMED_FINGERPRINT)
+
+        properties = _captured_properties(posthog)
+        assert "fingerprint" not in properties
+        assert _captured_distinct_id(posthog) == "request-o-matic-service"
+
+
+class TestSearchDegradedPathFingerprint:
+    """The same emission line as the clean path above, reached with LML down
+    (`search_unavailable`). Pinned separately because the degraded branch skips
+    the whole lookup-response block on the way there."""
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_present_is_included(
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
     ):
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("lml down")
         app = _make_app(
@@ -98,16 +191,9 @@ class TestMainPathFingerprint:
         )
 
         with patch(
-            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play la paradoja by juana molina"},
-                    headers={"X-Device-Fingerprint": FINGERPRINT},
-                )
+            await _post(app, fingerprint=FINGERPRINT)
 
         properties = _captured_properties(posthog)
         assert properties.get("fingerprint") == FINGERPRINT
@@ -115,7 +201,7 @@ class TestMainPathFingerprint:
 
     @pytest.mark.asyncio
     async def test_fingerprint_absent_is_omitted(
-        self, mock_lookup_client, mock_slack_service, posthog
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
     ):
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("lml down")
         app = _make_app(
@@ -125,15 +211,9 @@ class TestMainPathFingerprint:
         )
 
         with patch(
-            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play la paradoja by juana molina"},
-                )
+            await _post(app)
 
         properties = _captured_properties(posthog)
         assert "fingerprint" not in properties
@@ -158,14 +238,7 @@ class TestParsingDegradedPathFingerprint:
             new_callable=AsyncMock,
             side_effect=ValueError("groq down"),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play la paradoja"},
-                    headers={"X-Device-Fingerprint": FINGERPRINT},
-                )
+            await _post(app, fingerprint=FINGERPRINT)
 
         properties = _captured_properties(posthog)
         assert properties.get("fingerprint") == FINGERPRINT
@@ -186,13 +259,30 @@ class TestParsingDegradedPathFingerprint:
             new_callable=AsyncMock,
             side_effect=ValueError("groq down"),
         ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                await client.post(
-                    "/api/v1/request",
-                    json={"message": "play la paradoja"},
-                )
+            await _post(app)
+
+        properties = _captured_properties(posthog)
+        assert "fingerprint" not in properties
+        assert _captured_distinct_id(posthog) == "request-o-matic-service"
+
+    @pytest.mark.asyncio
+    async def test_malformed_fingerprint_is_not_recorded(
+        self, mock_lookup_client, mock_slack_service, posthog
+    ):
+        """Both emit sites run the same normalizer -- neither may leak a raw
+        header value into telemetry."""
+        app = _make_app(
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            side_effect=ValueError("groq down"),
+        ):
+            await _post(app, fingerprint=MALFORMED_FINGERPRINT)
 
         properties = _captured_properties(posthog)
         assert "fingerprint" not in properties
