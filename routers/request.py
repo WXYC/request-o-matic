@@ -353,7 +353,8 @@ async def handle_request(
             except Exception:
                 logger.exception("PostHog request_blocked capture failed (ua_gate)")
         logger.info(
-            "Blocked known-client request missing X-Device-Fingerprint (user_agent=%s)",
+            "Blocked known-client request with %s X-Device-Fingerprint (user_agent=%s)",
+            "missing" if x_device_fingerprint is None else "malformed",
             user_agent,
         )
         raise HTTPException(status_code=403, detail="Request blocked")
