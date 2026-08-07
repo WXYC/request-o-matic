@@ -22,17 +22,19 @@ SLACK_METADATA_EVENT_TYPE = "request_posted"
 # handler from the verified Slack payload, not from anything set on the button.
 BAN_BUTTON_ACTION_ID = "ban_requester"
 
-_BAN_BUTTON_BLOCK: dict[str, Any] = {
-    "type": "actions",
-    "elements": [
-        {
-            "type": "button",
-            "text": {"type": "plain_text", "text": "Ban requester"},
-            "style": "danger",
-            "action_id": BAN_BUTTON_ACTION_ID,
-        }
-    ],
-}
+
+def _build_ban_button_block() -> dict[str, Any]:
+    return {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Ban requester"},
+                "style": "danger",
+                "action_id": BAN_BUTTON_ACTION_ID,
+            }
+        ],
+    }
 
 
 def build_slack_metadata(fingerprint: str | None) -> dict[str, Any] | None:
@@ -69,11 +71,12 @@ def maybe_append_ban_button(
     same ``normalize_fingerprint`` call: a post without a usable fingerprint
     gets no button, since there is nothing behind it to ban and a button that
     422s on every click is worse than no button. Returns a new list rather
-    than mutating ``blocks`` in place.
+    than mutating ``blocks`` in place, containing a freshly-built button block
+    rather than a shared reference.
     """
     if normalize_fingerprint(fingerprint) is None:
         return blocks
-    return [*blocks, _BAN_BUTTON_BLOCK]
+    return [*blocks, _build_ban_button_block()]
 
 
 def build_slack_blocks(

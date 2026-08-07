@@ -105,8 +105,26 @@ def _extract_fingerprint(message: dict[str, Any]) -> str | None:
     metadata = message.get("metadata") or {}
     if metadata.get("event_type") != SLACK_METADATA_EVENT_TYPE:
         return None
-    fingerprint = metadata.get("event_payload", {}).get("fingerprint")
+    event_payload = metadata.get("event_payload") or {}
+    fingerprint = event_payload.get("fingerprint")
     return fingerprint if isinstance(fingerprint, str) else None
+
+
+async def _notify_slack(coro: Any, *, description: str) -> None:
+    """Await a best-effort Slack notification, swallowing any failure.
+
+    Every call site using this helper runs *after* the authoritative action
+    for the request has already been decided (a ban that already landed in
+    BS, or an authorization refusal that's already final) -- letting a
+    notification failure (``SlackPostError`` on ``{"ok": false}``, or a raw
+    ``httpx.HTTPError`` from ``raise_for_status``) propagate to a 500 here
+    would tell Slack the whole interaction failed and risk a retried
+    ``view_submission`` for an action that already succeeded.
+    """
+    try:
+        await coro
+    except (SlackPostError, httpx.HTTPError) as exc:
+        logger.error("slack_interactivity: %s failed: %s", description, exc)
 
 
 def _build_ban_reason_modal(private_metadata: str) -> dict[str, Any]:
@@ -155,13 +173,37 @@ async def _handle_block_actions(payload: dict[str, Any], slack: SlackService | N
     if not any(a.get("action_id") == BAN_BUTTON_ACTION_ID for a in actions):
         return Response(status_code=200)
 
+    channel = (payload.get("channel") or {}).get("id")
+    clicking_user = (payload.get("user") or {}).get("id")
     message = payload.get("message") or {}
     fingerprint = _extract_fingerprint(message)
+
     if fingerprint is None:
+        # Reachable in production before the SLACK_USE_BOT_TOKEN cutover: the
+        # button itself doesn't know which transport posted its message, so
+        # it renders whenever a fingerprint was *attempted* -- but the
+        # incoming-webhook transport drops chat.postMessage metadata entirely
+        # (#209), so a webhook-posted message's button is a click with no
+        # fingerprint behind it. Tell the clicker instead of silently
+        # no-op'ing, which is indistinguishable from an outage mid-incident.
         logger.warning(
             "slack_interactivity: ban button clicked but message carries no "
             "usable fingerprint metadata; ignoring"
         )
+        if slack is not None and channel and clicking_user:
+            await _notify_slack(
+                slack.post_ephemeral(
+                    channel=channel,
+                    user=clicking_user,
+                    text=(
+                        "This post has no device info attached to ban -- it may "
+                        "have been sent before the fingerprint pipeline was "
+                        "live for this deployment. Use the PostHog fallback in "
+                        "docs/admin-bans.md instead."
+                    ),
+                ),
+                description="no-fingerprint ephemeral notice",
+            )
         return Response(status_code=200)
 
     if slack is None:
@@ -171,7 +213,6 @@ async def _handle_block_actions(payload: dict[str, Any], slack: SlackService | N
         )
         return Response(status_code=200)
 
-    channel = (payload.get("channel") or {}).get("id")
     message_ts = message.get("ts")
     trigger_id = payload.get("trigger_id")
     if not isinstance(trigger_id, str):
@@ -189,14 +230,10 @@ async def _handle_block_actions(payload: dict[str, Any], slack: SlackService | N
         context["blocks"] = None
         private_metadata = json.dumps(context)
 
-    try:
-        await slack.open_view(trigger_id=trigger_id, view=_build_ban_reason_modal(private_metadata))
-    except SlackPostError as exc:
-        logger.error(
-            "slack_interactivity: views.open failed fingerprint=%s error=%s",
-            _redact_fingerprint(fingerprint),
-            exc,
-        )
+    await _notify_slack(
+        slack.open_view(trigger_id=trigger_id, view=_build_ban_reason_modal(private_metadata)),
+        description=f"views.open fingerprint={_redact_fingerprint(fingerprint)}",
+    )
 
     return Response(status_code=200)
 
@@ -236,10 +273,13 @@ async def _handle_view_submission(
             data={"user_id": user_id},
         )
         if slack is not None and channel:
-            await slack.post_ephemeral(
-                channel=channel,
-                user=user_id,
-                text="You are not authorized to ban requesters.",
+            await _notify_slack(
+                slack.post_ephemeral(
+                    channel=channel,
+                    user=user_id,
+                    text="You are not authorized to ban requesters.",
+                ),
+                description="unauthorized-refusal ephemeral",
             )
         return Response(status_code=200)
 
@@ -292,31 +332,36 @@ async def _handle_view_submission(
             exc.body,
         )
         if slack is not None:
-            await slack.post_ephemeral(
-                channel=channel,
-                user=user_id,
-                text="Ban failed -- Backend-Service rejected the request. Check the logs.",
+            await _notify_slack(
+                slack.post_ephemeral(
+                    channel=channel,
+                    user=user_id,
+                    text="Ban failed -- Backend-Service rejected the request. Check the logs.",
+                ),
+                description=f"ban-failure ephemeral fingerprint={_redact_fingerprint(fingerprint)}",
             )
         return Response(status_code=200)
 
     if slack is not None:
-        await slack.post_ephemeral(
-            channel=channel,
-            user=user_id,
-            text=f"Banned. Reason: {reason}",
+        # Both notifications are best-effort: the ban already landed in BS by
+        # this point, so neither a failed ack nor a failed edit should turn
+        # into a 500 that tells Slack (and the DJ) the action failed.
+        await _notify_slack(
+            slack.post_ephemeral(
+                channel=channel,
+                user=user_id,
+                text=f"Banned. Reason: {reason}",
+            ),
+            description=f"ban-success ephemeral fingerprint={_redact_fingerprint(fingerprint)}",
         )
-        try:
-            await slack.update_message(
+        await _notify_slack(
+            slack.update_message(
                 channel=channel,
                 ts=message_ts,
                 blocks=_build_updated_blocks(original_blocks, user_id, reason),
-            )
-        except SlackPostError as exc:
-            logger.error(
-                "slack_interactivity: chat.update failed fingerprint=%s error=%s",
-                _redact_fingerprint(fingerprint),
-                exc,
-            )
+            ),
+            description=f"chat.update fingerprint={_redact_fingerprint(fingerprint)}",
+        )
 
     return Response(status_code=200)
 
