@@ -8,7 +8,7 @@ The Slack-native action (filed at #152) is the primary operator UX once it lands
 
 ## Where to find a fingerprint
 
-**PostHog, via a HogQL query — this is the interim mechanism.** Every `request_completed` event carries a `fingerprint` property whenever the client sent an `X-Device-Fingerprint` header. Run this in PostHog (SQL tab) to see per-device request counts, most active first:
+**PostHog, via a HogQL query — this is the interim mechanism.** Every `request_completed` event carries a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
 ```sql
 SELECT properties.fingerprint AS fp, count() AS requests, max(timestamp) AS last_seen
@@ -20,9 +20,19 @@ GROUP BY fp
 ORDER BY requests DESC
 ```
 
-Copy the `fp` value for the offending device into `POST /admin/bans` below. [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button) replaces this lookup with a one-click flow once it lands; until then, this is the supported path.
+Copy the `fp` value for the offending device into `POST /admin/bans` below. It is a full UUID by construction: the router records the value only after `services/fingerprint.normalize_fingerprint` accepts it, so anything this query returns is something `POST /admin/bans` will take. [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button) replaces this lookup with a one-click flow once it lands; until then, this is the supported path.
 
-There is intentionally **no** "discover fingerprints" endpoint — the design point is that operators identify a listener through the same Slack post they're already reacting to, or through the PostHog query above.
+### What this query does not cover
+
+- **Non-request messages — the biggest gap.** When the parser classifies a message as something other than a request (feedback, a DJ shout-out, chatter), `handle_request` posts it to Slack and returns early **without emitting `request_completed` at all**. Abusive free text is the likeliest abuse shape, and it is exactly the traffic this query is blind to: a listener can flood the request channel and never appear in the results above. If you can see the abuse in Slack but the query finds nothing, this is why.
+- **Malformed fingerprints.** A caller sending anything that isn't a UUID is treated as though it sent no header at all, here and everywhere else in ROM. That is deliberate — a non-UUID cannot be banned, because `POST /admin/bans` types the field as `UUID` and rejects it — but it does mean a client deliberately sending junk stays invisible.
+- **Clients that send no fingerprint.** iOS 3.1 and older, browsers, and `curl` don't send the header, so they never appear.
+
+### Why not the Slack post?
+
+Request posts in Slack do **not** display the listener's fingerprint, and as of this writing no production Slack message carries one at all. [#209](https://github.com/WXYC/request-o-matic/issues/209) attaches the fingerprint as private `chat.postMessage` `metadata`, but only on the bot-token transport; `SLACK_USE_BOT_TOKEN` is unset in production, so the incoming-webhook transport is live and it drops `metadata` entirely. Even once that flag flips, the envelope stays invisible in the Slack client — it exists to be read programmatically by #152's "Ban requester" button, not by a human scrolling the channel. Do not go looking for fingerprint metadata on a Slack message mid-incident; use the PostHog query above.
+
+There is intentionally **no** "discover fingerprints" endpoint. The design point is that operators will identify a listener through the same Slack post they're already reacting to — by clicking #152's button once it ships, not by reading anything off the post. Until then, the PostHog query above is the lookup.
 
 ## Authentication
 

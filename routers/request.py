@@ -441,8 +441,25 @@ async def handle_request(
                 "degraded_mode": DEGRADED_PARSING,
                 "degraded_reason": type(e).__name__,
             }
-            if x_device_fingerprint:
-                parse_props["fingerprint"] = x_device_fingerprint
+            # Record the *normalized* fingerprint, never the raw header
+            # (WXYC/request-o-matic#216). The runbook in docs/admin-bans.md has
+            # the operator paste this value straight into POST /admin/bans,
+            # which types the field as UUID and 422s on anything else; and a
+            # caller rotating garbage values would otherwise fragment into
+            # count-1 rows that never surface in that runbook's
+            # "ORDER BY requests DESC" leaderboard, leaving only well-behaved
+            # clients (stable Keychain UUIDs) discoverable.
+            #
+            # This is the one sink ROM writes a *full* fingerprint to.
+            # routers/admin.py and services/ban_service.py truncate to 8 chars
+            # in logs because a stable per-device UUID in a long-retention sink
+            # is a deanonymization vector; the divergence here is deliberate,
+            # not an oversight. An 8-char prefix cannot be passed to
+            # POST /admin/bans, so originating a ban needs the whole value and
+            # PostHog is the only place an operator can read one. Do not
+            # "fix" this by truncating -- it would break the documented flow.
+            if normalized_fingerprint:
+                parse_props["fingerprint"] = normalized_fingerprint
             if ban_check_degraded:
                 parse_props["ban_check_degraded"] = True
             telemetry.send_to_posthog(
@@ -589,8 +606,10 @@ async def handle_request(
             "is_request": parsed.is_request,
             "message_type": parsed.message_type.value if parsed.message_type else None,
         }
-        if x_device_fingerprint:
-            properties["fingerprint"] = x_device_fingerprint
+        # Normalized, and full-length on purpose -- see the fingerprint comment
+        # on the parsing-degraded emit above for both rationales.
+        if normalized_fingerprint:
+            properties["fingerprint"] = normalized_fingerprint
         if degraded_mode:
             properties["degraded_mode"] = degraded_mode
             if lookup_failure is not None:
