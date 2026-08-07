@@ -441,6 +441,8 @@ async def handle_request(
                 "degraded_mode": DEGRADED_PARSING,
                 "degraded_reason": type(e).__name__,
             }
+            if x_device_fingerprint:
+                parse_props["fingerprint"] = x_device_fingerprint
             if ban_check_degraded:
                 parse_props["ban_check_degraded"] = True
             telemetry.send_to_posthog(
@@ -587,6 +589,8 @@ async def handle_request(
             "is_request": parsed.is_request,
             "message_type": parsed.message_type.value if parsed.message_type else None,
         }
+        if x_device_fingerprint:
+            properties["fingerprint"] = x_device_fingerprint
         if degraded_mode:
             properties["degraded_mode"] = degraded_mode
             if lookup_failure is not None:
