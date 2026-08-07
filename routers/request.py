@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from posthog import Posthog
 from models import LibraryItem, ReleaseMetadata
 from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
+from services.fingerprint import normalize_fingerprint
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
 from services.slack import build_simple_slack_blocks, build_slack_blocks, build_slack_metadata
@@ -329,12 +330,19 @@ async def handle_request(
     #   - the caller supplies neither Authorization nor X-Device-Fingerprint
     #     (matches v3.1 iOS clients in production — BS would 400 no_signal).
     # The BS endpoint is public; we do NOT forward X-Internal-Key here.
+    # Gate on the *normalized* fingerprint, not the raw header: check() drops a
+    # malformed value and then raises ValueError when no signal survives, which
+    # nothing here catches. A caller whose only header was e.g.
+    # `X-Device-Fingerprint: not-a-uuid` therefore got a 500 instead of the
+    # no-signal skip. The UA gate above deliberately stays on the raw header —
+    # it asserts presence, not validity.
+    ban_check_fingerprint = normalize_fingerprint(x_device_fingerprint)
     ban_check_degraded = False
-    if ban_check_client is not None and (authorization or x_device_fingerprint):
+    if ban_check_client is not None and (authorization or ban_check_fingerprint):
         try:
             ban_result = await ban_check_client.check(
                 authorization=authorization,
-                fingerprint=x_device_fingerprint,
+                fingerprint=ban_check_fingerprint,
             )
         except BanCheckUnavailableError as exc:
             # Fail open: log a Sentry breadcrumb so the outage is visible in

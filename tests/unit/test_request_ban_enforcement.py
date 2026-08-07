@@ -558,7 +558,57 @@ class TestFeatureFlagOff:
 
 
 class TestSkipBSWhenNoSignal:
-    """When the caller supplies neither header, skip BS even if the client is wired."""
+    """When the caller supplies no *usable* signal, skip BS even if the client is wired."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            pytest.param("not-a-uuid", id="malformed"),
+            pytest.param("   ", id="whitespace-only"),
+            pytest.param("abc?inject=evil", id="query-injection"),
+        ],
+    )
+    async def test_unusable_fingerprint_only_does_not_call_bs(
+        self,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+        fingerprint,
+    ):
+        """A malformed fingerprint is no signal at all, so the gate must skip
+        BS rather than round-trip.
+
+        Gating on the raw header's truthiness instead let the request reach
+        ``check()``, which drops the malformed value and then raises
+        ``ValueError`` because nothing survived. Nothing catches that, so a
+        listener got a 500 from ``POST /request`` merely for sending a garbage
+        fingerprint.
+        """
+        app = _make_app(
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            return_value=SAMPLE_PARSED,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
+
+        assert response.status_code == 200
+        mock_ban_check_client.check.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_headers_does_not_call_bs(
