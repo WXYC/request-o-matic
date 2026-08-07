@@ -19,6 +19,7 @@ import time
 from unittest.mock import AsyncMock
 from urllib.parse import quote
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -283,6 +284,25 @@ class TestBlockActionsOpensModal:
         assert resp.status_code == 200
         slack.open_view.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_missing_fingerprint_notifies_clicker_instead_of_silent_noop(self):
+        """A dead button (message posted via the webhook transport, which
+        drops chat.postMessage metadata entirely) must tell the clicker
+        something, not silently do nothing -- indistinguishable from an
+        outage mid-incident otherwise."""
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(fingerprint=None)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.post_ephemeral.assert_awaited_once()
+        _, kwargs = slack.post_ephemeral.call_args
+        assert kwargs["channel"] == CHANNEL_ID
+        assert kwargs["user"] == ACTING_USER
+
 
 class TestViewSubmissionHappyPath:
     @pytest.mark.asyncio
@@ -464,3 +484,45 @@ class TestSlackUnavailable:
         resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
 
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_post_ephemeral_failure_after_successful_ban_does_not_500(self):
+        """The ban already landed in BS by the time the ack is sent -- a
+        failed chat.postEphemeral (e.g. channel_not_found) must not surface
+        as a 500, or Slack could retry the view_submission for an action that
+        already succeeded."""
+        slack = _mock_slack_service()
+        slack.post_ephemeral = AsyncMock(side_effect=SlackPostError("channel_not_found"))
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_message_httpx_error_after_successful_ban_does_not_500(self):
+        """A raw httpx.HTTPError (e.g. raise_for_status on a 5xx) must be
+        swallowed exactly like SlackPostError -- both are just "the
+        best-effort notification failed", not "the request failed"."""
+        slack = _mock_slack_service()
+        slack.update_message = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "Error",
+                request=httpx.Request("POST", "https://slack.com"),
+                response=httpx.Response(500),
+            )
+        )
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()
+        slack.post_ephemeral.assert_awaited_once()

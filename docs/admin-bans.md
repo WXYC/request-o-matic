@@ -4,19 +4,21 @@ Three operator endpoints on request-o-matic for managing request-line bans. ROM 
 
 ## When to use this vs the Slack-native ban button (#152)
 
-The **"Ban requester" button** on each Slack request post is the primary operator UX — one click, a reason prompt, done, no curl required. It only appears on posts carrying a fingerprint (see below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
+The **"Ban requester" button** on each Slack request post is the primary operator UX — one click, a reason prompt, done, no curl required — **once `SLACK_USE_BOT_TOKEN=true` in the target environment** (see the caveat below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
 
 ## Where to find a fingerprint
 
-**Click "Ban requester" on the Slack post — this is the supported path.** Every request post that carries a usable fingerprint renders the button (`services/slack.maybe_append_ban_button`); clicking it opens a modal asking for a reason. Submitting the modal:
+**Click "Ban requester" on the Slack post — this is the supported path, once the button is live (see caveat).** The button (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Clicking it opens a modal asking for a reason. Submitting the modal:
 
 1. Verifies the Slack request signature and the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)).
-2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=<slack_user_id>)` — the same function this HTTP API uses.
+2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=None)` — the same function this HTTP API uses (`actor` is always `None` from rom; see that function's docstring for why).
 3. Posts an ephemeral confirmation to the clicking DJ, and edits the original message with a "🚫 Banned by @dj — reason" footer so the whole channel sees the outcome. On an unusually long post the footer is skipped and the ephemeral confirmation says so — the ban still lands, and the original message is left untouched rather than being replaced by a footer-only stub.
 
-Posts with **no button** have no usable fingerprint to ban — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, or if the interactivity endpoint is down, fall back to the PostHog query below.
+**Caveat: the button is only live on the bot-token transport.** `chat.postMessage` `metadata` (#209, which the button depends on) is silently dropped by the incoming-webhook transport — see "The fingerprint is never displayed, only acted on" below. Until an environment has `SLACK_USE_BOT_TOKEN=true`, its buttons render but have nothing to act on; clicking one gets an ephemeral explaining that and pointing back to the PostHog fallback, rather than silently doing nothing. Staging carries the full ban stack already; production's cutover (flipping the flag and repointing the Slack app's interactivity Request URL) is a manual post-merge step, not a code change — see [#152](https://github.com/WXYC/request-o-matic/issues/152)'s acceptance criteria.
 
-### PostHog fallback (when there's no button, or the endpoint is down)
+Posts with **no button at all** have no usable fingerprint by construction — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, for a pre-cutover environment, or if the interactivity endpoint is down, fall back to the PostHog query below.
+
+### PostHog fallback (when there's no button, the button isn't live yet, or the endpoint is down)
 
 Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
