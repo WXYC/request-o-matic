@@ -213,7 +213,68 @@ def mock_posthog():
 
 
 class TestUAGateBlocks:
-    """With the flag on, known-client requests missing fingerprint get 403."""
+    """With the flag on, known-client requests missing a usable fingerprint get 403."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            pytest.param("not-a-uuid", id="malformed"),
+            pytest.param("", id="empty"),
+            pytest.param("   ", id="whitespace-only"),
+            pytest.param("abc?inject=evil", id="query-injection"),
+        ],
+    )
+    async def test_known_client_unusable_fingerprint_returns_403(
+        self,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+        fingerprint,
+    ):
+        """A present-but-unusable fingerprint is evasion, not a fingerprint.
+
+        The gate exists so a known client can't opt out of ban enforcement by
+        withholding its fingerprint. Checking mere header *presence* left the
+        door open one notch further: a spoofed ``WXYC-iOS/3.2.0`` sending
+        ``X-Device-Fingerprint: not-a-uuid`` and no ``Authorization`` cleared
+        the gate on presence, then normalized to no-signal and skipped the BS
+        round-trip entirely -- passing both defenses. That is precisely the
+        bypass ``services/ua_gate.py`` claims cannot happen ("has to then also
+        send a fingerprint, at which point they're back on the
+        fingerprint-banned path").
+        """
+        app = _make_app(
+            strict_flag=True,
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            return_value=SAMPLE_PARSED,
+        ) as mock_parse:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                    headers={
+                        "User-Agent": "WXYC-iOS/3.2.0",
+                        "X-Device-Fingerprint": fingerprint,
+                    },
+                )
+
+        assert response.status_code == 403
+        mock_ban_check_client.check.assert_not_awaited()
+        mock_parse.assert_not_awaited()
+        mock_lookup_client.lookup.assert_not_awaited()
+        mock_slack_service.post_blocks.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_known_client_no_fingerprint_returns_403(

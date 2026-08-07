@@ -289,15 +289,29 @@ async def handle_request(
         event_prefix="request",
     )
 
+    # Normalize once, up front, so every downstream gate agrees on what counts
+    # as a fingerprint. A malformed value must be indistinguishable from an
+    # absent one everywhere — if the UA gate accepted mere presence while the
+    # ban check only accepted a valid UUID, a caller could thread between them
+    # and clear both (see the gate comment below).
+    normalized_fingerprint = normalize_fingerprint(x_device_fingerprint)
+
     # User-Agent gate (WXYC/request-o-matic#155). Runs BEFORE the BS ban check
-    # so a known-client request missing its fingerprint is rejected without an
-    # extra BS round-trip. Unknown UAs (v3.1 iOS, browsers, curl, anything not
+    # so a known-client request missing a usable fingerprint is rejected without
+    # an extra BS round-trip. Unknown UAs (v3.1 iOS, browsers, curl, anything not
     # in the registry) keep the existing lenient behavior — see services/ua_gate.py.
     # The gate is independent of ENFORCE_REQUEST_BANS: it's a structural check
     # on the request shape from known clients, not a ban decision.
+    #
+    # Gate on the normalized value, not the raw header: a spoofed
+    # `WXYC-iOS/3.2.0` sending `X-Device-Fingerprint: not-a-uuid` and no
+    # Authorization would otherwise clear this gate on presence, then normalize
+    # to no-signal and skip the BS round-trip below — passing both defenses.
+    # A real iOS 3.2+ client always sends its Keychain UUID, so "present but
+    # not a UUID" is evasion, which is exactly what this gate exists to reject.
     if (
         settings.strict_fingerprint_for_known_clients
-        and not x_device_fingerprint
+        and not normalized_fingerprint
         and is_known_strict_client(user_agent)
     ):
         if posthog_client is not None:
@@ -330,19 +344,17 @@ async def handle_request(
     #   - the caller supplies neither Authorization nor X-Device-Fingerprint
     #     (matches v3.1 iOS clients in production — BS would 400 no_signal).
     # The BS endpoint is public; we do NOT forward X-Internal-Key here.
-    # Gate on the *normalized* fingerprint, not the raw header: check() drops a
-    # malformed value and then raises ValueError when no signal survives, which
-    # nothing here catches. A caller whose only header was e.g.
-    # `X-Device-Fingerprint: not-a-uuid` therefore got a 500 instead of the
-    # no-signal skip. The UA gate above deliberately stays on the raw header —
-    # it asserts presence, not validity.
-    ban_check_fingerprint = normalize_fingerprint(x_device_fingerprint)
+    # Gate on the normalized fingerprint for the same reason as the UA gate:
+    # check() drops a malformed value and then raises ValueError when no signal
+    # survives, which nothing here catches — so a caller whose only header was
+    # `X-Device-Fingerprint: not-a-uuid` used to get a 500 rather than the
+    # intended no-signal skip.
     ban_check_degraded = False
-    if ban_check_client is not None and (authorization or ban_check_fingerprint):
+    if ban_check_client is not None and (authorization or normalized_fingerprint):
         try:
             ban_result = await ban_check_client.check(
                 authorization=authorization,
-                fingerprint=ban_check_fingerprint,
+                fingerprint=normalized_fingerprint,
             )
         except BanCheckUnavailableError as exc:
             # Fail open: log a Sentry breadcrumb so the outage is visible in
