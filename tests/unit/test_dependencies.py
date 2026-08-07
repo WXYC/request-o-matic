@@ -31,6 +31,12 @@ def mock_settings():
         groq_api_key="test_groq_key",
         slack_webhook_url="https://hooks.slack.com/test",
         enable_slack_integration=True,
+        # Pinned, not inherited: Settings reads `.env` and the process
+        # environment, so leaving this unset makes every webhook-path test
+        # below depend on whether the developer happens to have
+        # SLACK_USE_BOT_TOKEN set -- which README tells them to set when
+        # exercising the migration (#215).
+        slack_use_bot_token=False,
         enable_telemetry=True,
         posthog_api_key="test_posthog_key",
     )
@@ -308,6 +314,7 @@ class TestGetSlackWebhookUrl:
             groq_api_key="test_key",
             enable_slack_integration=True,
             slack_webhook_url=None,
+            slack_use_bot_token=False,
         )
         mock_client = AsyncMock()
         mock_response = Mock()
@@ -326,6 +333,7 @@ class TestGetSlackWebhookUrl:
             groq_api_key="test_key",
             enable_slack_integration=True,
             slack_webhook_url=None,
+            slack_use_bot_token=False,
         )
         mock_client = AsyncMock()
         mock_client.get.side_effect = Exception("Connection failed")
@@ -474,7 +482,7 @@ class TestGetSlackService:
     async def test_returns_none_when_no_webhook(self):
         """Test that get_slack_service returns None without webhook URL."""
         mock_client = AsyncMock()
-        settings = Settings(groq_api_key="test_key")
+        settings = Settings(groq_api_key="test_key", slack_use_bot_token=False)
 
         service = await get_slack_service(
             settings=settings, webhook_url=None, bot_config=None, http_client=mock_client
@@ -485,7 +493,7 @@ class TestGetSlackService:
     async def test_returns_service_with_webhook(self):
         """Test that get_slack_service returns service with webhook URL."""
         mock_client = AsyncMock()
-        settings = Settings(groq_api_key="test_key")
+        settings = Settings(groq_api_key="test_key", slack_use_bot_token=False)
 
         service = await get_slack_service(
             settings=settings,
