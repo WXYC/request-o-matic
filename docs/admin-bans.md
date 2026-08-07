@@ -8,7 +8,9 @@ The Slack-native action (filed at #152) is the primary operator UX once it lands
 
 ## Where to find a fingerprint
 
-When a listener's request post lands in Slack, the bot attaches the listener's fingerprint UUID to the message as metadata. Copy that value and pass it as the `fingerprint` field below. There is intentionally **no** "discover fingerprints" endpoint — operators identify a listener through the same Slack post they're already reacting to.
+**Not yet available.** Request posts in Slack do not currently carry the listener's fingerprint, and normal-request telemetry does not record it — it appears only on `request_blocked` events, i.e. only for devices that are already banned. Surfacing it is tracked in [WXYC/request-o-matic#216](https://github.com/WXYC/request-o-matic/issues/216) (fingerprint on telemetry — the interim lookup path, no dependencies) and [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button — the real one). Until that lands, the endpoints below work but there is no supported way to obtain a fingerprint to pass to them.
+
+There is intentionally **no** "discover fingerprints" endpoint — the design point is that operators identify a listener through the same Slack post they're already reacting to.
 
 ## Authentication
 
