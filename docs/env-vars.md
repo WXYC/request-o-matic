@@ -6,8 +6,11 @@ Required:
 - `LML_API_KEY` - Bearer token sent on every call to LML. Required when LML has `LML_REQUIRE_AUTH=true` (production). Without it, `/lookup` calls 401 and `/request` returns 502.
 
 Optional:
-- `SLACK_WEBHOOK_URL` - For posting results
-- `SLACK_WEBHOOK_KEY_URL` - Railway endpoint to fetch Slack webhook key
+- `SLACK_WEBHOOK_URL` - For posting results via the legacy incoming webhook (used when `SLACK_USE_BOT_TOKEN` is off)
+- `SLACK_WEBHOOK_KEY_URL` - Railway endpoint to fetch Slack webhook key (webhook transport only)
+- `SLACK_USE_BOT_TOKEN` - Feature flag (default: `false`). When `true`, `SlackService.post_blocks` posts via `chat.postMessage` with `SLACK_BOT_TOKEN` instead of the incoming webhook, returning the message `ts` (request-o-matic#215). Rendered output is identical either way; the webhook path stays byte-for-byte unchanged while this is off, so it can be flipped back without a deploy if the bot-token path regresses.
+- `SLACK_BOT_TOKEN` - Bot token (`xoxb-...`) for `chat.postMessage`. Required when `SLACK_USE_BOT_TOKEN=true`; the app has `chat:write` but not `chat:write.public`, so the bot must be `/invite`d into any channel it posts to, or every post fails with `not_in_channel`.
+- `SLACK_CHANNEL_ID` - Channel ID `chat.postMessage` posts to. Required when `SLACK_USE_BOT_TOKEN=true`.
 - `SENTRY_DSN` - For error tracking and 100% transaction tracing (Sentry). The Sentry environment tag is read from `RAILWAY_ENVIRONMENT_NAME` (Railway sets this automatically) or `DEPLOYMENT_ENVIRONMENT` if you want to override it; falls back to `local` when neither is set. Outbound calls to LML carry `sentry-trace` headers via the `HttpxIntegration`, so request-o-matic and LML spans link up into a single distributed trace.
 - `POSTHOG_API_KEY` - PostHog project API key for telemetry
 - `POSTHOG_HOST` - PostHog host URL (default: `https://us.i.posthog.com`)

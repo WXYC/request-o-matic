@@ -13,7 +13,7 @@ from wxyc_fastapi.http import async_singleton
 from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
 
 from config.settings import Settings, get_settings
-from core.exceptions import ServiceInitializationError
+from core.exceptions import ServiceInitializationError, SlackPostError
 from services.ban_admin_client import BanAdminClient
 from services.ban_check_client import BanCheckClient
 from services.lookup_client import LookupServiceClient
@@ -161,43 +161,118 @@ def get_cached_slack_webhook_url() -> str | None:
     return _slack_webhook_url
 
 
+async def get_slack_bot_config(
+    settings: Settings = Depends(get_settings),
+) -> tuple[str, str] | None:
+    """Resolve the bot-token Slack transport config (request-o-matic#215).
+
+    Gated on both ``enable_slack_integration`` and ``slack_use_bot_token`` so it
+    behaves identically to ``get_slack_webhook_url`` under those flags. Returns
+    None (rather than raising) when the flag is on but ``slack_bot_token`` /
+    ``slack_channel_id`` aren't both set, so the caller fails closed instead of
+    posting with a blank channel.
+    """
+    if not settings.enable_slack_integration or not settings.slack_use_bot_token:
+        return None
+    if not settings.slack_bot_token or not settings.slack_channel_id:
+        logger.error("SLACK_USE_BOT_TOKEN is set but SLACK_BOT_TOKEN/SLACK_CHANNEL_ID is missing")
+        return None
+    return settings.slack_bot_token, settings.slack_channel_id
+
+
 class SlackService:
-    """Service for posting messages to Slack."""
+    """Service for posting messages to Slack.
 
-    def __init__(self, webhook_url: str, http_client: httpx.AsyncClient):
-        self.webhook_url = webhook_url
+    Two mutually exclusive transports, selected by which arguments are
+    supplied: the legacy incoming webhook (``webhook_url``) or bot-token
+    ``chat.postMessage`` (``bot_token`` + ``channel_id``, request-o-matic#215).
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        webhook_url: str | None = None,
+        bot_token: str | None = None,
+        channel_id: str | None = None,
+    ):
         self.http_client = http_client
+        self.webhook_url = webhook_url
+        self.bot_token = bot_token
+        self.channel_id = channel_id
 
-    async def post_blocks(self, blocks: list[dict]) -> None:
+    async def post_blocks(self, blocks: list[dict]) -> str | None:
         """Post message blocks to Slack.
 
         Args:
             blocks: Slack message blocks
 
+        Returns:
+            The posted message's ``ts`` when using the bot-token transport,
+            otherwise None (the incoming webhook has no message handle).
+
         Raises:
-            httpx.HTTPError: If posting to Slack fails
+            httpx.HTTPError: If the HTTP request itself fails.
+            SlackPostError: If the bot-token transport returns
+                ``{"ok": false}`` (a 200 that Slack still reports as a
+                failure -- ``chat.postMessage`` does not use HTTP status
+                codes for API-level errors).
         """
+        if self.bot_token is not None:
+            return await self._post_via_bot_token(blocks)
+
+        assert self.webhook_url is not None
         response = await self.http_client.post(self.webhook_url, json={"blocks": blocks})
         response.raise_for_status()
         logger.info("Posted to Slack successfully")
+        return None
+
+    async def _post_via_bot_token(self, blocks: list[dict]) -> str:
+        response = await self.http_client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {self.bot_token}"},
+            json={"channel": self.channel_id, "blocks": blocks},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            error = data.get("error", "unknown_error")
+            if error == "not_in_channel":
+                raise SlackPostError(
+                    f"Slack chat.postMessage failed: not_in_channel "
+                    f"(bot is not a member of channel {self.channel_id}; invite it with /invite)"
+                )
+            raise SlackPostError(f"Slack chat.postMessage failed: {error}")
+        logger.info("Posted to Slack successfully")
+        ts: str = data["ts"]
+        return ts
 
 
 async def get_slack_service(
+    settings: Settings = Depends(get_settings),
     webhook_url: str | None = Depends(get_slack_webhook_url),
+    bot_config: tuple[str, str] | None = Depends(get_slack_bot_config),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> SlackService | None:
     """Get Slack service instance.
 
     Args:
-        webhook_url: Slack webhook URL
+        settings: Application settings (selects the transport)
+        webhook_url: Slack webhook URL (legacy transport)
+        bot_config: (bot_token, channel_id) pair (request-o-matic#215 transport)
         http_client: HTTP client
 
     Returns:
         Optional[SlackService]: Slack service if enabled, None otherwise
     """
+    if settings.slack_use_bot_token:
+        if bot_config is None:
+            return None
+        bot_token, channel_id = bot_config
+        return SlackService(http_client, bot_token=bot_token, channel_id=channel_id)
+
     if webhook_url is None:
         return None
-    return SlackService(webhook_url, http_client)
+    return SlackService(http_client, webhook_url=webhook_url)
 
 
 def require_admin_token(

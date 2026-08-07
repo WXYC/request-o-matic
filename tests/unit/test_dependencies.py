@@ -15,11 +15,12 @@ from core.dependencies import (
     get_groq_client,
     get_http_client,
     get_posthog_client,
+    get_slack_bot_config,
     get_slack_service,
     get_slack_webhook_url,
     require_admin_token,
 )
-from core.exceptions import ServiceInitializationError
+from core.exceptions import ServiceInitializationError, SlackPostError
 from services.ban_admin_client import BanAdminClient
 
 
@@ -350,11 +351,12 @@ class TestSlackService:
         )
 
         blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
-        await service.post_blocks(blocks)
+        result = await service.post_blocks(blocks)
 
         mock_client.post.assert_called_once_with(
             "https://hooks.slack.com/test", json={"blocks": blocks}
         )
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_post_blocks_raises_on_error(self):
@@ -375,6 +377,72 @@ class TestSlackService:
             await service.post_blocks([{"type": "section"}])
 
 
+class TestSlackServiceBotToken:
+    """Tests for SlackService's chat.postMessage bot-token transport (#215)."""
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_posts_and_returns_ts(self):
+        """Bot-token posts hit chat.postMessage with a Bearer header and return ts."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678", "channel": "C123"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        result = await service.post_blocks(blocks)
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "blocks": blocks},
+        )
+        assert result == "1234.5678"
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_ok_false_raises(self):
+        """A 200 {"ok": false} response must raise, not log success (#215)."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "invalid_blocks"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        with pytest.raises(SlackPostError, match="invalid_blocks"):
+            await service.post_blocks([{"type": "section"}])
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_not_in_channel_names_channel(self):
+        """``not_in_channel`` gets its own distinguishable error naming the channel."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "not_in_channel"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        with pytest.raises(SlackPostError, match="not_in_channel") as exc_info:
+            await service.post_blocks([{"type": "section"}])
+        assert "C123" in str(exc_info.value)
+
+
 class TestGetSlackService:
     """Tests for get_slack_service function."""
 
@@ -382,23 +450,133 @@ class TestGetSlackService:
     async def test_returns_none_when_no_webhook(self):
         """Test that get_slack_service returns None without webhook URL."""
         mock_client = AsyncMock()
+        settings = Settings(groq_api_key="test_key")
 
-        service = await get_slack_service(webhook_url=None, http_client=mock_client)
+        service = await get_slack_service(
+            settings=settings, webhook_url=None, bot_config=None, http_client=mock_client
+        )
         assert service is None
 
     @pytest.mark.asyncio
     async def test_returns_service_with_webhook(self):
         """Test that get_slack_service returns service with webhook URL."""
         mock_client = AsyncMock()
+        settings = Settings(groq_api_key="test_key")
 
         service = await get_slack_service(
+            settings=settings,
             webhook_url="https://hooks.slack.com/test",
+            bot_config=None,
             http_client=mock_client,
         )
 
         assert isinstance(service, SlackService)
         assert service.webhook_url == "https://hooks.slack.com/test"
         assert service.http_client is mock_client
+
+    @pytest.mark.asyncio
+    async def test_bot_token_flag_on_returns_bot_service(self):
+        """SLACK_USE_BOT_TOKEN=true routes to the bot-token transport, ignoring webhook_url."""
+        mock_client = AsyncMock()
+        settings = Settings(groq_api_key="test_key", slack_use_bot_token=True)
+
+        service = await get_slack_service(
+            settings=settings,
+            webhook_url="https://hooks.slack.com/test",
+            bot_config=("xoxb-test-token", "C123"),
+            http_client=mock_client,
+        )
+
+        assert isinstance(service, SlackService)
+        assert service.bot_token == "xoxb-test-token"
+        assert service.channel_id == "C123"
+
+    @pytest.mark.asyncio
+    async def test_bot_token_flag_on_but_unresolved_config_returns_none(self):
+        """Flag on but bot_config didn't resolve (missing token/channel) -> no service, not a webhook fallback."""
+        mock_client = AsyncMock()
+        settings = Settings(groq_api_key="test_key", slack_use_bot_token=True)
+
+        service = await get_slack_service(
+            settings=settings,
+            webhook_url="https://hooks.slack.com/test",
+            bot_config=None,
+            http_client=mock_client,
+        )
+
+        assert service is None
+
+    @pytest.mark.asyncio
+    async def test_bot_token_flag_off_ignores_bot_config(self):
+        """Flag off keeps the webhook path even if bot_config happens to resolve."""
+        mock_client = AsyncMock()
+        settings = Settings(groq_api_key="test_key", slack_use_bot_token=False)
+
+        service = await get_slack_service(
+            settings=settings,
+            webhook_url="https://hooks.slack.com/test",
+            bot_config=("xoxb-test-token", "C123"),
+            http_client=mock_client,
+        )
+
+        assert isinstance(service, SlackService)
+        assert service.webhook_url == "https://hooks.slack.com/test"
+        assert service.bot_token is None
+
+
+class TestGetSlackBotConfig:
+    """Tests for get_slack_bot_config function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_flag_off(self):
+        settings = Settings(
+            groq_api_key="test_key",
+            slack_use_bot_token=False,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id="C123",
+        )
+        assert await get_slack_bot_config(settings) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_integration_disabled(self):
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_slack_integration=False,
+            slack_use_bot_token=True,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id="C123",
+        )
+        assert await get_slack_bot_config(settings) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_bot_token_missing(self):
+        settings = Settings(
+            groq_api_key="test_key",
+            slack_use_bot_token=True,
+            slack_bot_token=None,
+            slack_channel_id="C123",
+        )
+        assert await get_slack_bot_config(settings) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_channel_id_missing(self):
+        settings = Settings(
+            groq_api_key="test_key",
+            slack_use_bot_token=True,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id=None,
+        )
+        assert await get_slack_bot_config(settings) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_tuple_when_fully_configured(self):
+        settings = Settings(
+            groq_api_key="test_key",
+            slack_use_bot_token=True,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id="C123",
+        )
+        assert await get_slack_bot_config(settings) == ("xoxb-test-token", "C123")
 
 
 # ---------------------------------------------------------------------------
