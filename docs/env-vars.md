@@ -23,6 +23,12 @@ Admin API for request-line bans (see [`docs/admin-bans.md`](admin-bans.md)):
 - `BS_INTERNAL_BANS_URL` - Base URL of Backend-Service's `/internal/banned-fingerprints` CRUD (BS#1261). Example: `https://api.wxyc.org/internal/banned-fingerprints`. When unset, `/admin/bans` returns 503.
 - `BS_INTERNAL_KEY` - Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. Must equal `ROM_INTERNAL_KEY` on the BS side. Used by `/admin/bans` (#151); the public `/auth/check-request-ban` handler does NOT consume this.
 
+Slack-native ban button ([WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152), see [`docs/admin-bans.md`](admin-bans.md)):
+- `SLACK_SIGNING_SECRET` - Slack app signing secret, used to verify the `X-Slack-Signature` HMAC on every inbound `POST /slack/interactivity` callback before anything else runs. Distinct from `SLACK_BOT_TOKEN` -- this never leaves rom, it only authenticates requests coming *in* from Slack. When unset, every callback is rejected 401 (fail-closed) rather than skipping verification.
+- `SLACK_BAN_AUTHORIZED_USERS` - Comma-separated Slack user IDs (e.g. `U01ABC,U02DEF`) allowed to complete a ban via the "Ban requester" button's reason modal. When unset or empty, **every** click is rejected as unauthorized -- fail closed, matching `ADMIN_TOKEN`'s posture. A deploy that loses this variable must disable the button for everyone, not open it to the workspace.
+
+`POST /slack/interactivity` also requires `SLACK_BOT_TOKEN` (already documented above) -- `views.open`, `chat.update`, and `chat.postEphemeral` are all bot-token Web API calls with no incoming-webhook equivalent, so the endpoint resolves its Slack client off `SLACK_BOT_TOKEN` alone, independent of `SLACK_USE_BOT_TOKEN`.
+
 Request-line ban enforcement ([WXYC/request-o-matic#150](https://github.com/WXYC/request-o-matic/issues/150) + [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261)):
 - `ENFORCE_REQUEST_BANS` - Feature flag for request-line ban enforcement. Default `false` so the code can deploy before iOS 3.2 reaches App Store rollout. When `true` AND `BS_CHECK_REQUEST_BAN_URL` is set, every `POST /request` consults BS before parsing.
 - `BS_CHECK_REQUEST_BAN_URL` - Full URL of Backend-Service's `POST /auth/check-request-ban` endpoint (apps/auth service, port 8082), e.g. `https://wxyc-auth-staging.up.railway.app/auth/check-request-ban`. When unset, the ban check is disabled regardless of `ENFORCE_REQUEST_BANS`.

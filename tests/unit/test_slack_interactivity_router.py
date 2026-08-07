@@ -1,0 +1,466 @@
+"""Unit tests for routers/slack_interactivity.py -- POST /slack/interactivity
+(request-o-matic#152).
+
+Covers the full happy path against mocked Slack payloads plus the security
+surface: signature verification (positive + negative) and allowlist
+authorization, per the issue's explicit acceptance criteria. Mocking
+strategy mirrors tests/unit/test_admin_router.py: the FastAPI dependencies
+for SlackService and BanAdminClient are overridden with AsyncMocks so we
+exercise the real router + ban_service code paths without a live Slack or
+Backend-Service call.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import time
+from unittest.mock import AsyncMock
+from urllib.parse import quote
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from config.settings import Settings, get_settings
+from core.dependencies import get_ban_admin_client
+from core.exceptions import SlackPostError
+from routers.slack_interactivity import (
+    BAN_MODAL_CALLBACK_ID,
+    BAN_REASON_ACTION_ID,
+    BAN_REASON_BLOCK_ID,
+    get_slack_interactivity_service,
+    router,
+)
+from services.ban_admin_client import BanAdminClientError
+from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
+
+SIGNING_SECRET = "test-signing-secret"
+FINGERPRINT = "11111111-2222-3333-4444-555555555555"
+CHANNEL_ID = "C0123456"
+MESSAGE_TS = "1700000000.000100"
+TRIGGER_ID = "trigger-abc123"
+ACTING_USER = "U01ABC"
+
+
+def _sign(secret: str, timestamp: str, body: bytes) -> str:
+    basestring = f"v0:{timestamp}:".encode() + body
+    digest = hmac.new(secret.encode("utf-8"), basestring, hashlib.sha256).hexdigest()
+    return f"v0={digest}"
+
+
+def _form_body(payload: dict) -> bytes:
+    return f"payload={quote(json.dumps(payload))}".encode()
+
+
+def _signed_headers(secret: str, body: bytes, *, timestamp: str | None = None) -> dict[str, str]:
+    ts = timestamp or str(int(time.time()))
+    return {
+        "X-Slack-Request-Timestamp": ts,
+        "X-Slack-Signature": _sign(secret, ts, body),
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+
+def _block_actions_payload(
+    *,
+    user_id: str = ACTING_USER,
+    fingerprint: str | None = FINGERPRINT,
+    action_id: str = BAN_BUTTON_ACTION_ID,
+) -> dict:
+    message: dict = {
+        "ts": MESSAGE_TS,
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*Here's what I found:*"}}
+        ],
+    }
+    if fingerprint is not None:
+        message["metadata"] = {
+            "event_type": SLACK_METADATA_EVENT_TYPE,
+            "event_payload": {"fingerprint": fingerprint},
+        }
+    return {
+        "type": "block_actions",
+        "trigger_id": TRIGGER_ID,
+        "user": {"id": user_id},
+        "channel": {"id": CHANNEL_ID},
+        "message": message,
+        "actions": [{"action_id": action_id, "type": "button"}],
+    }
+
+
+def _view_submission_payload(
+    *,
+    user_id: str = ACTING_USER,
+    reason: str | None = "spamming the request line",
+    fingerprint: str | None = FINGERPRINT,
+    channel: str | None = CHANNEL_ID,
+    message_ts: str | None = MESSAGE_TS,
+    original_blocks: list | None = None,
+    callback_id: str = BAN_MODAL_CALLBACK_ID,
+) -> dict:
+    private_metadata = json.dumps(
+        {
+            "fingerprint": fingerprint,
+            "channel": channel,
+            "message_ts": message_ts,
+            "blocks": original_blocks,
+        }
+    )
+    values: dict = {}
+    if reason is not None:
+        values[BAN_REASON_BLOCK_ID] = {BAN_REASON_ACTION_ID: {"value": reason}}
+    return {
+        "type": "view_submission",
+        "user": {"id": user_id},
+        "view": {
+            "callback_id": callback_id,
+            "private_metadata": private_metadata,
+            "state": {"values": values},
+        },
+    }
+
+
+def _mock_slack_service() -> AsyncMock:
+    service = AsyncMock()
+    service.open_view = AsyncMock(return_value=None)
+    service.update_message = AsyncMock(return_value=None)
+    service.post_ephemeral = AsyncMock(return_value=None)
+    return service
+
+
+def _mock_ban_client() -> AsyncMock:
+    client = AsyncMock()
+    client.ban = AsyncMock(
+        return_value={
+            "fingerprint": FINGERPRINT,
+            "banned_at": "2026-01-01T00:00:00Z",
+            "ban_reason": "spamming the request line",
+            "ban_expires_at": None,
+            "banned_by_user_id": ACTING_USER,
+        }
+    )
+    return client
+
+
+def _build_app(
+    *,
+    signing_secret: str | None = SIGNING_SECRET,
+    allowed_users: str | None = ACTING_USER,
+    slack: AsyncMock | None = None,
+    ban_client: AsyncMock | None = None,
+) -> FastAPI:
+    app = FastAPI()
+    app.include_router(router)
+
+    settings = Settings(
+        groq_api_key="test_groq_key",
+        slack_signing_secret=signing_secret,
+        slack_ban_authorized_users=allowed_users,
+        bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+        bs_internal_key="test-internal-key",
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+    if slack is not None:
+        app.dependency_overrides[get_slack_interactivity_service] = lambda: slack
+    if ban_client is not None:
+        app.dependency_overrides[get_ban_admin_client] = lambda: ban_client
+
+    return app
+
+
+async def _post(app: FastAPI, body: bytes, headers: dict[str, str]):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        return await c.post("/slack/interactivity", content=body, headers=headers)
+
+
+class TestSignatureVerification:
+    @pytest.mark.asyncio
+    async def test_valid_signature_is_accepted(self):
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_wrong_signature_rejected_401(self):
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+
+        headers = _signed_headers(SIGNING_SECRET, body)
+        headers["X-Slack-Signature"] = "v0=" + "0" * 64
+
+        resp = await _post(app, body, headers)
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_signature_headers_rejected_401(self):
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, {"Content-Type": "application/x-www-form-urlencoded"})
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_no_signing_secret_configured_rejected_401(self):
+        """Fail closed: unconfigured secret must reject everything, never skip
+        verification."""
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(
+            signing_secret=None, slack=_mock_slack_service(), ban_client=_mock_ban_client()
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_stale_timestamp_rejected_401(self):
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+
+        stale_ts = str(int(time.time()) - 3600)
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body, timestamp=stale_ts))
+
+        assert resp.status_code == 401
+
+
+class TestBlockActionsOpensModal:
+    @pytest.mark.asyncio
+    async def test_ban_button_click_opens_view(self):
+        slack = _mock_slack_service()
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_awaited_once()
+        _, kwargs = slack.open_view.call_args
+        assert kwargs["trigger_id"] == TRIGGER_ID
+        view = kwargs["view"]
+        assert view["callback_id"] == BAN_MODAL_CALLBACK_ID
+        metadata = json.loads(view["private_metadata"])
+        assert metadata["fingerprint"] == FINGERPRINT
+        assert metadata["channel"] == CHANNEL_ID
+        assert metadata["message_ts"] == MESSAGE_TS
+
+    @pytest.mark.asyncio
+    async def test_non_ban_action_id_ignored(self):
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(action_id="some_other_button")
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_fingerprint_metadata_does_not_open_modal(self):
+        """Defensive: the button is only ever rendered when a fingerprint is
+        present, but a click on a message somehow missing it must not crash
+        or open a modal with nothing to act on."""
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(fingerprint=None)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+
+
+class TestViewSubmissionHappyPath:
+    @pytest.mark.asyncio
+    async def test_authorized_submit_bans_acks_and_edits_message(self):
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()
+        _, kwargs = ban_client.ban.call_args
+        assert kwargs["fingerprint"] == FINGERPRINT
+        assert kwargs["reason"] == "spamming the request line"
+        # actor=None, not the Slack user ID: BS's banned_by_user_id
+        # references better-auth's user.id, which a Slack user has no row
+        # in -- see services/ban_service.py's module docstring. The acting
+        # user is still recorded in the ephemeral ack + edited footer below.
+        assert kwargs["banned_by_user_id"] is None
+
+        slack.post_ephemeral.assert_awaited_once()
+        _, ack_kwargs = slack.post_ephemeral.call_args
+        assert ack_kwargs["channel"] == CHANNEL_ID
+        assert ack_kwargs["user"] == ACTING_USER
+
+        slack.update_message.assert_awaited_once()
+        _, update_kwargs = slack.update_message.call_args
+        assert update_kwargs["channel"] == CHANNEL_ID
+        assert update_kwargs["ts"] == MESSAGE_TS
+        rendered = json.dumps(update_kwargs["blocks"])
+        assert ACTING_USER in rendered
+        assert "spamming the request line" in rendered
+
+    @pytest.mark.asyncio
+    async def test_edit_preserves_original_blocks_and_appends_footer(self):
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        original_blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*Here's what I found:*"}}
+        ]
+        payload = _view_submission_payload(original_blocks=original_blocks)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        _, update_kwargs = slack.update_message.call_args
+        blocks = update_kwargs["blocks"]
+        assert blocks[0] == original_blocks[0]
+        assert len(blocks) == len(original_blocks) + 1
+
+
+class TestViewSubmissionAuthorization:
+    @pytest.mark.asyncio
+    async def test_unauthorized_user_gets_ephemeral_refusal_and_no_ban(self):
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id="U99UNAUTHORIZED")
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client, allowed_users=ACTING_USER)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_not_awaited()
+        slack.post_ephemeral.assert_awaited_once()
+        slack.update_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_denies_everyone(self):
+        """SLACK_BAN_AUTHORIZED_USERS unset/empty -> deny-all, even the user
+        who would otherwise be allowlisted -- fail closed."""
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id=ACTING_USER)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client, allowed_users=None)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_not_awaited()
+        slack.post_ephemeral.assert_awaited_once()
+
+
+class TestViewSubmissionValidation:
+    @pytest.mark.asyncio
+    async def test_reason_too_long_returns_validation_error_not_502(self):
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(reason="x" * 1001)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["response_action"] == "errors"
+        assert BAN_REASON_BLOCK_ID in data["errors"]
+        ban_client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_reason_returns_validation_error(self):
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(reason=None)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["response_action"] == "errors"
+        ban_client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ignores_view_submission_for_other_modal(self):
+        """A callback_id that isn't ours (some future modal) must be a no-op,
+        not an error."""
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(callback_id="some_other_modal")
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_not_awaited()
+
+
+class TestBanUpstreamFailure:
+    @pytest.mark.asyncio
+    async def test_ban_admin_client_error_acks_failure_not_502(self):
+        """Backend-Service rejecting the ban must not surface as a raw 500 to
+        Slack (Slack retries on 5xx, which would double-ban-attempt); tell the
+        clicking user via ephemeral instead."""
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        ban_client.ban = AsyncMock(side_effect=BanAdminClientError(502, {"error": "upstream_down"}))
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.post_ephemeral.assert_awaited_once()
+        slack.update_message.assert_not_awaited()
+
+
+class TestSlackUnavailable:
+    @pytest.mark.asyncio
+    async def test_block_actions_without_slack_service_does_not_crash(self):
+        """SLACK_BOT_TOKEN unset (or Slack integration off) -> no interactivity
+        service; the router must degrade gracefully rather than 500."""
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=None, ban_client=_mock_ban_client())
+        app.dependency_overrides[get_slack_interactivity_service] = lambda: None
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_open_view_failure_does_not_crash(self):
+        slack = _mock_slack_service()
+        slack.open_view = AsyncMock(side_effect=SlackPostError("expired_trigger_id"))
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200

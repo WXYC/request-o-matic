@@ -557,6 +557,118 @@ class TestSlackServiceBotToken:
         )
 
 
+class TestSlackServiceOpenView:
+    """Tests for SlackService.open_view -- views.open (request-o-matic#152)."""
+
+    @pytest.mark.asyncio
+    async def test_open_view_posts_trigger_id_and_view(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+        view = {"type": "modal", "callback_id": "ban_reason_modal"}
+
+        await service.open_view(trigger_id="trigger-123", view=view)
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"trigger_id": "trigger-123", "view": view},
+        )
+
+    @pytest.mark.asyncio
+    async def test_open_view_ok_false_raises(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "expired_trigger_id"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        with pytest.raises(SlackPostError, match="expired_trigger_id"):
+            await service.open_view(trigger_id="trigger-123", view={"type": "modal"})
+
+
+class TestSlackServiceUpdateMessage:
+    """Tests for SlackService.update_message -- chat.update (request-o-matic#152)."""
+
+    @pytest.mark.asyncio
+    async def test_update_message_posts_channel_ts_blocks(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Banned"}}]
+
+        await service.update_message(channel="C123", ts="1234.5678", blocks=blocks)
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.update",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "ts": "1234.5678", "blocks": blocks},
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_message_not_in_channel_names_channel(self):
+        """Mirrors post_blocks' not_in_channel handling -- a silent failure here
+        during an abuse incident is indistinguishable from Slack being down."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "not_in_channel"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        with pytest.raises(SlackPostError, match="not_in_channel") as exc_info:
+            await service.update_message(channel="C123", ts="1234.5678", blocks=[])
+        assert "C123" in str(exc_info.value)
+        assert "xoxb-" not in str(exc_info.value)
+
+
+class TestSlackServicePostEphemeral:
+    """Tests for SlackService.post_ephemeral -- chat.postEphemeral (request-o-matic#152)."""
+
+    @pytest.mark.asyncio
+    async def test_post_ephemeral_posts_channel_user_text(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        await service.post_ephemeral(channel="C123", user="U01ABC", text="Banned.")
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.postEphemeral",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "user": "U01ABC", "text": "Banned."},
+        )
+
+    @pytest.mark.asyncio
+    async def test_post_ephemeral_not_in_channel_names_channel(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "not_in_channel"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        with pytest.raises(SlackPostError, match="not_in_channel") as exc_info:
+            await service.post_ephemeral(channel="C123", user="U01ABC", text="Banned.")
+        assert "C123" in str(exc_info.value)
+
+
 class TestGetSlackService:
     """Tests for get_slack_service function."""
 

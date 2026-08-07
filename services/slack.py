@@ -13,6 +13,27 @@ logger = logging.getLogger(__name__)
 # consumer, or every existing button silently stops finding a fingerprint.
 SLACK_METADATA_EVENT_TYPE = "request_posted"
 
+# action_id on the "Ban requester" button (request-o-matic#152).
+# routers/slack_interactivity.py matches on this to recognize the click --
+# keep in sync with that consumer, same rationale as SLACK_METADATA_EVENT_TYPE
+# above. The button deliberately carries no ``value``: the fingerprint it acts
+# on comes from the clicked message's own metadata (see
+# build_slack_metadata / SLACK_METADATA_EVENT_TYPE), read by the interactivity
+# handler from the verified Slack payload, not from anything set on the button.
+BAN_BUTTON_ACTION_ID = "ban_requester"
+
+_BAN_BUTTON_BLOCK: dict[str, Any] = {
+    "type": "actions",
+    "elements": [
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Ban requester"},
+            "style": "danger",
+            "action_id": BAN_BUTTON_ACTION_ID,
+        }
+    ],
+}
+
 
 def build_slack_metadata(fingerprint: str | None) -> dict[str, Any] | None:
     """Build the chat.postMessage ``metadata`` envelope for a requester's
@@ -36,6 +57,23 @@ def build_slack_metadata(fingerprint: str | None) -> dict[str, Any] | None:
         "event_type": SLACK_METADATA_EVENT_TYPE,
         "event_payload": {"fingerprint": normalized},
     }
+
+
+def maybe_append_ban_button(
+    blocks: list[dict[str, Any]], fingerprint: str | None
+) -> list[dict[str, Any]]:
+    """Append the "Ban requester" actions block iff ``fingerprint`` normalizes
+    to a usable UUID (request-o-matic#152).
+
+    Mirrors ``build_slack_metadata``'s usable/unusable split exactly, via the
+    same ``normalize_fingerprint`` call: a post without a usable fingerprint
+    gets no button, since there is nothing behind it to ban and a button that
+    422s on every click is worse than no button. Returns a new list rather
+    than mutating ``blocks`` in place.
+    """
+    if normalize_fingerprint(fingerprint) is None:
+        return blocks
+    return [*blocks, _BAN_BUTTON_BLOCK]
 
 
 def build_slack_blocks(

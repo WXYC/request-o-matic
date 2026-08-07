@@ -1,7 +1,7 @@
 """Unit tests for services/ban_service.py — the shared mutation surface.
 
 These tests pin the contract that both the HTTP admin router (#151) and the
-future Slack-native ban router (#152) rely on:
+Slack-native ban router (#152) rely on:
 
 * ``ban(client, ...)`` forwards the call to BanAdminClient with the same shape
 * ``unban(client, ...)`` forwards similarly

@@ -26,6 +26,27 @@ def test_settings_optional_fields():
     assert settings.slack_webhook_url is None
 
 
+def test_settings_slack_ban_fields_default_none():
+    """slack_signing_secret and slack_ban_authorized_users (#152) default to
+    None -- unset means the interactivity signature check and the ban
+    allowlist both fail closed."""
+    settings = Settings(groq_api_key="test_key")
+
+    assert settings.slack_signing_secret is None
+    assert settings.slack_ban_authorized_users is None
+
+
+def test_settings_slack_ban_fields_custom_values():
+    settings = Settings(
+        groq_api_key="test_key",
+        slack_signing_secret="shh-its-a-secret",
+        slack_ban_authorized_users="U01ABC,U02DEF",
+    )
+
+    assert settings.slack_signing_secret == "shh-its-a-secret"
+    assert settings.slack_ban_authorized_users == "U01ABC,U02DEF"
+
+
 def test_settings_custom_values():
     """Test that custom values override defaults."""
     settings = Settings(

@@ -71,6 +71,13 @@ SLACK_USE_BOT_TOKEN=false
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_CHANNEL_ID=C0123456789
 
+# Optional - Slack "Ban requester" button (see docs/admin-bans.md). Both
+# fail closed when unset: no signing secret means every /slack/interactivity
+# callback is rejected, and an empty allowlist means every ban click is
+# rejected. SLACK_BOT_TOKEN above is also required for this flow.
+SLACK_SIGNING_SECRET=
+SLACK_BAN_AUTHORIZED_USERS=U01ABC,U02DEF
+
 # Optional - Telemetry
 POSTHOG_API_KEY=your_posthog_project_api_key
 POSTHOG_HOST=https://us.i.posthog.com
@@ -175,6 +182,10 @@ Request-line ban management (`Authorization: Bearer $ADMIN_TOKEN`). All writes a
 - `POST /admin/bans` - Create or update a ban for a fingerprint (idempotent)
 - `DELETE /admin/bans/{fingerprint}` - Remove a ban (idempotent)
 - `GET /admin/bans` - List bans (keyset-paginated)
+
+### Slack Interactivity Endpoint
+
+- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" button on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call. See [`docs/admin-bans.md`](docs/admin-bans.md).
 
 ### Example Requests
 
@@ -302,6 +313,7 @@ If Slack integration fails:
 1. With the default webhook transport: verify `SLACK_WEBHOOK_URL` is correct, or that the app can fetch one from Railway if it's unset.
 2. With `SLACK_USE_BOT_TOKEN=true`: verify `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are both set. A `not_in_channel` error means the bot hasn't been `/invite`d into `SLACK_CHANNEL_ID` -- the app has `chat:write` but not `chat:write.public`.
 3. Check that your Slack app has proper permissions.
+4. If the "Ban requester" button's modal won't open, or a submit silently does nothing: check `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` are both set, and that the Slack app's interactivity Request URL points at this deployment's `/slack/interactivity`. A 401 there means either the signing secret is wrong/unset or the request is stale (Slack's 5-minute replay window).
 
 ## Environment Variables Reference
 
@@ -325,6 +337,8 @@ If Slack integration fails:
 | `ADMIN_TOKEN` | No | - | Bearer token gating `/admin/bans`. Fail-closed when unset. |
 | `BS_INTERNAL_BANS_URL` | No | - | Base URL of Backend-Service's `/internal/banned-fingerprints` CRUD (BS#1261). |
 | `BS_INTERNAL_KEY` | No | - | Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. |
+| `SLACK_SIGNING_SECRET` | No | - | Verifies `X-Slack-Signature` on `POST /slack/interactivity` (the "Ban requester" button). Fail-closed when unset. |
+| `SLACK_BAN_AUTHORIZED_USERS` | No | - | Comma-separated Slack user IDs allowed to complete a ban via the button. Fail-closed (deny-all) when unset or empty. |
 
 ## Architecture
 

@@ -10,9 +10,9 @@ Idempotency is preserved end-to-end:
 * POST a ban for an already-banned fingerprint -> 200 with the updated row.
 * DELETE a ban for a non-existent fingerprint -> 204.
 
-The future Slack-native ban router (#152) will reuse the same
-:mod:`services.ban_service` functions so the two operator UXes don't drift
-apart.
+The Slack-native ban router (`routers/slack_interactivity.py`, #152) reuses
+the same :mod:`services.ban_service` functions so the two operator UXes don't
+drift apart.
 
 Operator runbook: see `docs/admin-bans.md`.
 """

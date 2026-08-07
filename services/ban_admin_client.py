@@ -1,7 +1,7 @@
 """HTTP client for Backend-Service's internal banned-fingerprints CRUD (BS#1261).
 
 This is the *only* place in rom that talks to BS's `/internal/banned-fingerprints`
-endpoints. Both the HTTP admin router (#151) and the future Slack-native ban
+endpoints. Both the HTTP admin router (#151) and the Slack-native ban
 router (#152) go through `services/ban_service.py`, which in turn uses this
 client. Keeping all BS-shaped concerns here means a contract change on the BS
 side (added field, renamed query param, etc.) touches one file.
@@ -146,9 +146,9 @@ class BanAdminClient:
         response (including 400 for a malformed fingerprint).
 
         ``fingerprint`` is URL-quoted so a caller that bypasses the FastAPI
-        path-param validator (e.g. the future Slack-native router #152
-        consuming an interaction payload) cannot inject ``?``/``#``/``/`` into
-        the BS request path.
+        path-param validator (e.g. the Slack-native router #152 consuming an
+        interaction payload) cannot inject ``?``/``#``/``/`` into the BS
+        request path.
         """
         try:
             response = await self.http_client.delete(

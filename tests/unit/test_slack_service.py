@@ -6,10 +6,12 @@ import pytest
 
 from models import ReleaseMetadata
 from services.slack import (
+    BAN_BUTTON_ACTION_ID,
     SLACK_METADATA_EVENT_TYPE,
     build_simple_slack_blocks,
     build_slack_blocks,
     build_slack_metadata,
+    maybe_append_ban_button,
 )
 from tests.factories import make_library_item, make_release_metadata
 
@@ -308,6 +310,88 @@ class TestBuildSlackMetadata:
 
         assert fingerprint not in json.dumps(blocks)
         assert fingerprint in json.dumps(metadata)
+
+
+class TestMaybeAppendBanButton:
+    """Tests for maybe_append_ban_button (request-o-matic#152).
+
+    Mirrors build_slack_metadata's usable/unusable split so the button's
+    presence and the metadata envelope's presence can never disagree -- a
+    button with no fingerprint metadata behind it would 422 on every click.
+    """
+
+    def test_appends_button_for_usable_fingerprint(self, sample_library_item):
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        result = maybe_append_ban_button(blocks, fingerprint)
+
+        assert len(result) == len(blocks) + 1
+        button_block = result[-1]
+        assert button_block["type"] == "actions"
+        button = button_block["elements"][0]
+        assert button["type"] == "button"
+        assert button["action_id"] == BAN_BUTTON_ACTION_ID
+
+    def test_does_not_mutate_input_blocks(self, sample_library_item):
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+        original_len = len(blocks)
+
+        maybe_append_ban_button(blocks, "11111111-1111-4111-8111-111111111111")
+
+        assert len(blocks) == original_len
+
+    def test_no_button_without_fingerprint(self, sample_library_item):
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        result = maybe_append_ban_button(blocks, None)
+
+        assert result == blocks
+
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("   ", id="whitespace-only"),
+            pytest.param("not-a-uuid", id="malformed"),
+        ],
+    )
+    def test_no_button_for_unusable_fingerprint(self, sample_library_item, fingerprint):
+        """A button that 422s on click is worse than no button (issue #152 end
+        state) -- an unusable fingerprint must render nothing, exactly like
+        build_slack_metadata's own None case."""
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        result = maybe_append_ban_button(blocks, fingerprint)
+
+        assert result == blocks
+
+    def test_button_carries_no_fingerprint_value(self, sample_library_item):
+        """The fingerprint must come from message metadata at click time, not
+        from anything embedded in the button itself -- see
+        services/slack_interactivity handling. Pin that no fingerprint ever
+        rides along in the button block."""
+        fingerprint = "11111111-1111-4111-8111-111111111111"
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        result = maybe_append_ban_button(blocks, fingerprint)
+
+        assert fingerprint not in json.dumps(result[-1])
 
 
 class TestBuildSimpleSlackBlocks:

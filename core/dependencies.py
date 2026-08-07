@@ -256,16 +256,92 @@ class SlackService:
         response.raise_for_status()
         data = response.json()
         if not data.get("ok"):
-            error = data.get("error", "unknown_error")
-            if error == "not_in_channel":
-                raise SlackPostError(
-                    f"Slack chat.postMessage failed: not_in_channel "
-                    f"(bot is not a member of channel {self.channel_id}; invite it with /invite)"
-                )
-            raise SlackPostError(f"Slack chat.postMessage failed: {error}")
+            raise self._api_error("chat.postMessage", data, channel=self.channel_id)
         logger.info("Posted to Slack successfully")
         ts: str = data["ts"]
         return ts
+
+    def _api_error(
+        self, method: str, data: dict[str, Any], *, channel: str | None = None
+    ) -> SlackPostError:
+        """Build a SlackPostError for a ``{"ok": false}`` API response.
+
+        ``not_in_channel`` gets a distinguishable message naming the channel --
+        the bot has ``chat:write`` but not ``chat:write.public``, so any
+        channel it hasn't been ``/invite``d into fails every write silently
+        indistinguishable from an outage otherwise.
+        """
+        error = data.get("error", "unknown_error")
+        if error == "not_in_channel" and channel is not None:
+            return SlackPostError(
+                f"Slack {method} failed: not_in_channel "
+                f"(bot is not a member of channel {channel}; invite it with /invite)"
+            )
+        return SlackPostError(f"Slack {method} failed: {error}")
+
+    async def open_view(self, *, trigger_id: str, view: dict[str, Any]) -> None:
+        """Open a modal via ``views.open`` (request-o-matic#152).
+
+        Args:
+            trigger_id: From the block_actions interaction payload that
+                triggered the click. Valid for ~3 seconds; call this
+                immediately after receiving it.
+            view: The modal's view payload (``type: "modal"`` and friends).
+
+        Raises:
+            SlackPostError: If ``views.open`` returns ``{"ok": false}``, e.g.
+                ``expired_trigger_id``.
+        """
+        response = await self.http_client.post(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": f"Bearer {self.bot_token}"},
+            json={"trigger_id": trigger_id, "view": view},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise self._api_error("views.open", data)
+        logger.info("Opened Slack view successfully")
+
+    async def update_message(self, *, channel: str, ts: str, blocks: list[dict]) -> None:
+        """Edit an existing message via ``chat.update`` (request-o-matic#152).
+
+        Used to append the "banned by @dj -- reason" footer to the original
+        request post once a ban completes.
+
+        Raises:
+            SlackPostError: If ``chat.update`` returns ``{"ok": false}``.
+        """
+        response = await self.http_client.post(
+            "https://slack.com/api/chat.update",
+            headers={"Authorization": f"Bearer {self.bot_token}"},
+            json={"channel": channel, "ts": ts, "blocks": blocks},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise self._api_error("chat.update", data, channel=channel)
+        logger.info("Updated Slack message successfully")
+
+    async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
+        """Post an ephemeral confirmation via ``chat.postEphemeral`` (request-o-matic#152).
+
+        Visible only to ``user`` -- used for both the ban-success ack and the
+        unauthorized-clicker refusal.
+
+        Raises:
+            SlackPostError: If ``chat.postEphemeral`` returns ``{"ok": false}``.
+        """
+        response = await self.http_client.post(
+            "https://slack.com/api/chat.postEphemeral",
+            headers={"Authorization": f"Bearer {self.bot_token}"},
+            json={"channel": channel, "user": user, "text": text},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise self._api_error("chat.postEphemeral", data, channel=channel)
+        logger.info("Posted ephemeral Slack message successfully")
 
 
 async def get_slack_service(

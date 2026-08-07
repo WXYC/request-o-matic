@@ -52,7 +52,12 @@ from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.fingerprint import normalize_fingerprint
 from services.lookup_client import LookupRequest, LookupServiceClient
 from services.parser import MessageType, ParsedRequest, parse_request
-from services.slack import build_simple_slack_blocks, build_slack_blocks, build_slack_metadata
+from services.slack import (
+    build_simple_slack_blocks,
+    build_slack_blocks,
+    build_slack_metadata,
+    maybe_append_ban_button,
+)
 from services.ua_gate import (
     UA_GATE_BAN_REASON,
     UA_GATE_BAN_SOURCE,
@@ -156,6 +161,8 @@ async def post_results_to_slack(
         ctx = " | ".join(_parsed_context_parts(parsed)) or None
         blocks = build_simple_slack_blocks(message, f"_No results found_ {ctx or ''}")
 
+    blocks = maybe_append_ban_button(blocks, fingerprint)
+
     try:
         await slack_service.post_blocks(blocks, metadata=build_slack_metadata(fingerprint))
     except Exception as e:
@@ -179,6 +186,7 @@ async def _post_degraded_to_slack(
         context_segments.extend(_parsed_context_parts(parsed))
     context = " | ".join(context_segments)
     blocks = build_simple_slack_blocks(message, context)
+    blocks = maybe_append_ban_button(blocks, fingerprint)
 
     try:
         await slack_service.post_blocks(blocks, metadata=build_slack_metadata(fingerprint))
