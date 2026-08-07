@@ -3,7 +3,10 @@
 Flow:
 1. (Optional) Consult BS /auth/check-request-ban to enforce request-line bans.
 2. Parse the message using Groq AI to extract artist/song/album
-3. Early return for non-requests (feedback, DJ messages, etc.)
+3. Early return for non-requests (feedback, DJ messages, etc.), emitting a
+   ``request_non_request`` PostHog event (WXYC/request-o-matic#228) -- the only
+   telemetry this branch produces, and the only way an operator can obtain a
+   fingerprint for abusive free text that never parses as a song request.
 4. Delegate search to library-metadata-lookup service via HTTP
 5. Post enriched results to Slack
 
@@ -531,6 +534,13 @@ async def handle_request(
             if normalized_fingerprint:
                 non_request_props["fingerprint"] = normalized_fingerprint
             if ban_check_degraded:
+                # Set BOTH, matching the main emit below. There is no lookup on
+                # this branch, so a ban-check failure is the only degradation
+                # reachable here and it always owns degraded_mode -- emitting
+                # the boolean alone would make any operator dashboard keyed on
+                # degraded_mode='ban_check_unavailable' undercount a BS outage
+                # by the entire non-request share of traffic.
+                non_request_props["degraded_mode"] = DEGRADED_BAN_CHECK
                 non_request_props["ban_check_degraded"] = True
             posthog_client.capture(
                 distinct_id="request-o-matic-service",
