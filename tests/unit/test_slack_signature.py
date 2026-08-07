@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+import pytest
+
 from services.slack_signature import verify_slack_signature
 
 SECRET = "test-signing-secret"
@@ -245,6 +247,39 @@ class TestFailClosedConditions:
                 timestamp="not-a-number",
                 body=body,
                 signature=signature,
+                now=1700000000,
+            )
+            is False
+        )
+
+    @pytest.mark.parametrize(
+        "timestamp",
+        [
+            "9" * 400,
+            "9" * 4299,
+            "-" + "9" * 400,
+            "9" * 5000,
+        ],
+        ids=["overflows-float", "at-int-str-cap", "negative-overflow", "past-int-str-cap"],
+    )
+    def test_rejects_enormous_numeric_timestamp_without_raising(self, timestamp):
+        """A digit string too large for a float must fail closed, not raise.
+
+        ``int(timestamp)`` accepts any digit string up to CPython's 4300-digit
+        int-from-str cap, and comparing one of those against ``time.time()``'s
+        float raises OverflowError -- which the ValueError guard does not
+        catch. On an unauthenticated endpoint that is a 500 instead of the flat
+        401 every other malformed header gets, and an unhandled 500 ships the
+        frame's locals (including the signing secret) to Sentry.
+        """
+        body = b"payload=x"
+
+        assert (
+            verify_slack_signature(
+                SECRET,
+                timestamp=timestamp,
+                body=body,
+                signature=_sign(SECRET, timestamp, body),
                 now=1700000000,
             )
             is False

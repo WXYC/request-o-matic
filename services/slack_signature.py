@@ -67,8 +67,18 @@ def verify_slack_signature(
     except ValueError:
         return False
 
+    # Compare as integers. `int(timestamp)` happily accepts any digit string up
+    # to CPython's 4300-digit int-from-str cap, and mixing one of those with the
+    # float from time.time() raises OverflowError ("int too large to convert to
+    # float") -- which ValueError above does not catch. On an unauthenticated
+    # endpoint that turns a ~400-digit timestamp header into a 500 instead of
+    # the flat 401 every other malformed header gets, and every such 500 is an
+    # unhandled exception that ships this frame's locals -- including
+    # ``signing_secret`` -- to Sentry. Truncating `now` to whole seconds is
+    # lossless for this comparison: Slack's timestamps are integer seconds and
+    # the window is 300 of them.
     current_time = time.time() if now is None else now
-    if abs(current_time - request_time) > max_age_seconds:
+    if abs(int(current_time) - request_time) > max_age_seconds:
         return False
 
     basestring = f"v0:{timestamp}:".encode() + body
