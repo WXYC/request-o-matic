@@ -1490,7 +1490,7 @@ class BulkResolveResult(BaseModel):
     )
     tracks_attempted: bool | None = Field(
         None,
-        description='Whether LML\'s per-track matcher has visited this row — `true` once it has run, **regardless of how many tracks it resolved**, including none. This is the resolved signal for per-track identity; `tracks.length` is not (WXYC/Backend-Service#1991).\n\nRead it with `tracks` as a pair, four states in total: **absent or NULL** — the caller did not ask (`include_tracks` false or omitted), or the result is `kind: unresolved`, and `tracks` is in the same state; **`false` with an empty `tracks`** — the caller asked and the matcher has not reached this row; **`true` with an empty `tracks`** — the matcher ran and resolved nothing; **`true` with a populated `tracks`** — the matcher ran and produced entries. `false` alongside a populated `tracks` is not a state; producers must not emit it.\n\nThe middle two are what this field exists for. They are byte-identical in `tracks`, they are not rare — a `kind: single_artist` release LML holds no tracklist for is the ordinary case, and extending the gate to that kind is the whole point of #297 — and a consumer that reads emptiness as "not yet visited" re-asks every one of them on every pass, forever. That is the re-asking pathology `kind: unresolved` was made a first-class outcome to prevent, reintroduced at track grain. A consumer cannot repair it locally, because the two states are indistinguishable on the wire without this field.\n\nAbsent and NULL are one state, for the same producer reason as `tracks` below.\n',
+        description='Whether LML\'s per-track matcher has visited this row — `true` once it has run, **regardless of how many tracks it resolved**, including none. This is the resolved signal for per-track identity; `tracks.length` is not (WXYC/Backend-Service#1991).\n\nRead it with `tracks` as a pair, four states in total: **absent or NULL** — the caller did not ask (`include_tracks` false or omitted), or the result is `kind: unresolved`, and `tracks` is in the same state; **`false` with an empty `tracks`** — the caller asked and the matcher has not reached this row; **`true` with an empty `tracks`** — the matcher ran and resolved nothing; **`true` with a populated `tracks`** — the matcher ran and produced entries. `false` alongside a populated `tracks` is not a state; producers must not emit it. A consumer that observes `tracks_attempted: false` alongside a populated `tracks` anyway MUST read it as `true` — the populated array is stronger evidence of what happened than the flag that disagrees with it, and reading the row as unattempted would either drop already-resolved tracks or re-ask a row that already has an answer (WXYC/wxyc-shared#303).\n\nThe middle two are what this field exists for. They are byte-identical in `tracks`, they are not rare — a `kind: single_artist` release LML holds no tracklist for is the ordinary case, and extending the gate to that kind is the whole point of #297 — and a consumer that reads emptiness as "not yet visited" re-asks every one of them on every pass, forever. That is the re-asking pathology `kind: unresolved` was made a first-class outcome to prevent, reintroduced at track grain. A consumer cannot repair it locally, because the two states are indistinguishable on the wire without this field.\n\nAbsent and NULL are one state, for the same producer reason as `tracks` below.\n',
     )
     tracks: list[BulkResolveTrackIdentity] | None = Field(
         None,
@@ -1498,7 +1498,15 @@ class BulkResolveResult(BaseModel):
     )
 
 
+class TracksContractVersion(IntEnum):
+    integer_1 = 1
+
+
 class BulkResolveLibrariesResponse(BaseModel):
+    tracks_contract_version: TracksContractVersion | None = Field(
+        None,
+        description='Present and equal to 1 only when the request set `include_tracks: true` and the producer understands the flag. Absent otherwise — both when `include_tracks` was false or omitted, and when the producer predates this field entirely and does not implement `include_tracks` at all. Same precedent as `LookupResponse.api_version` (`LookupRequest.include_identity`): a producer-echoed capability marker that lets a consumer distinguish "the producer understood my flag and the answer is genuinely nothing" from "the producer predates my flag" — a distinction `tracks_attempted`/`tracks` cannot make alone, because both are spelled `null` in either case (WXYC/wxyc-shared#303). No schema-level `default`, for the same `openapi-typescript` `defaultNonNullable` reason documented on `BulkResolveLibrariesRequest.include_tracks`.\n',
+    )
     results: list[BulkResolveResult]
     cache_stats: CacheStats | None = None
 
