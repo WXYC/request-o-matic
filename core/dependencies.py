@@ -128,6 +128,13 @@ async def get_slack_webhook_url(
         logger.info("Slack integration disabled")
         return None
 
+    if settings.slack_use_bot_token:
+        # Bot-token transport is active (request-o-matic#215): skip webhook
+        # resolution entirely so a missing/unreachable SLACK_WEBHOOK_KEY_URL
+        # can't fail /request with a 500 while a fully-configured bot
+        # transport sits unused.
+        return None
+
     # Return cached value if already resolved
     if _slack_webhook_url is not None:
         return _slack_webhook_url
@@ -220,7 +227,8 @@ class SlackService:
         if self.bot_token is not None:
             return await self._post_via_bot_token(blocks)
 
-        assert self.webhook_url is not None
+        if self.webhook_url is None:
+            raise SlackPostError("SlackService has neither a webhook_url nor a bot_token")
         response = await self.http_client.post(self.webhook_url, json={"blocks": blocks})
         response.raise_for_status()
         logger.info("Posted to Slack successfully")

@@ -333,6 +333,28 @@ class TestGetSlackWebhookUrl:
         with pytest.raises(ServiceInitializationError, match="Failed to fetch Slack webhook key"):
             await get_slack_webhook_url(settings, mock_client)
 
+    @pytest.mark.asyncio
+    async def test_returns_none_and_skips_fetch_when_bot_token_flag_on(self):
+        """SLACK_USE_BOT_TOKEN=true short-circuits before touching Railway (#215).
+
+        Without this, an unset/unreachable SLACK_WEBHOOK_KEY_URL would raise
+        ServiceInitializationError on every /request even when the bot-token
+        transport is fully configured, since FastAPI resolves this dependency
+        unconditionally.
+        """
+        settings = Settings(
+            groq_api_key="test_key",
+            enable_slack_integration=True,
+            slack_use_bot_token=True,
+            slack_webhook_url=None,
+        )
+        mock_client = AsyncMock()
+
+        url = await get_slack_webhook_url(settings, mock_client)
+
+        assert url is None
+        mock_client.get.assert_not_called()
+
 
 class TestSlackService:
     """Tests for SlackService class."""
