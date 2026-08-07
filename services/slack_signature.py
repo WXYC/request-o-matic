@@ -37,9 +37,11 @@ def verify_slack_signature(
     """Verify a Slack ``X-Slack-Signature`` header against the raw request body.
 
     Fails closed on every ambiguous input: a missing signing secret, a missing
-    or non-numeric timestamp, a missing signature, or a timestamp outside
-    ``max_age_seconds`` of ``now`` all return False rather than raising --
-    the router turns any False into a flat 401, no partial trust.
+    or non-numeric timestamp, a missing, malformed, or non-ASCII signature, or
+    a timestamp outside ``max_age_seconds`` of ``now`` all return False rather
+    than raising -- the router turns any False into a flat 401, no partial
+    trust and nothing an attacker can tell apart from an ordinary bad
+    signature.
 
     Args:
         signing_secret: ``SLACK_SIGNING_SECRET``. None (unconfigured) always
@@ -71,6 +73,20 @@ def verify_slack_signature(
 
     basestring = f"v0:{timestamp}:".encode() + body
     digest = hmac.new(signing_secret.encode("utf-8"), basestring, hashlib.sha256).hexdigest()
-    expected_signature = f"v0={digest}"
+    expected_signature = f"v0={digest}".encode("ascii")
 
-    return hmac.compare_digest(expected_signature, signature)
+    # Compare bytes, not str. Starlette decodes headers as latin-1, so the
+    # attacker-controlled X-Slack-Signature can hold any byte >= 0x80, and
+    # hmac.compare_digest raises TypeError on str operands that aren't pure
+    # ASCII -- which on an unauthenticated endpoint turns a forged header into
+    # a 500 (and a Sentry event) instead of the 401 every other bad signature
+    # gets. latin-1 is the exact inverse of that decode, so it recovers the
+    # header's bytes as sent; a value it can't encode never came off the wire
+    # and could not have matched an ASCII hex digest anyway. compare_digest
+    # stays constant-time over the bytes.
+    try:
+        provided_signature = signature.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+
+    return hmac.compare_digest(expected_signature, provided_signature)
