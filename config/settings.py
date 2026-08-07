@@ -130,7 +130,9 @@ class Settings(BaseSettings):
     # User-Agent gate for known-client strict mode (WXYC/request-o-matic#155).
     # When True, requests whose User-Agent identifies a registered WXYC client
     # at-or-above its strict-mode version (currently WXYC-iOS >= 3.2) are
-    # rejected 403 if X-Device-Fingerprint is absent. Unknown UAs (curl,
+    # rejected 403 if X-Device-Fingerprint is absent or malformed (it is
+    # normalized through services/fingerprint.normalize_fingerprint, so a
+    # non-UUID is treated exactly like a missing header). Unknown UAs (curl,
     # browsers, v3.1 iOS, etc.) are unaffected. Independent of
     # enforce_request_bans: this gate is a structural requirement on known
     # clients, not a ban decision.
@@ -138,8 +140,8 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "Feature flag for the User-Agent gate (WXYC/request-o-matic#155). "
-            "When True, known WXYC clients (iOS >= 3.2) must send "
-            "X-Device-Fingerprint or the request is rejected 403."
+            "When True, known WXYC clients (iOS >= 3.2) must send a well-formed "
+            "X-Device-Fingerprint UUID or the request is rejected 403."
         ),
     )
 

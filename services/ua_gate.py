@@ -7,15 +7,25 @@ v3.1 backward-compatibility constraint).
 
 This module closes that gap for *known* clients. iOS 3.2+ unconditionally sends
 ``User-Agent: WXYC-iOS/<version>`` plus ``X-Device-Fingerprint``. If the UA
-identifies the caller as a recent WXYC client AND the fingerprint header is
-missing, the request is rejected (403) before reaching the BS round-trip.
+identifies the caller as a recent WXYC client AND no usable fingerprint arrives,
+the request is rejected (403) before reaching the BS round-trip.
+
+"Usable" is deliberately stronger than "present": the caller in
+``routers/request.py`` runs the header through
+``services/fingerprint.normalize_fingerprint`` first, so a malformed value is
+rejected exactly like a missing one. Gating on bare presence left a seam --
+``X-Device-Fingerprint: not-a-uuid`` with no ``Authorization`` cleared this gate
+on presence and then normalized to no-signal at the ban check, skipping the BS
+round-trip too, so the caller passed both defenses. A real iOS 3.2+ client
+always sends its Keychain UUID, so "present but not a UUID" is evasion.
 
 Unknown UAs (curl, browsers, v3.1 iOS, anything not registered below) keep the
 existing lenient behavior so legacy traffic isn't broken.
 
 Spoofing the UA is in scope but not a blocker: an attacker who claims to be
-``WXYC-iOS/3.2.0`` has to then also send a fingerprint, at which point they're
-back on the fingerprint-banned path the BS ban check (#150) enforces.
+``WXYC-iOS/3.2.0`` has to then also send a well-formed fingerprint, at which
+point they're back on the fingerprint-banned path the BS ban check (#150)
+enforces.
 """
 
 from __future__ import annotations
@@ -52,7 +62,7 @@ _PRODUCT_TOKEN_RE = re.compile(r"([A-Za-z0-9\-]+)/(\d+(?:\.\d+)*)")
 def is_known_strict_client(user_agent: str | None) -> bool:
     """Return True iff ``user_agent`` claims a registered client at-or-above its strict-mode version.
 
-    Returning True means "we know this client *should* be sending the
+    Returning True means "we know this client *should* be sending a well-formed
     fingerprint; if it isn't, treat that as evasion." Returning False means
     "we have no opinion about this caller; proceed under the existing lenient
     contract."
