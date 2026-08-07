@@ -320,26 +320,36 @@ async def handle_request(
         and not normalized_fingerprint
         and is_known_strict_client(user_agent)
     ):
+        # Distinguish "header omitted" (a broken client release) from "header
+        # present but not a UUID" (evasion) -- see WXYC/request-o-matic#226.
+        # Resolved once, above the PostHog guard, and then used for both the
+        # emitted property and the log line below, so the two can never drift
+        # into contradicting each other. Decide on the raw header, not
+        # normalized_fingerprint: both cases normalize to None, so that value
+        # alone cannot tell them apart.
+        ua_gate_ban_reason = (
+            UA_GATE_BAN_REASON if x_device_fingerprint is None else UA_GATE_MALFORMED_BAN_REASON
+        )
         if posthog_client is not None:
-            # Distinguish "header omitted" (a broken client release) from
-            # "header present but not a UUID" (evasion) -- see WXYC/request-o-matic#226.
-            # ``fingerprint`` stays None on both branches so existing queries
+            # ``fingerprint`` stays None in both cases so existing queries
             # against it keep working; the new properties carry the signal.
-            # Gate on the raw header, not normalized_fingerprint: both branches
-            # normalize to None, so that value alone can't tell them apart.
             blocked_properties: dict[str, object] = {
                 "user_id": None,
                 "fingerprint": None,
+                "ban_reason": ua_gate_ban_reason,
                 "ban_source": UA_GATE_BAN_SOURCE,
                 "user_agent": user_agent,
             }
-            if x_device_fingerprint is None:
-                blocked_properties["ban_reason"] = UA_GATE_BAN_REASON
-            else:
-                # Bounded to 8 chars, matching _redact_fingerprint in
-                # routers/admin.py -- never emit the raw, attacker-controlled
-                # value to PostHog.
-                blocked_properties["ban_reason"] = UA_GATE_MALFORMED_BAN_REASON
+            if x_device_fingerprint is not None:
+                # Bounded to 8 chars, the same truncation width
+                # _redact_fingerprint in routers/admin.py uses -- the raw,
+                # attacker-controlled value is unbounded and must never reach
+                # PostHog in full. The bound is a ceiling, not a guarantee of
+                # truncation: a header of 8 chars or fewer is carried verbatim,
+                # which is harmless only because a value that short cannot be
+                # the 36-char UUID a real client sends. Set only here, so a
+                # legitimately-absent header does not get a permanent null
+                # column on every rejection.
                 blocked_properties["fingerprint_prefix"] = x_device_fingerprint[:8]
                 blocked_properties["fingerprint_length"] = len(x_device_fingerprint)
             # Wrap PostHog capture in the same try/except as the BS-ban path
@@ -354,7 +364,7 @@ async def handle_request(
                 logger.exception("PostHog request_blocked capture failed (ua_gate)")
         logger.info(
             "Blocked known-client request with %s X-Device-Fingerprint (user_agent=%s)",
-            "missing" if x_device_fingerprint is None else "malformed",
+            "missing" if ua_gate_ban_reason == UA_GATE_BAN_REASON else "malformed",
             user_agent,
         )
         raise HTTPException(status_code=403, detail="Request blocked")

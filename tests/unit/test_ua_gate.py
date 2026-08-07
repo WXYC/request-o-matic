@@ -461,16 +461,81 @@ class TestUAGateBlocks:
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post(
+            response = await client.post(
                 "/api/v1/request",
                 json={"message": "play la paradoja"},
                 headers={"User-Agent": "WXYC-iOS/3.2.0", "X-Device-Fingerprint": ""},
             )
 
+        # Assert enforcement explicitly: without this the test would only fail
+        # incidentally if an empty header ever fell through to 200.
+        assert response.status_code == 403
+        mock_posthog.capture.assert_called_once()
         properties = mock_posthog.capture.call_args.kwargs["properties"]
         assert properties["ban_reason"] == UA_GATE_MALFORMED_BAN_REASON
         assert properties["fingerprint_prefix"] == ""
         assert properties["fingerprint_length"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raw_header", "expected_prefix", "expected_length"),
+        [
+            # Whitespace-only: normalize_fingerprint strips, so this reaches the
+            # gate as unusable. It is visually indistinguishable from an empty
+            # header in a PostHog table -- fingerprint_length is the only column
+            # that separates them, which is why it is emitted as an integer.
+            ("   ", "   ", 3),
+            # Shorter than the truncation width: carried verbatim. Pinned so the
+            # "bounded at 8" claim is not misread as "always truncated".
+            ("abc", "abc", 3),
+            # Exactly the truncation width -- the boundary itself.
+            ("abcdefgh", "abcdefgh", 8),
+            # One past the boundary.
+            ("abcdefghi", "abcdefgh", 9),
+            # Security invariant: the prefix is bounded by the constant, never by
+            # the input's own length. An unbounded attacker-controlled header
+            # must not become an unbounded PostHog property.
+            ("z" * 8000, "z" * 8, 8000),
+        ],
+        ids=["whitespace-only", "shorter-than-bound", "at-bound", "past-bound", "oversized"],
+    )
+    async def test_malformed_prefix_is_bounded_at_eight_characters(
+        self,
+        raw_header,
+        expected_prefix,
+        expected_length,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+    ):
+        """The redacted prefix is capped by the truncation width regardless of
+        what arrives, and fingerprint_length preserves the discarded signal.
+        """
+        app = _make_app(
+            strict_flag=True,
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/request",
+                json={"message": "play la paradoja"},
+                headers={
+                    "User-Agent": "WXYC-iOS/3.2.0",
+                    "X-Device-Fingerprint": raw_header,
+                },
+            )
+
+        assert response.status_code == 403
+        properties = mock_posthog.capture.call_args.kwargs["properties"]
+        assert properties["ban_reason"] == UA_GATE_MALFORMED_BAN_REASON
+        assert properties["fingerprint_prefix"] == expected_prefix
+        assert len(properties["fingerprint_prefix"]) <= 8
+        assert properties["fingerprint_length"] == expected_length
 
     @pytest.mark.asyncio
     async def test_posthog_capture_failure_does_not_flip_response(
