@@ -63,8 +63,13 @@ Then edit `.env` with your actual configuration:
 GROQ_API_KEY=your_groq_api_key_here
 LOOKUP_SERVICE_URL=https://library-metadata-lookup-staging.up.railway.app/api/v1
 
-# Optional - Slack Integration
+# Optional - Slack Integration (legacy webhook, default transport)
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Optional - Slack Integration (bot-token transport, behind SLACK_USE_BOT_TOKEN)
+SLACK_USE_BOT_TOKEN=false
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_CHANNEL_ID=C0123456789
 
 # Optional - Telemetry
 POSTHOG_API_KEY=your_posthog_project_api_key
@@ -81,7 +86,8 @@ ENABLE_SLACK_INTEGRATION=true
 #### Getting API Keys
 
 - **GROQ_API_KEY**: Sign up at [Groq](https://console.groq.com/) (not Grok) to get an API key
-- **SLACK_WEBHOOK_URL**: Create an incoming webhook in your Slack workspace's [App Settings](https://api.slack.com/messaging/webhooks)
+- **SLACK_WEBHOOK_URL**: Create an incoming webhook in your Slack workspace's [App Settings](https://api.slack.com/messaging/webhooks). Used unless `SLACK_USE_BOT_TOKEN=true`.
+- **SLACK_BOT_TOKEN** / **SLACK_CHANNEL_ID**: Only needed when `SLACK_USE_BOT_TOKEN=true`. Install a Slack app with the `chat:write` scope, copy its bot token (`xoxb-...`), and `/invite` the bot into the target channel -- the app does not have `chat:write.public`, so an un-invited channel fails every post with `not_in_channel`.
 - **POSTHOG_API_KEY**: Optional - Get your project API key from [PostHog](https://posthog.com/) for telemetry tracking
 
 ### 5. Run the Application
@@ -290,12 +296,12 @@ If port 8000 is already in use, specify a different port:
 uvicorn main:app --port 8001
 ```
 
-### Slack Webhook Issues
+### Slack Issues
 
 If Slack integration fails:
-1. Verify your webhook URL is correct
-2. Check that your Slack app has proper permissions
-3. The app will attempt to fetch a webhook from Railway if `SLACK_WEBHOOK_URL` is not set
+1. With the default webhook transport: verify `SLACK_WEBHOOK_URL` is correct, or that the app can fetch one from Railway if it's unset.
+2. With `SLACK_USE_BOT_TOKEN=true`: verify `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are both set. A `not_in_channel` error means the bot hasn't been `/invite`d into `SLACK_CHANNEL_ID` -- the app has `chat:write` but not `chat:write.public`.
+3. Check that your Slack app has proper permissions.
 
 ## Environment Variables Reference
 
@@ -303,8 +309,11 @@ If Slack integration fails:
 |----------|----------|---------|-------------|
 | `GROQ_API_KEY` | Yes | - | API key for Groq AI service |
 | `LOOKUP_SERVICE_URL` | Yes | - | Base URL of library-metadata-lookup service |
-| `SLACK_WEBHOOK_URL` | No | - | Slack incoming webhook URL (fetches from Railway if not set) |
+| `SLACK_WEBHOOK_URL` | No | - | Slack incoming webhook URL (fetches from Railway if not set); used unless `SLACK_USE_BOT_TOKEN=true` |
 | `SLACK_WEBHOOK_KEY_URL` | No | - | Railway endpoint to fetch Slack webhook key |
+| `SLACK_USE_BOT_TOKEN` | No | false | Post via `chat.postMessage` with `SLACK_BOT_TOKEN` instead of the incoming webhook |
+| `SLACK_BOT_TOKEN` | No | - | Slack bot token (`xoxb-...`); required when `SLACK_USE_BOT_TOKEN=true` |
+| `SLACK_CHANNEL_ID` | No | - | Channel ID to post to via `chat.postMessage`; required when `SLACK_USE_BOT_TOKEN=true` |
 | `PORT` | No | 8000 | Port for the application to listen on |
 | `HOST` | No | 0.0.0.0 | Host to bind the server to |
 | `LOG_LEVEL` | No | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |

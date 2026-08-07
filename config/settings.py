@@ -18,6 +18,20 @@ class Settings(BaseSettings):
         default="https://wxyc-requests-endpoint-production.up.railway.app",
         description="URL to fetch Slack webhook key from (used when SLACK_WEBHOOK_URL is not set)",
     )
+    slack_bot_token: str | None = Field(
+        None, description="Slack bot token for chat.postMessage (request-o-matic#215)"
+    )
+    slack_channel_id: str | None = Field(
+        None, description="Slack channel ID to post to via chat.postMessage (request-o-matic#215)"
+    )
+    slack_use_bot_token: bool = Field(
+        default=False,
+        description=(
+            "Feature flag: post via chat.postMessage with SLACK_BOT_TOKEN instead of the "
+            "incoming webhook (request-o-matic#215). Default False; the webhook path stays "
+            "byte-for-byte unchanged while this is off."
+        ),
+    )
 
     # Application Configuration
     host: str = Field(default="0.0.0.0", description="Host to bind the server to")
