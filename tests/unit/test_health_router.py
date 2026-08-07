@@ -201,9 +201,10 @@ class TestRomProbeWiring:
 
     @pytest.mark.asyncio
     async def test_slack_probe_returns_ok_for_400_response(self):
-        """Slack returning 400 (empty body rejected) is proof the webhook is alive."""
+        """Flag off: Slack returning 400 (empty body rejected) is proof the webhook is alive."""
         import routers.health as health_module
 
+        settings = _make_settings(slack_use_bot_token=False)
         client = AsyncMock()
 
         async def _post(url, **kwargs):
@@ -216,19 +217,80 @@ class TestRomProbeWiring:
         with patch.object(
             health_module, "get_cached_slack_webhook_url", return_value="https://hooks.slack.com/x"
         ):
-            result = await health_module.probe_slack(client)
+            result = await health_module.probe_slack(settings, client)
 
         assert result == "ok"
 
     @pytest.mark.asyncio
     async def test_slack_probe_unavailable_when_webhook_unset(self):
-        """No cached webhook URL -> probe returns non-ok."""
+        """Flag off, no cached webhook URL -> probe returns non-ok."""
         import routers.health as health_module
 
+        settings = _make_settings(slack_use_bot_token=False)
         client = AsyncMock()
 
         with patch.object(health_module, "get_cached_slack_webhook_url", return_value=None):
-            result = await health_module.probe_slack(client)
+            result = await health_module.probe_slack(settings, client)
+
+        assert result != "ok"
+
+    @pytest.mark.asyncio
+    async def test_slack_probe_bot_token_ok_when_config_complete(self):
+        """Flag on + bot token/channel both configured -> probe returns ok.
+
+        Regression coverage for the readiness probe following the active
+        transport (request-o-matic#219): before this, the probe always read
+        ``get_cached_slack_webhook_url()``, which the bot-token transport
+        deliberately never resolves, so this case used to report a permanent
+        false ``unavailable``.
+        """
+        import routers.health as health_module
+
+        settings = _make_settings(
+            slack_use_bot_token=True,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id="C123",
+        )
+        client = AsyncMock()
+
+        # The cached webhook URL is (correctly) never populated on this
+        # transport; the probe must not consult it.
+        with patch.object(health_module, "get_cached_slack_webhook_url", return_value=None):
+            result = await health_module.probe_slack(settings, client)
+
+        assert result == "ok"
+        client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_slack_probe_bot_token_unavailable_when_config_incomplete(self):
+        """Flag on but bot token/channel not both set -> probe returns non-ok."""
+        import routers.health as health_module
+
+        settings = _make_settings(
+            slack_use_bot_token=True,
+            slack_bot_token=None,
+            slack_channel_id="C123",
+        )
+        client = AsyncMock()
+
+        result = await health_module.probe_slack(settings, client)
+
+        assert result != "ok"
+
+    @pytest.mark.asyncio
+    async def test_slack_probe_bot_token_unavailable_when_integration_disabled(self):
+        """``enable_slack_integration=False`` -> probe returns non-ok even with bot config set."""
+        import routers.health as health_module
+
+        settings = _make_settings(
+            enable_slack_integration=False,
+            slack_use_bot_token=True,
+            slack_bot_token="xoxb-test-token",
+            slack_channel_id="C123",
+        )
+        client = AsyncMock()
+
+        result = await health_module.probe_slack(settings, client)
 
         assert result != "ok"
 

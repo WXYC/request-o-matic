@@ -33,6 +33,7 @@ from config.settings import Settings, get_settings
 from core.dependencies import (
     get_cached_slack_webhook_url,
     get_http_client,
+    get_slack_bot_config,
 )
 
 
@@ -79,12 +80,27 @@ async def probe_lookup(settings: Settings, http_client: httpx.AsyncClient) -> st
     return "ok" if resp.status_code == 200 else "unavailable"
 
 
-async def probe_slack(http_client: httpx.AsyncClient) -> str:
-    """Verify the Slack webhook URL is reachable.
+async def probe_slack(settings: Settings, http_client: httpx.AsyncClient) -> str:
+    """Verify the active Slack transport is configured and reachable.
 
-    Sends an empty JSON body; Slack returns 400 (missing text) which proves
-    the URL is valid and the endpoint is alive.
+    Follows whichever transport is selected (request-o-matic#215): when
+    ``slack_use_bot_token`` is set, ``get_slack_webhook_url`` deliberately
+    never resolves a webhook, so this probe checks the bot-token config
+    instead of the (always-empty) cached webhook URL -- otherwise the probe
+    would report a permanent false ``unavailable`` once the flag flips.
+
+    Bot-token transport: ``ok`` iff ``get_slack_bot_config`` resolves (bot
+    token + channel id both set). No live call to Slack is made here, mirroring
+    how ``get_slack_bot_config`` itself only checks configuration completeness.
+
+    Webhook transport (flag off): unchanged from before -- sends an empty
+    JSON body; Slack returns 400 (missing text) which proves the URL is valid
+    and the endpoint is alive.
     """
+    if settings.slack_use_bot_token:
+        bot_config = await get_slack_bot_config(settings)
+        return "ok" if bot_config is not None else "unavailable"
+
     webhook_url = get_cached_slack_webhook_url()
     if webhook_url is None:
         return "unavailable"
@@ -114,7 +130,7 @@ def build_readiness_router() -> APIRouter:
         return await probe_lookup(get_settings(), await get_http_client())
 
     async def _slack() -> str:
-        return await probe_slack(await get_http_client())
+        return await probe_slack(get_settings(), await get_http_client())
 
     return readiness_router(
         [
