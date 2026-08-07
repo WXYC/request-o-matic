@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import Depends, Header, HTTPException
@@ -207,11 +207,19 @@ class SlackService:
         self.bot_token = bot_token
         self.channel_id = channel_id
 
-    async def post_blocks(self, blocks: list[dict]) -> str | None:
+    async def post_blocks(
+        self, blocks: list[dict], metadata: dict[str, Any] | None = None
+    ) -> str | None:
         """Post message blocks to Slack.
 
         Args:
             blocks: Slack message blocks
+            metadata: Optional ``chat.postMessage`` metadata envelope
+                (request-o-matic#209), e.g. the requester's device fingerprint.
+                This is a bot-token-only parameter -- incoming webhooks do not
+                support it, so it is silently ignored on that transport rather
+                than sent (Slack would ignore it anyway, but skipping it here
+                keeps the contract explicit).
 
         Returns:
             The posted message's ``ts`` when using the bot-token transport,
@@ -225,7 +233,7 @@ class SlackService:
                 codes for API-level errors).
         """
         if self.bot_token is not None:
-            return await self._post_via_bot_token(blocks)
+            return await self._post_via_bot_token(blocks, metadata)
 
         if self.webhook_url is None:
             raise SlackPostError("SlackService has neither a webhook_url nor a bot_token")
@@ -234,11 +242,16 @@ class SlackService:
         logger.info("Posted to Slack successfully")
         return None
 
-    async def _post_via_bot_token(self, blocks: list[dict]) -> str:
+    async def _post_via_bot_token(
+        self, blocks: list[dict], metadata: dict[str, Any] | None = None
+    ) -> str:
+        payload: dict[str, Any] = {"channel": self.channel_id, "blocks": blocks}
+        if metadata is not None:
+            payload["metadata"] = metadata
         response = await self.http_client.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {self.bot_token}"},
-            json={"channel": self.channel_id, "blocks": blocks},
+            json=payload,
         )
         response.raise_for_status()
         data = response.json()
