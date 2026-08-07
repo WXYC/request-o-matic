@@ -435,6 +435,48 @@ class TestBlockActionsOpensModal:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "user_field",
+        [{"id": ["U01ABC"]}, {"id": {"nested": "U01ABC"}}, ["U01ABC"], {"id": 0}, {}],
+        ids=["id-list", "id-dict", "user-list", "id-int", "user-empty"],
+    )
+    async def test_malformed_user_field_is_denied_not_500(self, user_field):
+        """`user.id` is json.loads output, so it is Any. An unhashable value
+        reaching the allowlist test raises TypeError -- a 500 whose Sentry
+        event carries the settings object, which is the failure class the
+        authorization check was added to help close, not widen.
+        """
+        slack = _mock_slack_service()
+        payload = _block_actions_payload()
+        payload["user"] = user_field
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_string_fingerprint_in_metadata_skips_cleanly(self):
+        """A non-str fingerprint would reach normalize_fingerprint's .strip()
+        and raise. Only rom writes private_metadata, so this is unreachable --
+        but the skip has to be a refusal, not a crash."""
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload()
+        context = json.loads(payload["view"]["private_metadata"])
+        context["fingerprint"] = ["not-a-string"]
+        payload["view"]["private_metadata"] = json.dumps(context)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_non_ban_action_id_ignored(self):
         slack = _mock_slack_service()
         payload = _block_actions_payload(action_id="some_other_button")
