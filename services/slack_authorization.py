@@ -33,7 +33,14 @@ def is_authorized_slack_user(user_id: str | None, allowlist_csv: str | None) -> 
     deploy that loses the env var must disable the ban button for everyone,
     not open it to the whole workspace. Comparison is case-sensitive, matching
     Slack's own user ID format.
+
+    Fails closed on shape as well as on value. Both call sites pull ``user_id``
+    out of ``json.loads`` output, which is typed ``Any``, so a payload whose
+    ``user.id`` is a list or an object would reach the ``in`` test and raise
+    ``TypeError: unhashable type`` -- a 500 rather than a refusal. Enforcing the
+    declared ``str | None`` contract here closes that at every caller instead of
+    relying on each one to remember an isinstance check.
     """
-    if not user_id:
+    if not isinstance(user_id, str) or not user_id:
         return False
     return user_id in parse_authorized_users(allowlist_csv)

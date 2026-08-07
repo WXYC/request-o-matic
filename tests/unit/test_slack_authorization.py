@@ -8,6 +8,8 @@ everyone, not open it to the whole workspace.
 
 from __future__ import annotations
 
+import pytest
+
 from services.slack_authorization import is_authorized_slack_user
 
 
@@ -53,3 +55,27 @@ class TestUnauthorizedUser:
 
     def test_empty_user_id_denies(self):
         assert is_authorized_slack_user("", "U01ABC,U02DEF") is False
+
+    @pytest.mark.parametrize(
+        "user_id",
+        [["U01ABC"], {"id": "U01ABC"}, {"U01ABC"}, ("U01ABC",), 0, 1, False, True, 1.5],
+        ids=[
+            "list",
+            "dict",
+            "set",
+            "tuple",
+            "int-zero",
+            "int",
+            "bool-false",
+            "bool-true",
+            "float",
+        ],
+    )
+    def test_non_string_user_id_denies_without_raising(self, user_id):
+        """Both call sites read this out of ``json.loads`` output, which is
+        typed ``Any``. An unhashable value reaching the ``in`` test raises
+        TypeError, and on this route an uncaught exception is a 500 whose
+        Sentry event carries the settings object -- so shape has to fail
+        closed the same way value does.
+        """
+        assert is_authorized_slack_user(user_id, "U01ABC,U02DEF") is False

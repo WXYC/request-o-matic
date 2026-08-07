@@ -144,6 +144,23 @@ def _strip_ban_button(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [b for b in blocks if not _is_ban_button_block(b)]
 
 
+def _field(payload: dict[str, Any], container: str, key: str) -> str | None:
+    """Read ``payload[container][key]`` as a string, or None for any other shape.
+
+    Interaction payloads are ``json.loads`` output, so every nested value is
+    ``Any``. Indexing a value that turned out to be a list or a scalar raises,
+    and on this route an uncaught exception is a 500 whose Sentry event carries
+    the settings object. Only Slack can produce a payload that gets this far, so
+    a malformed shape is not attacker-reachable -- but the cost of tolerating it
+    is one isinstance check.
+    """
+    nested = payload.get(container)
+    if not isinstance(nested, dict):
+        return None
+    value = nested.get(key)
+    return value if isinstance(value, str) else None
+
+
 def _extract_fingerprint(message: dict[str, Any]) -> str | None:
     metadata = message.get("metadata") or {}
     if metadata.get("event_type") != SLACK_METADATA_EVENT_TYPE:
@@ -222,8 +239,8 @@ async def _handle_block_actions(
     if not any(a.get("action_id") == BAN_BUTTON_ACTION_ID for a in actions):
         return Response(status_code=200)
 
-    channel = (payload.get("channel") or {}).get("id")
-    clicking_user = (payload.get("user") or {}).get("id")
+    channel = _field(payload, "channel", "id")
+    clicking_user = _field(payload, "user", "id")
     message = payload.get("message") or {}
 
     # Authorize before opening the modal, not only on submission. The ban
@@ -338,7 +355,13 @@ async def _handle_view_submission(
     # braces -- but it makes the "only a well-formed UUID reaches /admin/bans"
     # guarantee local to this function instead of an invariant held three
     # modules away, and it is what the module docstring already implies.
-    fingerprint = normalize_fingerprint(context.get("fingerprint"))
+    # isinstance first: private_metadata is json.loads output, so this is Any,
+    # and normalize_fingerprint's .strip() would raise on a list -- turning a
+    # malformed value into a 500 rather than the clean skip below.
+    raw_fingerprint = context.get("fingerprint")
+    fingerprint = (
+        normalize_fingerprint(raw_fingerprint) if isinstance(raw_fingerprint, str) else None
+    )
     channel = context.get("channel")
     message_ts = context.get("message_ts")
     original_blocks = context.get("blocks")

@@ -8,9 +8,13 @@ The **"Ban requester" button** on each Slack request post is the primary operato
 
 ## Where to find a fingerprint
 
-**Click "Ban requester" on the Slack post — this is the supported path, once the button is live (see caveat).** The button (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Clicking it opens a modal asking for a reason. Submitting the modal:
+**Click "Ban requester" on the Slack post — this is the supported path, once the button is live (see caveat).** The button (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Every request to the interactivity endpoint — the click and the submission alike — has its Slack signature verified before anything else runs; an unsigned or stale one gets a flat `401` that looks identical whether or not the deployment is configured.
 
-1. Verifies the Slack request signature and the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)).
+Clicking the button checks the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)) **before** the modal opens. An unauthorized click gets an ephemeral refusal and no modal — the modal carries the listener's fingerprint in its `private_metadata`, so opening it for anyone who asked would hand out the device UUID this runbook otherwise takes care never to display. Authorization is then re-checked on submission, so the refusal is not something a crafted payload can skip.
+
+Submitting the modal:
+
+1. Re-verifies the signature and the acting user's authorization, independently of the click.
 2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=None)` — the same function this HTTP API uses (`actor` is always `None` from rom; see that function's docstring for why).
 3. Posts an ephemeral confirmation to the clicking DJ, and edits the original message with a "🚫 Banned by @dj — reason" footer so the whole channel sees the outcome. On an unusually long post the footer is skipped and the ephemeral confirmation says so — the ban still lands, and the original message is left untouched rather than being replaced by a footer-only stub.
 
