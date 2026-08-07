@@ -289,11 +289,14 @@ async def handle_request(
         event_prefix="request",
     )
 
-    # Normalize once, up front, so every downstream gate agrees on what counts
-    # as a fingerprint. A malformed value must be indistinguishable from an
-    # absent one everywhere — if the UA gate accepted mere presence while the
-    # ban check only accepted a valid UUID, a caller could thread between them
-    # and clear both (see the gate comment below).
+    # Normalize up front so both structural gates below agree on what counts as
+    # a fingerprint. A malformed value must be indistinguishable from an absent
+    # one — if the UA gate accepted mere presence while the ban check only
+    # accepted a valid UUID, a caller could thread between them and clear both
+    # (see the gate comment below). The Slack call sites deliberately keep
+    # passing the raw header: build_slack_metadata runs this same normalizer
+    # internally, so they get the identical answer without the router having to
+    # remember to hand them the normalized one.
     normalized_fingerprint = normalize_fingerprint(x_device_fingerprint)
 
     # User-Agent gate (WXYC/request-o-matic#155). Runs BEFORE the BS ban check
