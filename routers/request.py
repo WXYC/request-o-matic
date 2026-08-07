@@ -53,6 +53,7 @@ from services.slack import build_simple_slack_blocks, build_slack_blocks, build_
 from services.ua_gate import (
     UA_GATE_BAN_REASON,
     UA_GATE_BAN_SOURCE,
+    UA_GATE_MALFORMED_BAN_REASON,
     is_known_strict_client,
 )
 
@@ -320,19 +321,34 @@ async def handle_request(
         and is_known_strict_client(user_agent)
     ):
         if posthog_client is not None:
+            # Distinguish "header omitted" (a broken client release) from
+            # "header present but not a UUID" (evasion) -- see WXYC/request-o-matic#226.
+            # ``fingerprint`` stays None on both branches so existing queries
+            # against it keep working; the new properties carry the signal.
+            # Gate on the raw header, not normalized_fingerprint: both branches
+            # normalize to None, so that value alone can't tell them apart.
+            blocked_properties: dict[str, object] = {
+                "user_id": None,
+                "fingerprint": None,
+                "ban_source": UA_GATE_BAN_SOURCE,
+                "user_agent": user_agent,
+            }
+            if x_device_fingerprint is None:
+                blocked_properties["ban_reason"] = UA_GATE_BAN_REASON
+            else:
+                # Bounded to 8 chars, matching _redact_fingerprint in
+                # routers/admin.py -- never emit the raw, attacker-controlled
+                # value to PostHog.
+                blocked_properties["ban_reason"] = UA_GATE_MALFORMED_BAN_REASON
+                blocked_properties["fingerprint_prefix"] = x_device_fingerprint[:8]
+                blocked_properties["fingerprint_length"] = len(x_device_fingerprint)
             # Wrap PostHog capture in the same try/except as the BS-ban path
             # below — a PostHog outage must not flip the response away from 403.
             try:
                 posthog_client.capture(
                     distinct_id="request-o-matic-service",
                     event="request_blocked",
-                    properties={
-                        "user_id": None,
-                        "fingerprint": None,
-                        "ban_reason": UA_GATE_BAN_REASON,
-                        "ban_source": UA_GATE_BAN_SOURCE,
-                        "user_agent": user_agent,
-                    },
+                    properties=blocked_properties,
                 )
             except Exception:
                 logger.exception("PostHog request_blocked capture failed (ua_gate)")

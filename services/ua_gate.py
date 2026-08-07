@@ -33,7 +33,12 @@ from __future__ import annotations
 import logging
 import re
 
-__all__ = ["UA_GATE_BAN_REASON", "UA_GATE_BAN_SOURCE", "is_known_strict_client"]
+__all__ = [
+    "UA_GATE_BAN_REASON",
+    "UA_GATE_BAN_SOURCE",
+    "UA_GATE_MALFORMED_BAN_REASON",
+    "is_known_strict_client",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,10 @@ logger = logging.getLogger(__name__)
 # its own reason without scattering literals across the router.
 UA_GATE_BAN_SOURCE = "rom_strict_mode"
 UA_GATE_BAN_REASON = "ua_gate_missing_fingerprint"
+# The header was present but did not survive normalize_fingerprint (WXYC/request-o-matic#226) --
+# distinct from UA_GATE_BAN_REASON so operators can tell a broken client
+# release (header omitted) from an active evader (header present, garbage).
+UA_GATE_MALFORMED_BAN_REASON = "ua_gate_malformed_fingerprint"
 
 # Map from product token (the part before the slash in a User-Agent product
 # clause) to the minimum version tuple at-or-above which the client is expected
