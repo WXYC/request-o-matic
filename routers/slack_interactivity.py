@@ -54,6 +54,7 @@ from core.dependencies import SlackService, get_ban_admin_client, get_http_clien
 from core.exceptions import SlackPostError
 from services import ban_service
 from services.ban_admin_client import BanAdminClient, BanAdminClientError
+from services.fingerprint import normalize_fingerprint
 from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
 from services.slack_authorization import is_authorized_slack_user
 from services.slack_signature import verify_slack_signature
@@ -214,7 +215,9 @@ def _build_updated_blocks(
     return [*original_blocks, _build_footer_block(user_id, reason)]
 
 
-async def _handle_block_actions(payload: dict[str, Any], slack: SlackService | None) -> Response:
+async def _handle_block_actions(
+    payload: dict[str, Any], slack: SlackService | None, settings: Settings
+) -> Response:
     actions = payload.get("actions") or []
     if not any(a.get("action_id") == BAN_BUTTON_ACTION_ID for a in actions):
         return Response(status_code=200)
@@ -222,6 +225,30 @@ async def _handle_block_actions(payload: dict[str, Any], slack: SlackService | N
     channel = (payload.get("channel") or {}).get("id")
     clicking_user = (payload.get("user") or {}).get("id")
     message = payload.get("message") or {}
+
+    # Authorize before opening the modal, not only on submission. The ban
+    # itself is already gated at view_submission, so this is not a bypass --
+    # but the modal carries the listener's fingerprint in private_metadata,
+    # which Slack hands to the opening client. Without this check any
+    # workspace member who can see a request post can read a listener's
+    # device UUID out of the view payload, in a repo that otherwise truncates
+    # fingerprints in logs precisely to avoid that. Checked before
+    # _extract_fingerprint so an unauthorized click never reads the value.
+    if not is_authorized_slack_user(clicking_user, settings.slack_ban_authorized_users):
+        logger.warning(
+            "slack_interactivity: unauthorized ban-button click user_id=%s", clicking_user
+        )
+        if slack is not None and channel and clicking_user:
+            await _notify_slack(
+                slack.post_ephemeral(
+                    channel=channel,
+                    user=clicking_user,
+                    text="You are not authorized to ban requesters.",
+                ),
+                description="unauthorized-click ephemeral",
+            )
+        return Response(status_code=200)
+
     fingerprint = _extract_fingerprint(message)
 
     if fingerprint is None:
@@ -305,7 +332,13 @@ async def _handle_view_submission(
         logger.error("slack_interactivity: malformed private_metadata on view_submission")
         return Response(status_code=200)
 
-    fingerprint = context.get("fingerprint")
+    # Re-normalize on the read side. The value can only be one rom itself wrote
+    # (build_slack_metadata writes the normalized value, and private_metadata
+    # round-trips through a signature-verified payload), so this is belt and
+    # braces -- but it makes the "only a well-formed UUID reaches /admin/bans"
+    # guarantee local to this function instead of an invariant held three
+    # modules away, and it is what the module docstring already implies.
+    fingerprint = normalize_fingerprint(context.get("fingerprint"))
     channel = context.get("channel")
     message_ts = context.get("message_ts")
     original_blocks = context.get("blocks")
@@ -452,7 +485,12 @@ async def slack_interactivity(
     """
     raw_body = await request.body()
 
-    form = parse_qs(raw_body.decode("utf-8"))
+    # errors="replace" rather than a raise: a non-UTF-8 body is only reachable
+    # behind a valid signature, but letting it raise UnicodeDecodeError turns a
+    # malformed payload into a 500, and an unhandled 500 ships this frame's
+    # locals to Sentry. A body that decodes to replacement characters simply
+    # fails the parse below and gets a 400 like every other malformed payload.
+    form = parse_qs(raw_body.decode("utf-8", errors="replace"))
     payload_values = form.get("payload")
     if not payload_values:
         raise HTTPException(status_code=400, detail="Missing payload")
@@ -462,9 +500,15 @@ async def slack_interactivity(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Malformed payload") from exc
 
+    # Valid JSON that isn't an object (a list, a bare string, null) would reach
+    # payload.get() and raise AttributeError -- another 500 where the two
+    # neighbouring malformed cases already return 400.
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Malformed payload")
+
     interaction_type = payload.get("type")
     if interaction_type == "block_actions":
-        return await _handle_block_actions(payload, slack)
+        return await _handle_block_actions(payload, slack, settings)
     if interaction_type == "view_submission":
         return await _handle_view_submission(payload, slack, ban_client, settings)
 

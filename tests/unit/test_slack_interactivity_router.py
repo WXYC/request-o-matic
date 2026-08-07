@@ -17,7 +17,7 @@ import hmac
 import json
 import time
 from unittest.mock import AsyncMock
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 import pytest
@@ -370,6 +370,69 @@ class TestBlockActionsOpensModal:
         assert metadata["fingerprint"] == FINGERPRINT
         assert metadata["channel"] == CHANNEL_ID
         assert metadata["message_ts"] == MESSAGE_TS
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_click_never_opens_the_modal(self):
+        """The modal's private_metadata carries the listener's fingerprint, and
+        Slack hands the view to the opening client. Authorizing only on submit
+        would let any workspace member read a device UUID out of the payload --
+        in a repo that truncates fingerprints in logs to avoid exactly that.
+        """
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(user_id="U99UNAUTHORIZED")
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+        slack.post_ephemeral.assert_awaited_once()
+        assert "not authorized" in slack.post_ephemeral.call_args.kwargs["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_denies_the_click_too(self):
+        """Fail-closed applies at click time as well as submit time."""
+        slack = _mock_slack_service()
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client(), allowed_users=None)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload_json",
+        ["[1,2,3]", '"hello"', "null", "42"],
+        ids=["list", "string", "null", "number"],
+    )
+    async def test_valid_json_that_is_not_an_object_is_400_not_500(self, payload_json):
+        """Only Slack can produce a valid signature, so this is post-auth --
+        but a 500 here is an unhandled exception, and this service's Sentry
+        init ships frame locals, so every avoidable 500 on this route is an
+        avoidable settings-bearing event.
+        """
+        slack = _mock_slack_service()
+        body = urlencode({"payload": payload_json}).encode()
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 400
+        slack.open_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_utf8_body_is_400_not_500(self):
+        slack = _mock_slack_service()
+        body = b"payload=\xff\xfe"
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_non_ban_action_id_ignored(self):

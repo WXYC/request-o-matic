@@ -180,4 +180,4 @@ See [`docs/env-vars.md`](env-vars.md) for the canonical reference. The three var
 
 - Storage: [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261) — `banned_fingerprints` table + `/internal/banned-fingerprints` CRUD.
 - Request-time enforcement: [#150](https://github.com/WXYC/request-o-matic/issues/150).
-- Slack-native ban (planned): [#152](https://github.com/WXYC/request-o-matic/issues/152).
+- Slack-native ban button: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped — see "Where to find a fingerprint" above, and the transport caveat there for when it goes live in a given environment.
