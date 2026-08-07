@@ -145,8 +145,15 @@ class BanCheckClient:
         # `X-Device-Fingerprint: not-a-uuid` — BS would reply 400, ROM would
         # treat that as BanCheckUnavailableError, and the router would fail
         # open. Treat malformed fingerprint as if no fingerprint was sent;
-        # BS will then check only the JWT (or, if neither survives, the
-        # caller is no-signal and we short-circuit to fail open below).
+        # BS will then check only the JWT.
+        #
+        # If nothing survives, this method raises ValueError below rather than
+        # failing open on its own — callers must not reach here with no usable
+        # signal. `routers/request.py` is the only caller and gates on the
+        # normalized value for exactly that reason; gating on the raw header
+        # instead is what made a malformed-fingerprint-only request a 500
+        # (#224). A second caller must normalize first, or catch ValueError.
+        #
         # Shared with services/slack.py so the value ROM is willing to ban on
         # is exactly the value it advertises as bannable (#209).
         normalized = normalize_fingerprint(fingerprint)
