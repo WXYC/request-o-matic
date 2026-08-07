@@ -8,9 +8,21 @@ The Slack-native action (filed at #152) is the primary operator UX once it lands
 
 ## Where to find a fingerprint
 
-**Not yet available.** Request posts in Slack do not currently carry the listener's fingerprint, and normal-request telemetry does not record it — it appears only on `request_blocked` events, i.e. only for devices that are already banned. Surfacing it is tracked in [WXYC/request-o-matic#216](https://github.com/WXYC/request-o-matic/issues/216) (fingerprint on telemetry — the interim lookup path, no dependencies) and [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button — the real one). Until that lands, the endpoints below work but there is no supported way to obtain a fingerprint to pass to them.
+**PostHog, via a HogQL query — this is the interim mechanism.** Every `request_completed` event carries a `fingerprint` property whenever the client sent an `X-Device-Fingerprint` header. Run this in PostHog (SQL tab) to see per-device request counts, most active first:
 
-There is intentionally **no** "discover fingerprints" endpoint — the design point is that operators identify a listener through the same Slack post they're already reacting to.
+```sql
+SELECT properties.fingerprint AS fp, count() AS requests, max(timestamp) AS last_seen
+FROM events
+WHERE event = 'request_completed'
+  AND timestamp > now() - INTERVAL 7 DAY
+  AND properties.fingerprint IS NOT NULL
+GROUP BY fp
+ORDER BY requests DESC
+```
+
+Copy the `fp` value for the offending device into `POST /admin/bans` below. [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button) replaces this lookup with a one-click flow once it lands; until then, this is the supported path.
+
+There is intentionally **no** "discover fingerprints" endpoint — the design point is that operators identify a listener through the same Slack post they're already reacting to, or through the PostHog query above.
 
 ## Authentication
 
