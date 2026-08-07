@@ -351,7 +351,12 @@ async def handle_request(
     # check() drops a malformed value and then raises ValueError when no signal
     # survives, which nothing here catches — so a caller whose only header was
     # `X-Device-Fingerprint: not-a-uuid` used to get a 500 rather than the
-    # intended no-signal skip.
+    # intended no-signal skip (#224).
+    #
+    # That skip deliberately leaves ban_check_degraded False: an unusable
+    # fingerprint is a normal no-signal request, not a BS outage. Flagging it
+    # degraded would put a permanent false signal on the telemetry of every
+    # browser and curl caller.
     ban_check_degraded = False
     if ban_check_client is not None and (authorization or normalized_fingerprint):
         try:
