@@ -100,6 +100,23 @@ class TestAppConfiguration:
             # Must NOT have been accidentally namespaced under /api/v1
             assert not any("/api/v1/admin" in path for path in paths)
 
+    def test_app_has_slack_interactivity_route(self):
+        """Pin that ``/slack/interactivity`` (#152) is mounted at the root --
+        this is the literal URL configured as the Slack app's interactivity
+        Request URL, so it can't move under ``/api/v1`` without breaking the
+        Slack-side configuration."""
+        with patch.dict("os.environ", {"GROQ_API_KEY": "test_key"}):
+            from config.settings import get_settings
+
+            get_settings.cache_clear()
+
+            from main import app
+
+            paths = _openapi_paths(app)
+
+            assert "/slack/interactivity" in paths
+            assert not any("/api/v1/slack" in path for path in paths)
+
     def test_app_has_description(self):
         """Test that app has a description."""
         with patch.dict("os.environ", {"GROQ_API_KEY": "test_key"}):

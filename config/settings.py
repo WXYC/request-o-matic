@@ -32,6 +32,24 @@ class Settings(BaseSettings):
             "byte-for-byte unchanged while this is off."
         ),
     )
+    slack_signing_secret: str | None = Field(
+        None,
+        description=(
+            "Slack app signing secret used to verify the X-Slack-Signature HMAC on "
+            "inbound POST /slack/interactivity callbacks (request-o-matic#152). "
+            "Distinct from SLACK_BOT_TOKEN -- this never leaves rom, it only verifies "
+            "requests coming in from Slack."
+        ),
+    )
+    slack_ban_authorized_users: str | None = Field(
+        None,
+        description=(
+            "Comma-separated Slack user IDs allowed to ban a requester via the "
+            "in-Slack 'Ban requester' button (request-o-matic#152), e.g. "
+            "'U01ABC,U02DEF'. Unset or empty means deny-all: fail closed rather than "
+            "letting a dropped env var open banning to the whole workspace."
+        ),
+    )
 
     # Application Configuration
     host: str = Field(default="0.0.0.0", description="Host to bind the server to")

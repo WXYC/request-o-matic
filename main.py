@@ -17,6 +17,7 @@ from routers.admin import router as admin_router
 from routers.health import build_readiness_router
 from routers.parse import router as parse_router
 from routers.request import router as request_router
+from routers.slack_interactivity import router as slack_interactivity_router
 
 load_dotenv()
 
@@ -96,6 +97,11 @@ app.include_router(request_router, prefix="", tags=["request-legacy"])
 # routes are reachable as ``/admin/bans`` — operators don't think about the
 # ``/api/v1`` prefix for admin tooling.
 app.include_router(admin_router)
+
+# Slack interactivity callback for the in-Slack "Ban requester" button (#152).
+# Mounted at root as ``/slack/interactivity`` -- this is the literal URL
+# configured as the Slack app's (single) interactivity Request URL.
+app.include_router(slack_interactivity_router)
 
 if __name__ == "__main__":
     import uvicorn

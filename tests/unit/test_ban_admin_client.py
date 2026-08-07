@@ -379,7 +379,7 @@ class TestNonJsonSuccess:
 
 class TestUnbanUrlQuoting:
     """unban() must URL-quote the fingerprint so a non-FastAPI caller (e.g.
-    the future Slack-native router #152) can't inject path/query/fragment
+    the Slack-native router #152) can't inject path/query/fragment
     characters into the BS request URL.
     """
 

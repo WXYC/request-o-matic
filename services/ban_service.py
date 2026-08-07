@@ -1,10 +1,10 @@
 """Shared ban-mutation surface for request-o-matic.
 
-Both the HTTP admin router (`routers/admin.py`, #151) and the future
-Slack-native ban router (`routers/slack_interactivity.py`, #152) call into the
-functions defined here. The motivation for the explicit indirection is that
-#152 needs to apply identical validation, idempotency, and audit-actor handling
-as #151 — two parallel codepaths would diverge.
+Both the HTTP admin router (`routers/admin.py`, #151) and the Slack-native ban
+router (`routers/slack_interactivity.py`, #152) call into the functions
+defined here. The motivation for the explicit indirection is that #152 needs
+to apply identical validation, idempotency, and audit-actor handling as #151
+— two parallel codepaths would diverge.
 
 There is no local state. Every call delegates to
 :class:`services.ban_admin_client.BanAdminClient` which talks to BS's
@@ -12,11 +12,16 @@ There is no local state. Every call delegates to
 storage; rom owns the operator UX.
 
 The ``actor`` argument is forwarded to BS as ``banned_by_user_id`` for the
-audit trail. The HTTP admin caller passes ``None`` because they're only
-identified by ``ADMIN_TOKEN`` — leaving it ``None`` is preferable to inventing
-a synthetic user_id (which couldn't satisfy BS's foreign-key constraint to
-``auth_user.id``). The Slack caller will pass the Slack user's mapped
-``auth_user.id``.
+audit trail. Both callers pass ``None``: the HTTP admin caller because it's
+only identified by ``ADMIN_TOKEN``, and the Slack caller because a Slack user
+ID has no corresponding better-auth ``user`` row for BS's
+``banned_by_user_id`` foreign key to satisfy -- BS's own schema comment on
+`banned_fingerprints` confirms the column is nullable specifically "to permit
+Slack-actor bans (no corresponding better-auth user)". Passing the raw Slack
+user ID here would make every Slack-triggered ban fail BS's insert with a 400
+(`bannedByUserId does not reference an existing user`). The Slack actor is
+still recorded -- just in Slack itself, via the ephemeral ack and the "banned
+by @dj" footer the interactivity router posts, not in this column.
 """
 
 from __future__ import annotations
@@ -45,9 +50,11 @@ async def ban(
             BS validates the UUID shape and rejects malformed values with 400.
         reason: Free-text reason surfaced in operator UIs. BS caps at 1000
             characters and rejects empty/whitespace.
-        actor: ``auth_user.id`` of the operator initiating the ban, or
-            ``None`` for HTTP-admin callers identified only by
-            ``ADMIN_TOKEN``. Forwarded as ``banned_by_user_id``.
+        actor: ``auth_user.id`` of the operator initiating the ban. In
+            practice always ``None`` today -- neither current caller has one
+            to give: HTTP-admin callers are identified only by
+            ``ADMIN_TOKEN``, and Slack users have no better-auth account for
+            BS's foreign key to reference. Forwarded as ``banned_by_user_id``.
         expires_in_seconds: Optional auto-expiry. ``None`` means permanent
             until manually unbanned.
 

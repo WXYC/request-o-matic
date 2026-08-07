@@ -2,13 +2,23 @@
 
 Three operator endpoints on request-o-matic for managing request-line bans. ROM is a thin proxy: ban state lives in Backend-Service (BS#1261 `banned_fingerprints` table). This API exists so operators can manage bans without writing SQL or learning Backend-Service's better-auth admin flow.
 
-## When to use this vs Slack-native ban (#152)
+## When to use this vs the Slack-native ban button (#152)
 
-The Slack-native action (filed at #152) is the primary operator UX once it lands — one click in the Slack post itself, no curl required. This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app has an outage.
+The **"Ban requester" button** on each Slack request post is the primary operator UX — one click, a reason prompt, done, no curl required. It only appears on posts carrying a fingerprint (see below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
 
 ## Where to find a fingerprint
 
-**PostHog, via a HogQL query — this is the interim mechanism.** Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
+**Click "Ban requester" on the Slack post — this is the supported path.** Every request post that carries a usable fingerprint renders the button (`services/slack.maybe_append_ban_button`); clicking it opens a modal asking for a reason. Submitting the modal:
+
+1. Verifies the Slack request signature and the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)).
+2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=<slack_user_id>)` — the same function this HTTP API uses.
+3. Posts an ephemeral confirmation to the clicking DJ, and edits the original message with a "🚫 Banned by @dj — reason" footer so the whole channel sees the outcome. On an unusually long post the footer is skipped and the ephemeral confirmation says so — the ban still lands, and the original message is left untouched rather than being replaced by a footer-only stub.
+
+Posts with **no button** have no usable fingerprint to ban — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, or if the interactivity endpoint is down, fall back to the PostHog query below.
+
+### PostHog fallback (when there's no button, or the endpoint is down)
+
+Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
 ```sql
 SELECT properties.fingerprint AS fp, count() AS requests, max(timestamp) AS last_seen
@@ -20,18 +30,16 @@ GROUP BY fp
 ORDER BY requests DESC
 ```
 
-Copy the `fp` value for the offending device into `POST /admin/bans` below. It is a full UUID by construction: the router records the value only after `services/fingerprint.normalize_fingerprint` accepts it, so anything this query returns is something `POST /admin/bans` will take. [WXYC/request-o-matic#152](https://github.com/WXYC/request-o-matic/issues/152) (an in-Slack ban button) replaces this lookup with a one-click flow once it lands; until then, this is the supported path.
+Copy the `fp` value for the offending device into `POST /admin/bans` below. It is a full UUID by construction: the router records the value only after `services/fingerprint.normalize_fingerprint` accepts it, so anything this query returns is something `POST /admin/bans` will take.
 
-### What this query does not cover
+### What this fallback query does not cover
 
 - **Malformed fingerprints.** A caller sending anything that isn't a UUID is treated as though it sent no header at all, here and everywhere else in ROM. That is deliberate — a non-UUID cannot be banned, because `POST /admin/bans` types the field as `UUID` and rejects it — so a junk-sending client never appears in the query above. It is not entirely invisible, though: when `STRICT_FINGERPRINT_FOR_KNOWN_CLIENTS` is on and the caller's `User-Agent` claims a known strict client (iOS 3.2+), the request is rejected `403` and emits a `request_blocked` event with `ban_reason='ua_gate_malformed_fingerprint'`, plus a bounded `fingerprint_prefix` and `fingerprint_length` (WXYC/request-o-matic#226). That tells you someone is probing, but it still yields nothing bannable — the whole point is that the value isn't a UUID. Junk from an unknown `User-Agent`, or from anyone at all while that flag is off, stays fully invisible.
 - **Clients that send no fingerprint.** iOS 3.1 and older, browsers, and `curl` don't send the header, so they never appear.
 
-### Why not the Slack post?
+### The fingerprint is never displayed, only acted on
 
-Request posts in Slack do **not** display the listener's fingerprint, and as of this writing no production Slack message carries one at all. [#209](https://github.com/WXYC/request-o-matic/issues/209) attaches the fingerprint as private `chat.postMessage` `metadata`, but only on the bot-token transport; `SLACK_USE_BOT_TOKEN` is unset in production, so the incoming-webhook transport is live and it drops `metadata` entirely. Even once that flag flips, the envelope stays invisible in the Slack client — it exists to be read programmatically by #152's "Ban requester" button, not by a human scrolling the channel. Do not go looking for fingerprint metadata on a Slack message mid-incident; use the PostHog query above.
-
-There is intentionally **no** "discover fingerprints" endpoint. The design point is that operators will identify a listener through the same Slack post they're already reacting to — by clicking #152's button once it ships, not by reading anything off the post. Until then, the PostHog query above is the lookup.
+Request posts in Slack do **not** display the listener's fingerprint as visible text — it rides as private `chat.postMessage` `metadata` ([#209](https://github.com/WXYC/request-o-matic/issues/209)), read programmatically by the button's click handler (`routers/slack_interactivity.py`), not by a human scrolling the channel. Do not go looking for it in the rendered message; click the button instead, or use the PostHog query above if there is no button.
 
 ## Authentication
 
@@ -85,7 +93,7 @@ Response (200):
 }
 ```
 
-`banned_by_user_id` is `null` for HTTP admin callers (they're identified only by `ADMIN_TOKEN`, not by an `auth_user.id`). The Slack-native router (#152) populates it.
+`banned_by_user_id` is always `null` from request-o-matic — for HTTP admin callers because they're identified only by `ADMIN_TOKEN`, not an `auth_user.id`, and for Slack-triggered bans because a Slack user ID has no corresponding better-auth `user` row for Backend-Service's foreign key to reference (BS's own schema comment on `banned_fingerprints` calls this out explicitly). The Slack actor is recorded in Slack itself instead: the button posts an ephemeral ack to the clicking DJ and edits the original message with a "banned by @dj — reason" footer.
 
 Curl:
 
