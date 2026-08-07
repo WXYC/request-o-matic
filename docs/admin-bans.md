@@ -48,7 +48,7 @@ Request body:
 }
 ```
 
-- `fingerprint` (string, required) — UUID copied from the Slack post metadata.
+- `fingerprint` (string, required) — the listener's device UUID. See "Where to find a fingerprint" above for how to obtain one.
 - `reason` (string, required) — operator-visible reason. Capped at 1000 chars by Backend-Service.
 - `expires_in_seconds` (integer, optional) — auto-expiry. Omit for a permanent ban.
 
