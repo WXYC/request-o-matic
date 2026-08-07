@@ -545,6 +545,42 @@ class TestFingerprintMetadata:
         assert fingerprint not in json.dumps(call.args[0])
 
     @pytest.mark.asyncio
+    async def test_fingerprint_header_attaches_metadata_on_non_request(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """The ``not parsed.is_request`` branch posts to Slack without ever
+        touching the lookup service, so it needs its own coverage -- a listener
+        whose message parses as chatter is exactly the one an operator may want
+        to ban."""
+        fingerprint = "22222222-2222-4222-8222-222222222222"
+        not_a_request = make_parsed_request(
+            raw_message="hey what's this song",
+            is_request=False,
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=not_a_request
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "hey what's this song"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
+
+        assert response.status_code == 200
+        mock_lookup_client.lookup.assert_not_awaited()
+        mock_slack.post_blocks.assert_awaited_once()
+        call = mock_slack.post_blocks.call_args
+        assert call.kwargs["metadata"] == {
+            "event_type": "request_posted",
+            "event_payload": {"fingerprint": fingerprint},
+        }
+        assert fingerprint not in json.dumps(call.args[0])
+
+    @pytest.mark.asyncio
     async def test_no_fingerprint_header_omits_metadata(
         self, app, mock_lookup_client, mock_slack, sample_lookup_response
     ):
@@ -557,6 +593,41 @@ class TestFingerprintMetadata:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 response = await client.post("/api/v1/request", json={"message": "play stereolab"})
+
+        assert response.status_code == 200
+        mock_slack.post_blocks.assert_awaited_once()
+        assert mock_slack.post_blocks.call_args.kwargs["metadata"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("   ", id="whitespace-only"),
+            pytest.param("not-a-uuid", id="malformed"),
+        ],
+    )
+    async def test_unusable_fingerprint_header_omits_metadata(
+        self, app, mock_lookup_client, mock_slack, sample_lookup_response, fingerprint
+    ):
+        """A present-but-unusable header must behave exactly like an absent
+        one. FastAPI binds an empty header to ``""``, not None, so guarding on
+        ``is None`` alone would attach ``{"fingerprint": ""}`` -- and #152 keys
+        the ban button off metadata *presence*, leaving a permanently broken
+        button on exactly the abusive listener the feature exists to ban."""
+        mock_lookup_client.lookup.return_value = _lr(sample_lookup_response)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play stereolab"},
+                    headers={"X-Device-Fingerprint": fingerprint},
+                )
 
         assert response.status_code == 200
         mock_slack.post_blocks.assert_awaited_once()

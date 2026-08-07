@@ -268,6 +268,27 @@ class TestBuildSlackMetadata:
         the ``metadata`` key entirely rather than sending an empty/null one."""
         assert build_slack_metadata(None) is None
 
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("   ", id="whitespace-only"),
+            pytest.param("not-a-uuid", id="malformed"),
+            pytest.param("abc?inject=evil", id="query-injection"),
+            pytest.param("x" * 5000, id="oversized"),
+        ],
+    )
+    def test_returns_none_for_unusable_fingerprint(self, fingerprint):
+        """A present-but-unusable header must be indistinguishable from an
+        absent one. FastAPI binds an empty header to ``""`` (not None), and
+        ``POST /admin/bans`` types the ban field as ``UUID`` -- so attaching a
+        non-UUID here would render request-o-matic#152's "Ban requester" button
+        on a value the ban endpoint rejects with 422. Bounding the value also
+        keeps a caller-controlled string out of ``chat.postMessage``, whose
+        ``metadata_too_large`` / ``invalid_metadata_format`` errors surface as
+        a 502 that loses the listener's request entirely."""
+        assert build_slack_metadata(fingerprint) is None
+
     def test_returns_envelope_with_fingerprint(self):
         fingerprint = "11111111-1111-4111-8111-111111111111"
         assert build_slack_metadata(fingerprint) == {

@@ -33,21 +33,11 @@ fingerprint, and BS bounds the cost with per-IP rate limiting.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 
 import httpx
 
-# Permissive UUID regex matching BS's UUID_REGEX in
-# apps/auth/check-request-ban-handler.ts — accepts any UUID version. ROM uses
-# this to drop malformed fingerprint headers BEFORE the BS round-trip, since
-# a malformed fingerprint would make BS reply 400 (the entire ban check would
-# fail open and let a banned listener bypass enforcement just by appending
-# garbage to their X-Device-Fingerprint header).
-_FINGERPRINT_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
+from services.fingerprint import normalize_fingerprint
 
 __all__ = [
     "BanCheckClient",
@@ -157,9 +147,12 @@ class BanCheckClient:
         # open. Treat malformed fingerprint as if no fingerprint was sent;
         # BS will then check only the JWT (or, if neither survives, the
         # caller is no-signal and we short-circuit to fail open below).
-        if fingerprint is not None and not _FINGERPRINT_RE.match(fingerprint):
+        # Shared with services/slack.py so the value ROM is willing to ban on
+        # is exactly the value it advertises as bannable (#209).
+        normalized = normalize_fingerprint(fingerprint)
+        if fingerprint is not None and normalized is None:
             logger.info("X-Device-Fingerprint header is not a valid UUID; ignoring")
-            fingerprint = None
+        fingerprint = normalized
 
         if not authorization and not fingerprint:
             raise ValueError(
