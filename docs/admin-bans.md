@@ -152,10 +152,10 @@ curl -G "https://request-o-matic-production.up.railway.app/admin/bans" \
 | Code | When | What to do |
 |------|------|------------|
 | 200 / 204 | Success | — |
-| 400 | Malformed input (bad UUID, empty reason, expired-at out of range) | Fix the request body and retry |
+| 400 | Backend-Service rejected the input and rom forwarded its status verbatim | Read `detail.upstream_body`, fix the request, retry |
 | 401 | Missing `Authorization` header | Add the bearer header |
 | 403 | Wrong token, or `ADMIN_TOKEN` not configured server-side | Check the token; if disabled, set `ADMIN_TOKEN` on the Railway service |
-| 422 | FastAPI rejected a query param (e.g. `limit=500`) | Use a valid value |
+| 422 | rom rejected the request locally, before calling BS: non-UUID `fingerprint`, empty or over-long `reason`, non-positive `expires_in_seconds`, an unknown field, or a bad query param (e.g. `limit=500`) | Fix the request body or param and retry |
 | 502 | Backend-Service upstream returned 5xx | Check BS health; retry after |
 | 503 | `BS_INTERNAL_BANS_URL` or `BS_INTERNAL_KEY` not configured | Set the missing env var on the Railway service |
 

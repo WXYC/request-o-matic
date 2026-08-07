@@ -296,7 +296,9 @@ async def handle_request(
     # (see the gate comment below). The Slack call sites deliberately keep
     # passing the raw header: build_slack_metadata runs this same normalizer
     # internally, so they get the identical answer without the router having to
-    # remember to hand them the normalized one.
+    # remember to hand them the normalized one. The request_completed telemetry
+    # emits are the third consumer and read this variable directly (#216) --
+    # unlike the Slack path they have no internal normalizer to fall back on.
     normalized_fingerprint = normalize_fingerprint(x_device_fingerprint)
 
     # User-Agent gate (WXYC/request-o-matic#155). Runs BEFORE the BS ban check
@@ -450,14 +452,18 @@ async def handle_request(
             # "ORDER BY requests DESC" leaderboard, leaving only well-behaved
             # clients (stable Keychain UUIDs) discoverable.
             #
-            # This is the one sink ROM writes a *full* fingerprint to.
-            # routers/admin.py and services/ban_service.py truncate to 8 chars
-            # in logs because a stable per-device UUID in a long-retention sink
-            # is a deanonymization vector; the divergence here is deliberate,
-            # not an oversight. An 8-char prefix cannot be passed to
-            # POST /admin/bans, so originating a ban needs the whole value and
-            # PostHog is the only place an operator can read one. Do not
-            # "fix" this by truncating -- it would break the documented flow.
+            # Full value, not the 8-char prefix routers/admin.py and
+            # services/ban_service.py truncate to in logs. That truncation
+            # exists because a stable per-device UUID in a long-retention sink
+            # is a deanonymization vector, so the divergence here is a
+            # deliberate tradeoff rather than an oversight: an 8-char prefix
+            # cannot be passed to POST /admin/bans, and PostHog is the only
+            # place an operator can read a bannable value until #152 ships.
+            # PostHog already holds full fingerprints for *banned* devices via
+            # the request_blocked capture above; this widens that to every
+            # device that sends the header. Accepted -- do not "fix" it by
+            # truncating, which would break the flow docs/admin-bans.md
+            # documents.
             if normalized_fingerprint:
                 parse_props["fingerprint"] = normalized_fingerprint
             if ban_check_degraded:
