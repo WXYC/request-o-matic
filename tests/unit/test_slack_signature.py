@@ -122,6 +122,72 @@ class TestInvalidSignature:
         )
 
 
+class TestMalformedSignatureHeader:
+    """A malformed X-Slack-Signature must be an ordinary False, never a raise.
+
+    Starlette decodes request headers as latin-1, so every byte an attacker
+    puts in X-Slack-Signature arrives as a str codepoint in U+0000..U+00FF.
+    ``hmac.compare_digest`` refuses non-ASCII str operands with TypeError, so
+    comparing as str turned a one-byte change to a forged header into an
+    unauthenticated 500 on ``POST /slack/interactivity`` (Sentry-capturing,
+    unrate-limited) instead of the flat 401 the route documents.
+    """
+
+    def test_rejects_non_ascii_signature_without_raising(self):
+        timestamp = "1700000000"
+        body = b"payload=x"
+
+        assert (
+            verify_slack_signature(
+                SECRET,
+                timestamp=timestamp,
+                body=body,
+                signature="v0=\xff" + "0" * 63,
+                now=1700000000,
+            )
+            is False
+        )
+
+    def test_rejects_signature_above_the_latin1_range(self):
+        """Not reachable over HTTP (headers decode as latin-1), but a direct
+        caller can still hand us a codepoint > U+00FF -- fail closed rather
+        than let UnicodeEncodeError escape."""
+        assert (
+            verify_slack_signature(
+                SECRET,
+                timestamp="1700000000",
+                body=b"payload=x",
+                signature="v0=☃" + "0" * 63,
+                now=1700000000,
+            )
+            is False
+        )
+
+    def test_rejects_empty_signature(self):
+        assert (
+            verify_slack_signature(
+                SECRET,
+                timestamp="1700000000",
+                body=b"payload=x",
+                signature="",
+                now=1700000000,
+            )
+            is False
+        )
+
+    def test_rejects_wrong_length_signature(self):
+        assert (
+            verify_slack_signature(
+                SECRET,
+                timestamp="1700000000",
+                body=b"payload=x",
+                signature="v0=abc",
+                now=1700000000,
+            )
+            is False
+        )
+
+
 class TestFailClosedConditions:
     def test_rejects_when_signing_secret_unset(self):
         """No SLACK_SIGNING_SECRET configured -> reject everything, never skip

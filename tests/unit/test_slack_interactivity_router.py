@@ -69,12 +69,12 @@ def _block_actions_payload(
     user_id: str = ACTING_USER,
     fingerprint: str | None = FINGERPRINT,
     action_id: str = BAN_BUTTON_ACTION_ID,
+    blocks: list | None = None,
 ) -> dict:
     message: dict = {
         "ts": MESSAGE_TS,
-        "blocks": [
-            {"type": "section", "text": {"type": "mrkdwn", "text": "*Here's what I found:*"}}
-        ],
+        "blocks": blocks
+        or [{"type": "section", "text": {"type": "mrkdwn", "text": "*Here's what I found:*"}}],
     }
     if fingerprint is not None:
         message["metadata"] = {
@@ -100,15 +100,17 @@ def _view_submission_payload(
     message_ts: str | None = MESSAGE_TS,
     original_blocks: list | None = None,
     callback_id: str = BAN_MODAL_CALLBACK_ID,
+    private_metadata: str | None = None,
 ) -> dict:
-    private_metadata = json.dumps(
-        {
-            "fingerprint": fingerprint,
-            "channel": channel,
-            "message_ts": message_ts,
-            "blocks": original_blocks,
-        }
-    )
+    if private_metadata is None:
+        private_metadata = json.dumps(
+            {
+                "fingerprint": fingerprint,
+                "channel": channel,
+                "message_ts": message_ts,
+                "blocks": original_blocks,
+            }
+        )
     values: dict = {}
     if reason is not None:
         values[BAN_REASON_BLOCK_ID] = {BAN_REASON_ACTION_ID: {"value": reason}}
@@ -121,6 +123,51 @@ def _view_submission_payload(
             "state": {"values": values},
         },
     }
+
+
+def _result_blocks(count: int) -> list[dict]:
+    """Blocks shaped like a real multi-result request post.
+
+    Nothing bounds the number of lookup results a post renders, and the
+    Discogs artwork/permalink URLs each result carries are long, so a handful
+    of them serializes past Slack's 3000-character private_metadata cap.
+    """
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*Here's what I found:*"}}
+    ]
+    catalog = [
+        ("Juana Molina", "DOGA", "RO/MO/12"),
+        ("Jessica Pratt", "On Your Own Love Again", "RO/PR/9"),
+        ("Chuquimamani-Condori", "DJ E", "EL/CH/3"),
+        ("Stereolab", "Aluminum Tunes", "RO/ST/44"),
+        ("Sessa", "Pequena Vertigem de Amor", "RO/SE/7"),
+        ("Cat Power", "Moon Pix", "RO/PO/21"),
+    ]
+    for index in range(count):
+        artist, title, call_number = catalog[index % len(catalog)]
+        release_id = 1234567 + index
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{artist}*\n{title}\n_{call_number}_\n"
+                        f"<https://www.discogs.com/release/{release_id}|Discogs> | "
+                        f"<https://www.wxyc.info/playlists/album.jsp?id={release_id}|WXYC>"
+                    ),
+                },
+                "accessory": {
+                    "type": "image",
+                    "image_url": (
+                        f"https://i.discogs.com/{release_id}/rs:fit/g:sm/q:90/h:600/w:600/"
+                        f"aHR0cHM6Ly9pLmRpc2NvZ3MuY29tL2FydHdvcmsvUi0{release_id}LmpwZWc.jpeg"
+                    ),
+                    "alt_text": f"{title} album cover",
+                },
+            }
+        )
+    return blocks
 
 
 def _mock_slack_service() -> AsyncMock:
@@ -151,6 +198,7 @@ def _build_app(
     allowed_users: str | None = ACTING_USER,
     slack: AsyncMock | None = None,
     ban_client: AsyncMock | None = None,
+    ban_upstream_configured: bool = True,
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
@@ -159,8 +207,12 @@ def _build_app(
         groq_api_key="test_groq_key",
         slack_signing_secret=signing_secret,
         slack_ban_authorized_users=allowed_users,
-        bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
-        bs_internal_key="test-internal-key",
+        bs_internal_bans_url=(
+            "https://bs.example.com/internal/banned-fingerprints"
+            if ban_upstream_configured
+            else None
+        ),
+        bs_internal_key="test-internal-key" if ban_upstream_configured else None,
     )
     app.dependency_overrides[get_settings] = lambda: settings
     if slack is not None:
@@ -225,6 +277,26 @@ class TestSignatureVerification:
         assert resp.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_non_ascii_signature_rejected_401_not_500(self):
+        """Starlette decodes headers as latin-1, so a forged X-Slack-Signature
+        can carry any byte >= 0x80. Comparing it as a str raised TypeError
+        inside hmac.compare_digest, turning this unauthenticated, unrate-limited
+        endpoint into a free 500 (and Sentry event) generator."""
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+
+        headers = [
+            (b"content-type", b"application/x-www-form-urlencoded"),
+            (b"x-slack-request-timestamp", str(int(time.time())).encode()),
+            (b"x-slack-signature", b"v0=\xff" + b"0" * 63),
+        ]
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post("/slack/interactivity", content=body, headers=headers)
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_stale_timestamp_rejected_401(self):
         payload = _block_actions_payload()
         body = _form_body(payload)
@@ -234,6 +306,48 @@ class TestSignatureVerification:
         resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body, timestamp=stale_ts))
 
         assert resp.status_code == 401
+
+
+class TestSignatureIsCheckedBeforeAnythingElse:
+    """Signature verification must be the first thing that can affect the
+    response.
+
+    ``get_ban_admin_client`` 503s with the names of two env vars when
+    BS_INTERNAL_BANS_URL/BS_INTERNAL_KEY are unset. Resolved as a handler
+    parameter it ran *before* the in-body signature check, so an unsigned POST
+    could read a deployment's configuration state straight off the response.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unsigned_request_to_unconfigured_deployment_is_401_not_503(self):
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, {"Content-Type": "application/x-www-form-urlencoded"})
+
+        assert resp.status_code == 401
+        assert "BS_INTERNAL" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_unsigned_request_looks_identical_configured_or_not(self):
+        """An unauthenticated caller must not be able to tell a configured
+        deployment from an unconfigured one."""
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        configured = await _post(
+            _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client()), body, headers
+        )
+        unconfigured = await _post(
+            _build_app(slack=_mock_slack_service(), ban_upstream_configured=False), body, headers
+        )
+
+        assert (configured.status_code, configured.text) == (
+            unconfigured.status_code,
+            unconfigured.text,
+        )
 
 
 class TestBlockActionsOpensModal:
@@ -309,7 +423,7 @@ class TestViewSubmissionHappyPath:
     async def test_authorized_submit_bans_acks_and_edits_message(self):
         slack = _mock_slack_service()
         ban_client = _mock_ban_client()
-        payload = _view_submission_payload()
+        payload = _view_submission_payload(original_blocks=_result_blocks(1))
         body = _form_body(payload)
         app = _build_app(slack=slack, ban_client=ban_client)
 
@@ -356,6 +470,60 @@ class TestViewSubmissionHappyPath:
         blocks = update_kwargs["blocks"]
         assert blocks[0] == original_blocks[0]
         assert len(blocks) == len(original_blocks) + 1
+
+
+class TestOversizedMessageSurvivesTheBan:
+    """A post too long to stash must be left alone, not overwritten.
+
+    ``chat.update`` replaces a message's blocks wholesale. Nulling the stashed
+    blocks on private_metadata overflow and editing anyway replaced the whole
+    request post -- the thing the channel was actually looking at -- with a
+    lone ban footer. Nothing bounds the number of lookup results a post
+    renders, so this is an ordinary post, not an edge case.
+    """
+
+    @pytest.mark.asyncio
+    async def test_long_post_overflows_private_metadata(self):
+        """Guard the premise: these blocks really do exceed Slack's cap."""
+        slack = _mock_slack_service()
+        blocks = _result_blocks(8)
+        assert len(json.dumps(blocks)) > 3000
+
+        payload = _block_actions_payload(blocks=blocks)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client())
+
+        await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        _, kwargs = slack.open_view.call_args
+        private_metadata = kwargs["view"]["private_metadata"]
+        assert len(private_metadata) <= 3000
+        assert json.loads(private_metadata)["blocks"] is None
+
+    @pytest.mark.asyncio
+    async def test_ban_on_long_post_leaves_the_original_content_intact(self):
+        """Chains the real block_actions private_metadata into the matching
+        view_submission, so the two halves can't drift apart."""
+        slack = _mock_slack_service()
+        ban_client = _mock_ban_client()
+        app = _build_app(slack=slack, ban_client=ban_client)
+
+        click = _form_body(_block_actions_payload(blocks=_result_blocks(8)))
+        await _post(app, click, _signed_headers(SIGNING_SECRET, click))
+        private_metadata = slack.open_view.call_args[1]["view"]["private_metadata"]
+
+        submit = _form_body(_view_submission_payload(private_metadata=private_metadata))
+        resp = await _post(app, submit, _signed_headers(SIGNING_SECRET, submit))
+
+        assert resp.status_code == 200
+        # The ban itself still lands -- only the cosmetic footer is given up.
+        ban_client.ban.assert_awaited_once()
+        slack.update_message.assert_not_awaited()
+        # ...and the operator is told, rather than left believing the post was
+        # annotated.
+        ack = slack.post_ephemeral.call_args[1]["text"]
+        assert "Banned." in ack
+        assert "too long to annotate" in ack
 
 
 class TestViewSubmissionAuthorization:
@@ -517,7 +685,7 @@ class TestSlackUnavailable:
             )
         )
         ban_client = _mock_ban_client()
-        payload = _view_submission_payload()
+        payload = _view_submission_payload(original_blocks=_result_blocks(1))
         body = _form_body(payload)
         app = _build_app(slack=slack, ban_client=ban_client)
 
@@ -525,4 +693,5 @@ class TestSlackUnavailable:
 
         assert resp.status_code == 200
         ban_client.ban.assert_awaited_once()
+        slack.update_message.assert_awaited_once()
         slack.post_ephemeral.assert_awaited_once()
