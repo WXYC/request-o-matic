@@ -277,6 +277,55 @@ class TestUAGateBlocks:
         mock_slack_service.post_blocks.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_known_client_unusable_fingerprint_with_jwt_still_403(
+        self,
+        mock_ban_check_client,
+        mock_lookup_client,
+        mock_slack_service,
+        mock_posthog,
+    ):
+        """A valid ``Authorization`` header does not excuse a garbage fingerprint.
+
+        The gate has always ignored ``Authorization`` -- a known client missing
+        its fingerprint is 403'd even holding a good JWT -- so a known client
+        sending a *malformed* one must land the same way. Pinning this keeps a
+        future "but they're authenticated, let them through" softening from
+        silently reopening the evasion path, since the attacker controls which
+        headers they send.
+        """
+        app = _make_app(
+            strict_flag=True,
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        with patch(
+            "routers.request.parse_request",
+            new_callable=AsyncMock,
+            return_value=SAMPLE_PARSED,
+        ) as mock_parse:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                    headers={
+                        "User-Agent": "WXYC-iOS/3.2.0",
+                        "X-Device-Fingerprint": "not-a-uuid",
+                        "Authorization": "Bearer eyJ...",
+                    },
+                )
+
+        assert response.status_code == 403
+        mock_ban_check_client.check.assert_not_awaited()
+        mock_parse.assert_not_awaited()
+        mock_lookup_client.lookup.assert_not_awaited()
+        mock_slack_service.post_blocks.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_known_client_no_fingerprint_returns_403(
         self,
         mock_ban_check_client,
