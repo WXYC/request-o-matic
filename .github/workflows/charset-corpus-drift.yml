@@ -25,5 +25,10 @@ jobs:
     with:
       pinned-sha256: 41a18c5c0a92d129ec4b575827b6874196bfb7591e4bdf237a918a5da2de7b66
       package-version: "1.6.0"
+      # The @gha/v1 above pins only this workflow's YAML. The script it runs
+      # (scripts/check-corpus-drift.sh) comes from whatever wxyc-shared-ref
+      # says, which defaults to main -- so leaving it unset runs tagged YAML
+      # against unreleased script logic. Pin both to the same ref.
+      wxyc-shared-ref: gha/v1
     secrets:
       npm-token: ${{ secrets.GITHUB_TOKEN }}
