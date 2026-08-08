@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Any
 from unittest.mock import AsyncMock
 from urllib.parse import quote, urlencode
 
@@ -35,6 +36,9 @@ from routers.slack_interactivity import (
     BAN_MODAL_CALLBACK_ID,
     BAN_REASON_ACTION_ID,
     BAN_REASON_BLOCK_ID,
+    MODERATOR_ACTION_ID,
+    MODERATOR_BLOCK_ID,
+    MODERATOR_MODAL_CALLBACK_ID,
     get_slack_interactivity_service,
     router,
 )
@@ -1004,6 +1008,7 @@ class TestMovedDependenciesAreReExportedByIdentity:
 def _mock_moderator_client(current: list[str] | None = None) -> AsyncMock:
     client = AsyncMock()
     client.list_moderators = AsyncMock(return_value=list(current or []))
+    client.replace_moderators = AsyncMock(return_value=list(current or []))
     return client
 
 
@@ -1174,3 +1179,434 @@ class TestDegradedRosterOnTheClickPath:
 
         assert resp.status_code == 200
         slack.open_view.assert_awaited_once()
+
+
+# -------------------------------------------------------------------------
+# Moderator roster modal (request-o-matic#240)
+# -------------------------------------------------------------------------
+
+MOD_ONE = "U01ABCDEF"
+MOD_TWO = "U02GHIJKL"
+
+
+def _roster_submission_payload(
+    *,
+    user_id: str = ACTING_USER,
+    selected: list[str] | None = None,
+    expected: list[str] | None = None,
+    private_metadata: str | None = None,
+    callback_id: str = MODERATOR_MODAL_CALLBACK_ID,
+) -> dict:
+    if private_metadata is None:
+        private_metadata = json.dumps({"moderators": expected if expected is not None else []})
+    return {
+        "type": "view_submission",
+        "user": {"id": user_id},
+        "view": {
+            "callback_id": callback_id,
+            "private_metadata": private_metadata,
+            "state": {
+                "values": {
+                    MODERATOR_BLOCK_ID: {
+                        MODERATOR_ACTION_ID: {
+                            "type": "multi_users_select",
+                            "selected_users": selected if selected is not None else [],
+                        }
+                    }
+                }
+            },
+        },
+    }
+
+
+def _errors_for(resp) -> Any:
+    """The per-block error map from a ``response_action: errors`` body."""
+    return resp.json()["errors"]
+
+
+class TestRosterSubmissionHappyPath:
+    @pytest.mark.asyncio
+    async def test_saves_the_selection_with_expected_current_and_actor(self):
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[MOD_ONE, MOD_TWO], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_awaited_once_with(
+            slack_user_ids=[MOD_ONE, MOD_TWO],
+            expected_current=[MOD_ONE],
+            actor_slack_user_id=ACTING_USER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_selection_is_a_legal_save(self):
+        """Removing every moderator is a real edit, not a malformed payload."""
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert moderators.replace_moderators.await_args[1]["slack_user_ids"] == []
+
+    @pytest.mark.asyncio
+    async def test_case_only_edit_is_passed_through_not_locally_rejected(self):
+        """ROM does no local expectedCurrent comparison of its own.
+
+        Normalization and the conflict decision both belong to BS, which
+        uppercases both sides. A second comparison here could only disagree
+        with the authoritative one.
+        """
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[MOD_ONE.lower()], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_awaited_once()
+
+
+class TestRosterSubmissionAuthorization:
+    @pytest.mark.asyncio
+    async def test_unauthorized_submitter_writes_nothing(self):
+        """The submission is a separate request, so it re-authorizes.
+
+        A user whose access was revoked while they had the modal open must not
+        be able to save it.
+        """
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(user_id="U99ZZZ", selected=[MOD_TWO])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert "not authorized" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refusal_keeps_the_modal_open_rather_than_looking_like_a_save(self):
+        """A bare 200 closes the modal, which reads as success.
+
+        Every refusal on this branch must render response_action: errors, or a
+        rejected edit is indistinguishable from an accepted one -- the exact
+        silent-failure class the 409 exists to prevent.
+        """
+        payload = _roster_submission_payload(user_id="U99ZZZ")
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=_mock_moderator_client())
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.json()["response_action"] == "errors"
+
+    @pytest.mark.asyncio
+    async def test_a_stored_moderator_may_save_even_if_absent_from_the_env_allowlist(self):
+        """The union is what authorizes, so the table can grant access on its own."""
+        stored_only = "U07STORED"
+        moderators = _mock_moderator_client([stored_only])
+        payload = _roster_submission_payload(user_id=stored_only, selected=[stored_only])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_awaited_once()
+
+
+class TestRosterSubmissionConflict:
+    @pytest.mark.asyncio
+    async def test_409_renders_as_a_visible_error(self):
+        moderators = _mock_moderator_client([MOD_ONE])
+        moderators.replace_moderators = AsyncMock(
+            side_effect=ModeratorClientError(409, {"error": "changed", "current": [MOD_TWO]})
+        )
+        payload = _roster_submission_payload(selected=[MOD_ONE], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.json()["response_action"] == "errors"
+        assert "Someone else changed" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+
+    @pytest.mark.asyncio
+    async def test_upstream_failure_renders_as_an_error_not_a_500(self):
+        moderators = _mock_moderator_client([MOD_ONE])
+        moderators.replace_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+        payload = _roster_submission_payload(selected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert "Could not save" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+
+
+class TestRosterSubmissionMalformedPayloads:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "selected",
+        [None, "U01ABCDEF", [123], [None], [""], {"a": "b"}],
+        ids=["missing", "bare-string", "int-entry", "none-entry", "empty-entry", "dict"],
+    )
+    async def test_malformed_selected_users_is_an_error_not_a_500(self, selected):
+        moderators = _mock_moderator_client()
+        payload = _roster_submission_payload()
+        payload["view"]["state"]["values"][MODERATOR_BLOCK_ID][MODERATOR_ACTION_ID] = {
+            "selected_users": selected
+        }
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.json()["response_action"] == "errors"
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_malformed_private_metadata_is_an_error_not_a_500(self):
+        moderators = _mock_moderator_client()
+        payload = _roster_submission_payload(private_metadata="{not json")
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert "stale" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_private_metadata_without_a_roster_is_an_error(self):
+        """Without expectedCurrent there is no concurrency check to make.
+
+        Defaulting it to [] would turn a stale form into a silent clobber of
+        whatever the roster had become -- worse than refusing.
+        """
+        moderators = _mock_moderator_client()
+        payload = _roster_submission_payload(private_metadata=json.dumps({"nope": True}))
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_not_awaited()
+
+
+class TestDispatchRestructureDidNotChangeTheBanBranch:
+    """The callback_id guard became a dispatch; the ban branch must be untouched."""
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_callback_id_still_returns_200_and_does_nothing(self):
+        """Not leniency -- the contract. Slack delivers every modal submission
+        in the app to this one URL, so an unknown id is routine, not an error.
+        """
+        moderators = _mock_moderator_client()
+        ban_client = _mock_ban_client()
+        payload = _roster_submission_payload(callback_id="some_other_feature_modal")
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(), ban_client=ban_client, moderator_client=moderators
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.content in (b"", b"null")
+        ban_client.ban.assert_not_awaited()
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_roster_save_succeeds_with_the_bans_upstream_unset(self):
+        """The regression test for moving the 503 into the ban branch.
+
+        A roster save must not die on BS_INTERNAL_BANS_URL, which it never
+        touches. Before the move, the raising dependency resolved ahead of the
+        callback_id dispatch and took this request down with it.
+        """
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[MOD_ONE], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            moderator_client=moderators,
+            ban_upstream_configured=False,
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_awaited_once()
+
+
+class TestRosterSaveNeverReturnsA500:
+    """Eleven payload shapes used to 500 here (#240 review).
+
+    The `isinstance` guard protected only the leaf; every `.get()` on the way
+    to it was unguarded, and `json.loads` of a non-string raises `TypeError`
+    rather than `JSONDecodeError`. An unhandled 500 on this route ships the
+    handler frame's locals to Sentry -- and `settings` is a local holding
+    `bs_internal_key`, `slack_signing_secret`, and the Groq key.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "state",
+        [
+            {"values": "not-a-dict"},
+            {"values": [1, 2, 3]},
+            "not-a-dict",
+            42,
+            {"values": {MODERATOR_BLOCK_ID: "not-a-dict"}},
+            {"values": {MODERATOR_BLOCK_ID: {MODERATOR_ACTION_ID: "not-a-dict"}}},
+            {"values": {MODERATOR_BLOCK_ID: {MODERATOR_ACTION_ID: 7}}},
+        ],
+        ids=[
+            "values-str",
+            "values-list",
+            "state-str",
+            "state-int",
+            "block-str",
+            "action-str",
+            "action-int",
+        ],
+    )
+    async def test_malformed_state_renders_an_error_not_a_500(self, state):
+        moderators = _mock_moderator_client()
+        payload = _roster_submission_payload()
+        payload["view"]["state"] = state
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.json()["response_action"] == "errors"
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "private_metadata",
+        [{"moderators": []}, ["moderators"], 42, True],
+        ids=["dict", "list", "int", "bool"],
+    )
+    async def test_non_string_private_metadata_renders_an_error_not_a_500(self, private_metadata):
+        """`json.loads` raises TypeError on these, not JSONDecodeError."""
+        moderators = _mock_moderator_client()
+        payload = _roster_submission_payload()
+        payload["view"]["private_metadata"] = private_metadata
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.json()["response_action"] == "errors"
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_string_in_expected_current_is_refused(self):
+        """An empty string can never equal a real Slack ID, so sending it as
+        expectedCurrent guarantees a 409 blaming a phantom concurrent editor."""
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[MOD_ONE], expected=["", MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.json()["response_action"] == "errors"
+        moderators.replace_moderators.assert_not_awaited()
+
+
+class TestRosterSaveOutcomesAreDistinguishable:
+    @pytest.mark.asyncio
+    async def test_success_returns_an_empty_body_not_an_errors_payload(self):
+        """The headline invariant, previously only half-pinned.
+
+        `_roster_error` is also a 200, so asserting the status alone let a
+        mutation that rendered `errors` after a completed save survive the whole
+        suite -- the modal would stay open forever while the roster was written,
+        which is precisely the confusion this branch exists to prevent.
+        """
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[MOD_ONE, MOD_TWO], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.content in (b"", b"null")
+        moderators.replace_moderators.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_upstream_is_refused_rather_than_crashing(self):
+        """Covers the `moderator_client is None` guard, whose deletion
+        previously survived the entire suite.
+
+        Reachable via an env-allowlisted submitter on a deploy with no
+        BS_INTERNAL_MODERATORS_URL: `resolve_authorized_users` authorizes them
+        off the environment half, and without the guard the save dereferences
+        None into a 500.
+        """
+        payload = _roster_submission_payload(user_id=ACTING_USER, selected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            moderator_client=None,
+            moderator_upstream_configured=False,
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.json()["response_action"] == "errors"
+
+    @pytest.mark.asyncio
+    async def test_an_outage_is_not_reported_as_an_authorization_decision(self):
+        """A roster-only moderator during a BS outage must not be told they
+        lack permission -- that sends them to escalate about their access."""
+        broken = _mock_moderator_client()
+        broken.list_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+        payload = _roster_submission_payload(user_id="U07STORED", selected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=broken)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        message = _errors_for(resp)[MODERATOR_BLOCK_ID]
+        assert "not authorized" not in message
+        assert "Couldn't reach" in message
+        broken.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_genuine_non_moderator_is_still_told_they_are_not_authorized(self):
+        """The other half -- the distinction has to cut both ways or it is just
+        a softer refusal for everyone."""
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(user_id="U99ZZZ", selected=[MOD_TWO])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert "not authorized" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+        moderators.replace_moderators.assert_not_awaited()
