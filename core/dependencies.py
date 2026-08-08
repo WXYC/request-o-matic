@@ -27,18 +27,33 @@ _slack_webhook_url: str | None = None
 
 #: Per-call timeout for ``views.open`` (request-o-matic#240).
 #:
-#: The shared ``httpx.AsyncClient`` is built with ``timeout=30.0``, which is
-#: twenty times the window this call runs inside: a Slack ``trigger_id`` is
-#: invalid after ~3 seconds, and the modal-open happens after an upstream
-#: authorization read has already spent part of that.
+#: The shared ``httpx.AsyncClient`` is built with ``timeout=30.0``, ten times
+#: the ~3 second window a Slack ``trigger_id`` stays valid for. No
+#: ``views.open`` response arriving after the ``trigger_id`` expires can be
+#: acted on, so the remaining 27 seconds cannot succeed -- they only delay the
+#: error the caller is going to get anyway. Bounding the call converts a
+#: guaranteed-useless wait into a prompt failure.
+#:
+#: **Phases are named explicitly because a bare float is not a call deadline.**
+#: ``httpx.Timeout(1.0)`` sets connect/read/write/pool to 1.0s *each*, applied
+#: independently, so the real ceiling is their sum -- a "1.0s" bound whose
+#: worst case is 4s, which is outside the window it exists to fit inside.
+#: Naming the phases makes :data:`SLACK_VIEW_OPEN_BUDGET_SECONDS` below the
+#: honest ceiling, and it is that sum the tests assert.
+#:
+#: ``connect`` gets the largest share because it is the normal case rather
+#: than the tail: ban clicks are minutes apart and httpx expires keepalive
+#: connections after 5s, so essentially every ``views.open`` pays a fresh
+#: TCP+TLS handshake.
 #:
 #: This applies to *every* caller, including the ban modal that shipped before
 #: it existed, and that is deliberate rather than an accidental behavior change.
-#: No ``views.open`` response arriving later than the ``trigger_id``'s lifetime
-#: can be acted on, so waiting the remaining 27 seconds cannot succeed -- it
-#: only holds a worker and delays the error the caller is going to get anyway.
-#: Bounding it converts a guaranteed-useless wait into a prompt failure.
-SLACK_VIEW_OPEN_TIMEOUT_SECONDS = 1.0
+SLACK_VIEW_OPEN_TIMEOUT = httpx.Timeout(connect=0.4, read=0.6, write=0.1, pool=0.1)
+
+#: The worst-case wall clock of :data:`SLACK_VIEW_OPEN_TIMEOUT` -- the sum of
+#: its phases, since httpx applies each independently. This is the number that
+#: has to fit inside a Slack deadline, so it is the number that gets asserted.
+SLACK_VIEW_OPEN_BUDGET_SECONDS = 1.2
 
 
 async def _make_http_client() -> httpx.AsyncClient:
@@ -311,7 +326,7 @@ class SlackService:
         *,
         trigger_id: str,
         view: dict[str, Any],
-        timeout: float = SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
+        timeout: httpx.Timeout | float = SLACK_VIEW_OPEN_TIMEOUT,
     ) -> None:
         """Open a modal via ``views.open`` (request-o-matic#152).
 
@@ -321,8 +336,10 @@ class SlackService:
                 immediately after receiving it.
             view: The modal's view payload (``type: "modal"`` and friends).
             timeout: Per-call timeout. Defaults to
-                :data:`SLACK_VIEW_OPEN_TIMEOUT_SECONDS`; see that constant for
-                why the default is short and why it applies to every caller.
+                :data:`SLACK_VIEW_OPEN_TIMEOUT`, whose phases are named rather
+                than collapsed into one float -- see that constant for why a
+                bare float would not bound this call at all, and why the bound
+                applies to every caller.
 
         Raises:
             SlackPostError: If ``views.open`` returns ``{"ok": false}``, e.g.
