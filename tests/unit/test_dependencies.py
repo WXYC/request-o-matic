@@ -10,7 +10,8 @@ from fastapi import HTTPException
 
 from config.settings import Settings
 from core.dependencies import (
-    SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
+    SLACK_VIEW_OPEN_BUDGET_SECONDS,
+    SLACK_VIEW_OPEN_TIMEOUT,
     SlackService,
     close_http_client,
     get_ban_admin_client,
@@ -621,24 +622,46 @@ class TestSlackServiceOpenView:
             "https://slack.com/api/views.open",
             headers={"Authorization": "Bearer xoxb-test-token"},
             json={"trigger_id": "trigger-123", "view": view},
-            # Bounded per-call. The shared client's 30s default is twenty times
+            # Bounded per-call. The shared client's 30s default is ten times
             # the ~3s trigger_id window this call runs inside, so a slow Slack
-            # would hold a worker long past the point a response could be used.
-            # Applies to every caller, the shipped ban modal included.
-            timeout=SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
+            # would wait long past the point a response could be used. Applies
+            # to every caller, the shipped ban modal included.
+            timeout=SLACK_VIEW_OPEN_TIMEOUT,
         )
 
-    def test_default_timeout_is_inside_the_trigger_id_window(self):
-        """The number, not just the plumbing.
+    def test_the_budget_constant_matches_the_sum_of_the_phases(self):
+        """httpx applies each phase independently, so the sum is the ceiling.
 
-        A ``trigger_id`` is dead after ~3 seconds, and ``views.open`` is
-        preceded by an upstream authorization read that has already spent part
-        of that budget. A default at or above 3s would make the bound
-        decorative -- the call would still outlive every response it could act
-        on -- so the ceiling is asserted rather than left to the constant's
-        docstring.
+        This is the assertion that was missing when the timeout was a bare
+        float: ``httpx.Timeout(1.0)`` reads as a one-second bound and is
+        actually four independent one-second bounds. Pinning the documented
+        budget to the arithmetic means a future phase tweak cannot quietly
+        raise the real ceiling while the docstring keeps claiming the old one.
         """
-        assert 0 < SLACK_VIEW_OPEN_TIMEOUT_SECONDS < 3.0
+        phases = [
+            SLACK_VIEW_OPEN_TIMEOUT.connect,
+            SLACK_VIEW_OPEN_TIMEOUT.read,
+            SLACK_VIEW_OPEN_TIMEOUT.write,
+            SLACK_VIEW_OPEN_TIMEOUT.pool,
+        ]
+        # A None phase is not "no limit on that phase" -- it inherits the shared
+        # client's 30s, which is the exact hole this constant exists to close.
+        assert all(p is not None for p in phases), "an unset phase inherits the client's 30s"
+        assert sum(p for p in phases if p is not None) == pytest.approx(
+            SLACK_VIEW_OPEN_BUDGET_SECONDS
+        )
+
+    def test_worst_case_leaves_room_for_the_rest_of_the_trigger_id_window(self):
+        """The ceiling that actually has to hold.
+
+        A ``trigger_id`` is dead after ~3s, and ``views.open`` is not alone in
+        that window -- Slack-to-Railway delivery, signature verification, and
+        (from #248) an upstream roster read all come out of the same budget.
+        Asserting the sum rather than any single phase is the whole point: the
+        bare-float version of this test passed at values whose real ceiling was
+        four times the window.
+        """
+        assert 0 < SLACK_VIEW_OPEN_BUDGET_SECONDS <= 1.5
 
     @pytest.mark.asyncio
     async def test_caller_may_override_the_timeout(self):
