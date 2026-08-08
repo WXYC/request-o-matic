@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 
 _slack_webhook_url: str | None = None
 
+#: Per-call timeout for ``views.open`` (request-o-matic#240).
+#:
+#: The shared ``httpx.AsyncClient`` is built with ``timeout=30.0``, which is
+#: twenty times the window this call runs inside: a Slack ``trigger_id`` is
+#: invalid after ~3 seconds, and the modal-open happens after an upstream
+#: authorization read has already spent part of that.
+#:
+#: This applies to *every* caller, including the ban modal that shipped before
+#: it existed, and that is deliberate rather than an accidental behavior change.
+#: No ``views.open`` response arriving later than the ``trigger_id``'s lifetime
+#: can be acted on, so waiting the remaining 27 seconds cannot succeed -- it
+#: only holds a worker and delays the error the caller is going to get anyway.
+#: Bounding it converts a guaranteed-useless wait into a prompt failure.
+SLACK_VIEW_OPEN_TIMEOUT_SECONDS = 1.0
+
 
 async def _make_http_client() -> httpx.AsyncClient:
     """Construct the shared httpx.AsyncClient used across rom services."""
@@ -291,7 +306,13 @@ class SlackService:
             )
         return SlackPostError(f"Slack {method} failed: {error}")
 
-    async def open_view(self, *, trigger_id: str, view: dict[str, Any]) -> None:
+    async def open_view(
+        self,
+        *,
+        trigger_id: str,
+        view: dict[str, Any],
+        timeout: float = SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
+    ) -> None:
         """Open a modal via ``views.open`` (request-o-matic#152).
 
         Args:
@@ -299,6 +320,9 @@ class SlackService:
                 triggered the click. Valid for ~3 seconds; call this
                 immediately after receiving it.
             view: The modal's view payload (``type: "modal"`` and friends).
+            timeout: Per-call timeout. Defaults to
+                :data:`SLACK_VIEW_OPEN_TIMEOUT_SECONDS`; see that constant for
+                why the default is short and why it applies to every caller.
 
         Raises:
             SlackPostError: If ``views.open`` returns ``{"ok": false}``, e.g.
@@ -308,6 +332,7 @@ class SlackService:
             "https://slack.com/api/views.open",
             headers={"Authorization": f"Bearer {self.bot_token}"},
             json={"trigger_id": trigger_id, "view": view},
+            timeout=timeout,
         )
         response.raise_for_status()
         data = response.json()
