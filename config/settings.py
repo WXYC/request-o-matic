@@ -124,7 +124,8 @@ class Settings(BaseSettings):
             "BS_INTERNAL_KEY -- no second secret. Unset means no roster client "
             "is built; unlike BS_INTERNAL_BANS_URL that is a degraded mode "
             "rather than a 503, because this client is read on the ban-button "
-            "authorization path."
+            "authorization path -- ban authorization falls back to "
+            "SLACK_BAN_AUTHORIZED_USERS alone."
         ),
     )
     bs_internal_key: str | None = Field(
