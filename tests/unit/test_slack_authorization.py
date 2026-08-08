@@ -152,28 +152,28 @@ class TestResolveAuthorizedUsers:
     @pytest.mark.asyncio
     async def test_returns_the_union(self):
         result = await resolve_authorized_users(_roster_client("U03GHI"), "U01ABC,U02DEF")
-        assert result == frozenset({"U01ABC", "U02DEF", "U03GHI"})
+        assert result.users == frozenset({"U01ABC", "U02DEF", "U03GHI"})
 
     @pytest.mark.asyncio
     async def test_empty_table_yields_the_env_allowlist_alone(self):
         """Day one: the table ships empty and the env allowlist still bans."""
         result = await resolve_authorized_users(_roster_client(), "U01ABC,U02DEF")
-        assert result == frozenset({"U01ABC", "U02DEF"})
+        assert result.users == frozenset({"U01ABC", "U02DEF"})
 
     @pytest.mark.asyncio
     async def test_empty_env_allowlist_yields_the_table_alone(self):
         """After the break-glass trim, the table is doing the work."""
         result = await resolve_authorized_users(_roster_client("U03GHI"), None)
-        assert result == frozenset({"U03GHI"})
+        assert result.users == frozenset({"U03GHI"})
 
     @pytest.mark.asyncio
     async def test_both_empty_yields_empty_set(self):
-        assert await resolve_authorized_users(_roster_client(), None) == frozenset()
+        assert (await resolve_authorized_users(_roster_client(), None)).users == frozenset()
 
     @pytest.mark.asyncio
     async def test_overlap_is_deduplicated(self):
         result = await resolve_authorized_users(_roster_client("U01ABC"), "U01ABC")
-        assert result == frozenset({"U01ABC"})
+        assert result.users == frozenset({"U01ABC"})
 
 
 class TestResolveAuthorizedUsersFailsClosed:
@@ -182,7 +182,7 @@ class TestResolveAuthorizedUsersFailsClosed:
     @pytest.mark.asyncio
     async def test_client_error_falls_back_to_env_allowlist(self):
         result = await resolve_authorized_users(_failing_client(), "U01ABC,U02DEF")
-        assert result == frozenset({"U01ABC", "U02DEF"})
+        assert result.users == frozenset({"U01ABC", "U02DEF"})
 
     @pytest.mark.asyncio
     async def test_none_client_falls_back_identically(self):
@@ -194,7 +194,7 @@ class TestResolveAuthorizedUsersFailsClosed:
         along with the roster.
         """
         result = await resolve_authorized_users(None, "U01ABC,U02DEF")
-        assert result == frozenset({"U01ABC", "U02DEF"})
+        assert result.users == frozenset({"U01ABC", "U02DEF"})
 
     @pytest.mark.asyncio
     async def test_failure_never_widens_the_authorized_set(self):
@@ -208,21 +208,21 @@ class TestResolveAuthorizedUsersFailsClosed:
         stored_only = "U03GHI"
 
         healthy = await resolve_authorized_users(_roster_client(stored_only), "U01ABC")
-        assert is_authorized_slack_user_in(stored_only, healthy) is True
+        assert is_authorized_slack_user_in(stored_only, healthy.users) is True
 
         degraded = await resolve_authorized_users(_failing_client(), "U01ABC")
-        assert is_authorized_slack_user_in(stored_only, degraded) is False
-        assert degraded == frozenset({"U01ABC"})
+        assert is_authorized_slack_user_in(stored_only, degraded.users) is False
+        assert degraded.users == frozenset({"U01ABC"})
 
     @pytest.mark.asyncio
     async def test_client_error_with_both_halves_empty_denies_all(self):
-        assert await resolve_authorized_users(_failing_client(), None) == frozenset()
+        assert (await resolve_authorized_users(_failing_client(), None)).users == frozenset()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status_code", [0, 401, 500], ids=["transport", "401", "500"])
     async def test_any_client_error_falls_back(self, status_code):
         result = await resolve_authorized_users(_failing_client(status_code), "U01ABC")
-        assert result == frozenset({"U01ABC"})
+        assert result.users == frozenset({"U01ABC"})
 
 
 class TestResolveAuthorizedUsersCaseHandling:
@@ -238,10 +238,62 @@ class TestResolveAuthorizedUsersCaseHandling:
         """
         result = await resolve_authorized_users(_roster_client(), "u01abc")
 
-        assert result == frozenset({"u01abc"})
-        assert is_authorized_slack_user_in("U01ABC", result) is False
+        assert result.users == frozenset({"u01abc"})
+        assert is_authorized_slack_user_in("U01ABC", result.users) is False
 
     @pytest.mark.asyncio
-    async def test_stored_roster_arrives_uppercased_and_is_used_as_given(self):
-        result = await resolve_authorized_users(_roster_client("U03GHI"), None)
-        assert is_authorized_slack_user_in("U03GHI", result) is True
+    async def test_the_stored_half_is_not_case_folded_either(self):
+        """The roster half of the asymmetry, which was previously unpinned.
+
+        The old version of this test fed an already-uppercase ID and asserted
+        it matched, so it tested neither direction: injecting `.upper()` on the
+        roster half left the whole module green. Feeding a lowercase row proves
+        rom passes the stored value through rather than folding it -- BS is
+        what normalizes, and a second fold here would mean rom and BS disagree
+        about what the roster contains.
+        """
+        result = await resolve_authorized_users(_roster_client("u03ghi"), None)
+
+        assert result.users == frozenset({"u03ghi"})
+        assert is_authorized_slack_user_in("U03GHI", result.users) is False
+
+
+class TestDegradedIsDistinguishableFromDenied:
+    """A refusal during an outage must not be reported as a permissions fact.
+
+    Both produce a smaller set, so without this flag a roster-only moderator is
+    told "you are not authorized" by a BS outage that has nothing to do with
+    them -- and escalates about their permissions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_healthy_resolution_is_not_degraded(self):
+        assert (
+            await resolve_authorized_users(_roster_client("U03GHI"), "U01ABC")
+        ).degraded is False
+
+    @pytest.mark.asyncio
+    async def test_empty_but_healthy_roster_is_not_degraded(self):
+        """An empty table is a legal state, not a failure -- day one looks
+        exactly like this and must not be reported as an outage."""
+        assert (await resolve_authorized_users(_roster_client(), "U01ABC")).degraded is False
+
+    @pytest.mark.asyncio
+    async def test_client_error_is_degraded(self):
+        assert (await resolve_authorized_users(_failing_client(), "U01ABC")).degraded is True
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_client_is_degraded(self):
+        assert (await resolve_authorized_users(None, "U01ABC")).degraded is True
+
+    @pytest.mark.asyncio
+    async def test_degraded_never_changes_the_access_decision(self):
+        """The flag is for the message, not the gate.
+
+        Whatever it says, membership is still decided by `users` alone -- so
+        this cannot become a back door that lets a degraded read admit someone.
+        """
+        degraded = await resolve_authorized_users(_failing_client(), "U01ABC")
+
+        assert is_authorized_slack_user_in("U01ABC", degraded.users) is True
+        assert is_authorized_slack_user_in("U07STORED", degraded.users) is False

@@ -21,17 +21,36 @@ which is the correct thing to be left holding.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
+
+import sentry_sdk
 
 from services.moderator_client import ModeratorClient, ModeratorClientError
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AuthorizedUsers",
     "is_authorized_slack_user",
     "is_authorized_slack_user_in",
     "parse_authorized_users",
     "resolve_authorized_users",
 ]
+
+
+class AuthorizedUsers(NamedTuple):
+    """The resolved authorized set, plus whether the roster half is missing.
+
+    ``degraded`` exists because a caller cannot otherwise tell "you are not a
+    moderator" from "we could not find out". Both produce the same smaller set,
+    and telling a real moderator the first when the truth is the second sends
+    them to argue about their permissions during an outage that has nothing to
+    do with them. Callers that render a message to a human should branch on it;
+    callers that only decide access can ignore it and use ``users``.
+    """
+
+    users: frozenset[str]
+    degraded: bool
 
 
 def parse_authorized_users(allowlist_csv: str | None) -> frozenset[str]:
@@ -76,9 +95,14 @@ def is_authorized_slack_user(user_id: str | None, allowlist_csv: str | None) -> 
     deploy that loses the env var must disable the ban button for everyone,
     not open it to the whole workspace.
 
-    This is the environment half alone. Callers that need the full authorized
-    set want :func:`resolve_authorized_users`; this remains for the break-glass
-    path and for callers with no Backend-Service client to hand.
+    This is the environment half alone, and since #240 it has **no production
+    callers** -- both authorization points resolve the union instead. It is
+    kept deliberately, as the regression harness for the fail-closed shape
+    guard that moved into :func:`is_authorized_slack_user_in`: its long-standing
+    tests exercise that guard through the original entry point, so a future
+    refactor that drops the guard fails the tests that predate the guard's move.
+    Naming that is more honest than the previous claim about break-glass
+    callers, which do not exist.
     """
     return is_authorized_slack_user_in(user_id, parse_authorized_users(allowlist_csv))
 
@@ -86,7 +110,7 @@ def is_authorized_slack_user(user_id: str | None, allowlist_csv: str | None) -> 
 async def resolve_authorized_users(
     client: ModeratorClient | None,
     allowlist_csv: str | None,
-) -> frozenset[str]:
+) -> AuthorizedUsers:
     """Return the union of the environment allowlist and the stored roster.
 
     Args:
@@ -94,6 +118,12 @@ async def resolve_authorized_users(
             is unconfigured. None is treated exactly like an unreachable
             upstream -- see below.
         allowlist_csv: ``SLACK_BAN_AUTHORIZED_USERS``, the break-glass half.
+
+    Returns:
+        An :class:`AuthorizedUsers` pair. ``users`` is the set to test
+        membership against; ``degraded`` is True when the roster half is
+        missing, so a caller rendering a message to a human can say "we could
+        not check" rather than "you are not authorized".
 
     **Fails closed.** On a :class:`ModeratorClientError` -- which covers a
     timeout, a transport failure, an upstream refusal, and a malformed
@@ -129,7 +159,7 @@ async def resolve_authorized_users(
             "environment allowlist alone (%d entries)",
             len(environment),
         )
-        return environment
+        return AuthorizedUsers(environment, degraded=True)
 
     try:
         stored = await client.list_moderators()
@@ -140,6 +170,16 @@ async def resolve_authorized_users(
             exc,
             len(environment),
         )
-        return environment
+        # The ordinary denial one frame up already leaves a breadcrumb, so
+        # without this the *degraded* case -- the one where a refusal may be
+        # wrong -- would be the only one with no Sentry signal to correlate it
+        # against the outage that caused it.
+        sentry_sdk.add_breadcrumb(
+            category="slack_ban",
+            level="warning",
+            message="Moderator roster unavailable; authorized set degraded to the env allowlist",
+            data={"environment_entries": len(environment)},
+        )
+        return AuthorizedUsers(environment, degraded=True)
 
-    return environment | frozenset(stored)
+    return AuthorizedUsers(environment | frozenset(stored), degraded=False)

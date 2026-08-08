@@ -242,7 +242,15 @@ def _build_app(
             if moderator_upstream_configured
             else None
         ),
-        bs_internal_key="test-internal-key" if ban_upstream_configured else None,
+        # Independent of ban_upstream_configured: the two URLs are separate
+        # settings sharing one key, and gating the key on the bans flag made
+        # `moderator_upstream_configured=True, ban_upstream_configured=False`
+        # describe an incoherent deploy (a URL with no key).
+        bs_internal_key=(
+            "test-internal-key"
+            if (ban_upstream_configured or moderator_upstream_configured)
+            else None
+        ),
     )
     app.dependency_overrides[get_settings] = lambda: settings
     if slack is not None:
@@ -254,9 +262,12 @@ def _build_app(
     # the tests hit a real client against a fake URL.
     if ban_client is not None:
         app.dependency_overrides[get_optional_ban_admin_client] = lambda: ban_client
-    # Default to no roster client so the pre-existing ban tests keep authorizing
-    # off `allowed_users` alone, exactly as they did before the union existed.
-    app.dependency_overrides[get_moderator_client] = lambda: moderator_client
+    # Only override when the upstream is meant to be *configured*. Overriding
+    # unconditionally made `moderator_upstream_configured` inert -- the settings
+    # built above could never reach the real provider, so a test claiming to
+    # exercise "unconfigured" was really just handing the router a None.
+    if moderator_upstream_configured:
+        app.dependency_overrides[get_moderator_client] = lambda: moderator_client
 
     return app
 
@@ -1117,3 +1128,49 @@ class TestBanAuthorizationUsesTheUnion:
 
         assert resp.status_code == 200
         ban_client.ban.assert_awaited_once()
+
+
+class TestDegradedRosterOnTheClickPath:
+    """The security-relevant half of the degraded case (#240 review).
+
+    The click check exists to keep the listener's device UUID out of a view
+    payload an unauthorized user can read. The previously-added degraded tests
+    were all `view_submission`; this covers the click, where the consequence is
+    disclosure rather than an unwanted ban.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unreachable_roster_denies_a_roster_only_user_the_modal(self):
+        broken = _mock_moderator_client()
+        broken.list_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(user_id="U07STORED")
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client(), moderator_client=broken)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_not_awaited()
+        # The fingerprint must not reach a view payload for a user the degraded
+        # read cannot vouch for.
+        assert FINGERPRINT not in json.dumps(slack.mock_calls, default=str)
+
+    @pytest.mark.asyncio
+    async def test_break_glass_user_still_gets_the_modal_while_degraded(self):
+        """The other half: degrading must not take the ban button down."""
+        broken = _mock_moderator_client()
+        broken.list_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(user_id=ACTING_USER)
+        body = _form_body(payload)
+        app = _build_app(slack=slack, ban_client=_mock_ban_client(), moderator_client=broken)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_awaited_once()
