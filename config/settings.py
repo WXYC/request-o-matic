@@ -125,11 +125,9 @@ class Settings(BaseSettings):
             "Base URL of Backend-Service's /internal/slack-ban-moderators roster "
             "(BS#2045). Example: "
             "'https://api.wxyc.org/internal/slack-ban-moderators'. Reuses "
-            "BS_INTERNAL_KEY -- no second secret. Unset means no roster client "
-            "is built; unlike BS_INTERNAL_BANS_URL that is a degraded mode "
-            "rather than a 503, because this client is read on the ban-button "
-            "authorization path -- ban authorization falls back to "
-            "SLACK_BAN_AUTHORIZED_USERS alone."
+            "BS_INTERNAL_KEY -- no second secret. When unset, ban authorization "
+            "falls back to SLACK_BAN_AUTHORIZED_USERS alone and /request-mods "
+            "refuses visibly rather than opening a modal it cannot save."
         ),
     )
     bs_internal_key: str | None = Field(

@@ -172,16 +172,51 @@ curl -G "https://request-o-matic-production.up.railway.app/admin/bans" \
 | 502 | Backend-Service upstream returned 5xx | Check BS health; retry after |
 | 503 | `BS_INTERNAL_BANS_URL` or `BS_INTERNAL_KEY` not configured | Set the missing env var on the Railway service |
 
+## Managing moderators — `/request-mods` ([#240](https://github.com/WXYC/request-o-matic/issues/240))
+
+Run `/request-mods` in Slack. A picker opens with the current moderators pre-selected; add or remove people using Slack's own workspace autocomplete and hit **Save**. The change takes effect on the next ban click — **no deploy, no Railway access**.
+
+You must already be authorized to ban in order to open it. A non-moderator gets an ephemeral refusal that names nobody.
+
+### Who can ban is a union of two lists
+
+| | Where it lives | Who edits it | What it's for |
+|---|---|---|---|
+| **Moderator roster** | Backend-Service `slack_ban_moderators` table | any moderator, via `/request-mods` | the actual roster; turns over every semester as MDs rotate |
+| **`SLACK_BAN_AUTHORIZED_USERS`** | Railway env var, per ROM environment | anyone with Railway access | **break-glass only** — three administrators |
+
+Authorization is the union, so a person on either list can ban. That is what makes the design safe to operate: **if Backend-Service is unreachable, or the table is emptied by accident, the break-glass list still works** and nobody is locked out of their own moderation tool by an upstream outage.
+
+The picker edits the table only. Environment-allowlist members appear in a read-only block beneath it, because otherwise the modal would lie: on day one the table is empty while several people can demonstrably ban, and after the break-glass trim, deselecting an administrator would appear to work and change nothing.
+
+### The roster is single, not per-environment
+
+Both ROM environments point `BS_INTERNAL_MODERATORS_URL` at *production* Backend-Service under a shared key — staging has no Backend-Service of its own. Editing the roster from staging edits the production roster. This matches the existing posture for `BS_INTERNAL_BANS_URL`.
+
+### When something goes wrong
+
+| Symptom | Cause | Effect |
+|---|---|---|
+| "Moderator management isn't set up on this deployment" | `BS_INTERNAL_MODERATORS_URL` unset | Bans still work off the break-glass list. Set the variable. |
+| "Couldn't reach the moderator list just now" | Backend-Service unreachable or slow (>1.5s) | Bans still work off the break-glass list. Retry. |
+| "Someone else changed the moderator list while this was open" | Concurrent edit; your `expectedCurrent` is stale | Nothing was saved. Close and re-run `/request-mods`. |
+| Modal opens with nobody pre-selected and a "could not pre-select" note | Slack rejected `initial_users`, most likely a deactivated account in the roster | Re-select everyone who should stay, then save — this is how a deactivated ID gets removed. |
+
+An unreachable Backend-Service can only ever **shrink** who can ban, never widen it.
+
 ## Environment variables
 
-See [`docs/env-vars.md`](env-vars.md) for the canonical reference. The three vars this API needs:
+See [`docs/env-vars.md`](env-vars.md) for the canonical reference. The vars this API needs:
 
 - `ADMIN_TOKEN` — bearer for the operator side.
 - `BS_INTERNAL_BANS_URL` — base URL of BS's CRUD.
-- `BS_INTERNAL_KEY` — shared secret with BS's `ROM_INTERNAL_KEY`.
+- `BS_INTERNAL_MODERATORS_URL` — base URL of BS's moderator roster, backing `/request-mods`. Unset degrades to the break-glass allowlist; it does **not** 503 the way the bans URL does.
+- `BS_INTERNAL_KEY` — shared secret with BS's `ROM_INTERNAL_KEY`, used by both `/internal` surfaces.
 
 ## Related
 
 - Storage: [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261) — `banned_fingerprints` table + `/internal/banned-fingerprints` CRUD.
+- Moderator roster storage: [WXYC/Backend-Service#2045](https://github.com/WXYC/Backend-Service/issues/2045) — `slack_ban_moderators` table + `/internal/slack-ban-moderators` GET/PUT.
 - Request-time enforcement: [#150](https://github.com/WXYC/request-o-matic/issues/150).
 - Slack-native ban menu: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped — see "Where to find a fingerprint" above, and the transport caveat there for when it goes live in a given environment.
+- Moderator roster UI: [#240](https://github.com/WXYC/request-o-matic/issues/240).
