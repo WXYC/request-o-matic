@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from config.settings import Settings
 from core.dependencies import (
+    SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
     SlackService,
     close_http_client,
     get_ban_admin_client,
@@ -620,7 +621,38 @@ class TestSlackServiceOpenView:
             "https://slack.com/api/views.open",
             headers={"Authorization": "Bearer xoxb-test-token"},
             json={"trigger_id": "trigger-123", "view": view},
+            # Bounded per-call. The shared client's 30s default is twenty times
+            # the ~3s trigger_id window this call runs inside, so a slow Slack
+            # would hold a worker long past the point a response could be used.
+            # Applies to every caller, the shipped ban modal included.
+            timeout=SLACK_VIEW_OPEN_TIMEOUT_SECONDS,
         )
+
+    def test_default_timeout_is_inside_the_trigger_id_window(self):
+        """The number, not just the plumbing.
+
+        A ``trigger_id`` is dead after ~3 seconds, and ``views.open`` is
+        preceded by an upstream authorization read that has already spent part
+        of that budget. A default at or above 3s would make the bound
+        decorative -- the call would still outlive every response it could act
+        on -- so the ceiling is asserted rather than left to the constant's
+        docstring.
+        """
+        assert 0 < SLACK_VIEW_OPEN_TIMEOUT_SECONDS < 3.0
+
+    @pytest.mark.asyncio
+    async def test_caller_may_override_the_timeout(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        await service.open_view(trigger_id="t", view={"type": "modal"}, timeout=0.25)
+
+        assert mock_client.post.call_args.kwargs["timeout"] == 0.25
 
     @pytest.mark.asyncio
     async def test_open_view_ok_false_raises(self):
