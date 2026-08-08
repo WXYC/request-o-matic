@@ -21,11 +21,14 @@ from urllib.parse import quote, urlencode
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from config.settings import Settings, get_settings
-from core.dependencies import get_ban_admin_client
+from core.dependencies import (
+    BAN_ADMIN_UNCONFIGURED_DETAIL,
+    get_optional_ban_admin_client,
+)
 from core.exceptions import SlackPostError
 from routers.slack_interactivity import (
     BAN_MODAL_CALLBACK_ID,
@@ -235,8 +238,13 @@ def _build_app(
     app.dependency_overrides[get_settings] = lambda: settings
     if slack is not None:
         app.dependency_overrides[get_slack_interactivity_service] = lambda: slack
+    # Overrides the OPTIONAL provider, which is what the route depends on now --
+    # the raising variant would resolve before the interaction-type dispatch and
+    # 503 every callback sharing this Request URL. dependency_overrides is
+    # identity-keyed, so overriding the wrong one here silently does nothing and
+    # the tests hit a real client against a fake URL.
     if ban_client is not None:
-        app.dependency_overrides[get_ban_admin_client] = lambda: ban_client
+        app.dependency_overrides[get_optional_ban_admin_client] = lambda: ban_client
 
     return app
 
@@ -335,6 +343,36 @@ class TestSignatureIsCheckedBeforeAnythingElse:
     parameter it ran *before* the in-body signature check, so an unsigned POST
     could read a deployment's configuration state straight off the response.
     """
+
+    @pytest.mark.asyncio
+    async def test_a_raising_dependency_cannot_preempt_the_401(self):
+        """Re-arms this class now that the route uses the optional provider.
+
+        The two tests below discriminated on wiring only because
+        ``get_ban_admin_client`` raised 503. The route now depends on the
+        variant that returns None, so on their own they became statements
+        about today's providers rather than about the ordering -- they would
+        keep passing even if verification moved to a handler parameter.
+        Verified by negative control: with the route-level ``dependencies=``
+        entry moved into the signature, they still pass and this one fails
+        with a 503 naming BS_INTERNAL_BANS_URL.
+
+        The ordering is the property worth pinning, so this injects a
+        deliberately-raising dependency and tests it directly.
+        """
+
+        def _exploding_dependency():
+            raise HTTPException(status_code=503, detail=BAN_ADMIN_UNCONFIGURED_DETAIL)
+
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=_mock_ban_client())
+        app.dependency_overrides[get_optional_ban_admin_client] = _exploding_dependency
+
+        resp = await _post(app, body, {"Content-Type": "application/x-www-form-urlencoded"})
+
+        assert resp.status_code == 401
+        assert "BS_INTERNAL" not in resp.text
 
     @pytest.mark.asyncio
     async def test_unsigned_request_to_unconfigured_deployment_is_401_not_503(self):
@@ -818,3 +856,101 @@ class TestSlackUnavailable:
         ban_client.ban.assert_awaited_once()
         slack.update_message.assert_awaited_once()
         slack.post_ephemeral.assert_awaited_once()
+
+
+class TestTheBanAdmin503MovedButDidNotDisappear:
+    """``get_optional_ban_admin_client`` never raises, so the refusal for an
+    unwired deploy now comes from the handler's ban paths instead.
+
+    The point of the move is blast radius, not leniency: this route is the
+    Slack app's single interactivity Request URL, so a raising dependency
+    answers *every* callback that ever shares it -- ban-related or not -- with
+    a 503 naming two ban-only environment variables. These tests pin that the
+    ban flow's own behavior is byte-for-byte what it was: same status, same
+    detail, raised at the same two moments.
+    """
+
+    @pytest.mark.asyncio
+    async def test_button_click_still_503s_with_the_bans_upstream_unset(self):
+        """The click, not just the submit.
+
+        Refusing here rather than at submit time is what keeps the move
+        behavior-neutral -- and opening a reason modal that cannot possibly
+        save would be a worse failure than the 503 it replaced.
+        """
+        payload = _block_actions_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 503
+        assert "BS_INTERNAL_BANS_URL" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_modal_submission_still_503s_with_the_bans_upstream_unset(self):
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 503
+        assert "BS_INTERNAL_BANS_URL" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_the_detail_string_is_the_shared_constant(self):
+        """One source, so the two providers and the router cannot drift."""
+        payload = _view_submission_payload()
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.json()["detail"] == BAN_ADMIN_UNCONFIGURED_DETAIL
+
+    @pytest.mark.asyncio
+    async def test_an_unrelated_modal_submission_is_unaffected_by_the_bans_config(self):
+        """The reason the move exists.
+
+        A submission for some other modal sharing this Request URL was a 200
+        no-op on a configured deploy and a 503 on an unconfigured one -- purely
+        because a dependency resolved before the callback_id guard. It is now a
+        200 either way.
+        """
+        payload = _view_submission_payload()
+        payload["view"]["callback_id"] = "some_other_feature_modal"
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+
+
+class TestMovedDependenciesAreReExportedByIdentity:
+    """``verify_slack_request`` and ``get_slack_interactivity_service`` moved to
+    core/dependencies.py so a second Slack router can use them without importing
+    a sibling router.
+
+    ``dependency_overrides`` is keyed on object identity, so this module must
+    re-export *the same object*, not a copy. A copy would leave every existing
+    override in this file silently inert -- the tests would pass against a real
+    signature check and a real client, and nobody would notice.
+    """
+
+    def test_verify_slack_request_is_the_same_object(self):
+        from core.dependencies import verify_slack_request as canonical
+        from routers.slack_interactivity import verify_slack_request as re_exported
+
+        assert re_exported is canonical
+
+    def test_get_slack_interactivity_service_is_the_same_object(self):
+        from core.dependencies import (
+            get_slack_interactivity_service as canonical,
+        )
+        from routers.slack_interactivity import (
+            get_slack_interactivity_service as re_exported,
+        )
+
+        assert re_exported is canonical
