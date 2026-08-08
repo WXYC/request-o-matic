@@ -27,6 +27,7 @@ from httpx import ASGITransport, AsyncClient
 from config.settings import Settings, get_settings
 from core.dependencies import (
     BAN_ADMIN_UNCONFIGURED_DETAIL,
+    get_moderator_client,
     get_optional_ban_admin_client,
 )
 from core.exceptions import SlackPostError
@@ -38,6 +39,7 @@ from routers.slack_interactivity import (
     router,
 )
 from services.ban_admin_client import BanAdminClientError
+from services.moderator_client import ModeratorClientError
 from services.slack import (
     BAN_BUTTON_ACTION_ID,
     BAN_MENU_OPTION_VALUE,
@@ -220,6 +222,8 @@ def _build_app(
     slack: AsyncMock | None = None,
     ban_client: AsyncMock | None = None,
     ban_upstream_configured: bool = True,
+    moderator_client: AsyncMock | None = None,
+    moderator_upstream_configured: bool = True,
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
@@ -231,6 +235,11 @@ def _build_app(
         bs_internal_bans_url=(
             "https://bs.example.com/internal/banned-fingerprints"
             if ban_upstream_configured
+            else None
+        ),
+        bs_internal_moderators_url=(
+            "https://bs.example.com/internal/slack-ban-moderators"
+            if moderator_upstream_configured
             else None
         ),
         bs_internal_key="test-internal-key" if ban_upstream_configured else None,
@@ -245,6 +254,9 @@ def _build_app(
     # the tests hit a real client against a fake URL.
     if ban_client is not None:
         app.dependency_overrides[get_optional_ban_admin_client] = lambda: ban_client
+    # Default to no roster client so the pre-existing ban tests keep authorizing
+    # off `allowed_users` alone, exactly as they did before the union existed.
+    app.dependency_overrides[get_moderator_client] = lambda: moderator_client
 
     return app
 
@@ -976,3 +988,132 @@ class TestMovedDependenciesAreReExportedByIdentity:
         )
 
         assert re_exported is canonical
+
+
+def _mock_moderator_client(current: list[str] | None = None) -> AsyncMock:
+    client = AsyncMock()
+    client.list_moderators = AsyncMock(return_value=list(current or []))
+    return client
+
+
+class TestBanAuthorizationUsesTheUnion:
+    """Who can ban is `SLACK_BAN_AUTHORIZED_USERS` unioned with the BS roster."""
+
+    @pytest.mark.asyncio
+    async def test_stored_moderator_can_ban_without_being_in_the_env_allowlist(self):
+        stored_only = "U07STORED"
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id=stored_only)
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            ban_client=ban_client,
+            moderator_client=_mock_moderator_client([stored_only]),
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stored_moderator_can_open_the_ban_modal(self):
+        """The click authorizes off the union too, not just the submit."""
+        stored_only = "U07STORED"
+        slack = _mock_slack_service()
+        payload = _block_actions_payload(user_id=stored_only)
+        body = _form_body(payload)
+        app = _build_app(
+            slack=slack,
+            ban_client=_mock_ban_client(),
+            moderator_client=_mock_moderator_client([stored_only]),
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        slack.open_view.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_env_allowlist_still_bans_with_an_empty_roster(self):
+        """Day one: the table ships empty and nobody loses access."""
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id=ACTING_USER)
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            ban_client=ban_client,
+            moderator_client=_mock_moderator_client([]),
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_someone_on_neither_list_still_cannot_ban(self):
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id="U99ZZZ")
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            ban_client=ban_client,
+            moderator_client=_mock_moderator_client(["U07STORED"]),
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unreachable_roster_shrinks_to_the_env_allowlist(self):
+        """Fail closed: a Backend-Service outage must not widen who can ban.
+
+        The direction is the whole point. Reading an upstream error as "allow"
+        would turn a BS outage into workspace-wide ban rights, so the roster-only
+        user loses access while the break-glass user keeps it.
+        """
+        stored_only = "U07STORED"
+        broken = _mock_moderator_client()
+        broken.list_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+
+        denied = _mock_ban_client()
+        payload = _view_submission_payload(user_id=stored_only)
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_client=denied, moderator_client=broken)
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+        assert resp.status_code == 200
+        denied.ban.assert_not_awaited()
+
+        allowlisted = _mock_ban_client()
+        payload = _view_submission_payload(user_id=ACTING_USER)
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(), ban_client=allowlisted, moderator_client=broken
+        )
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+        assert resp.status_code == 200
+        allowlisted.ban.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_unconfigured_roster_upstream_does_not_break_the_ban_button(self):
+        """`get_moderator_client` returns None rather than 503ing, precisely so
+        that a deploy with no `BS_INTERNAL_MODERATORS_URL` still bans."""
+        ban_client = _mock_ban_client()
+        payload = _view_submission_payload(user_id=ACTING_USER)
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            ban_client=ban_client,
+            moderator_client=None,
+            moderator_upstream_configured=False,
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        ban_client.ban.assert_awaited_once()

@@ -14,10 +14,9 @@ which FastAPI resolves ahead of the handler's own dependencies; an unsigned
 request therefore cannot reach -- or learn anything from -- the ban-admin
 client's own configuration check, which lives in the handler's ban paths
 rather than on its dependencies (see :func:`_require_ban_client`). The flow
-itself never forks
-``services/ban_service.py``: this router is the second (and only other)
-caller alongside ``routers/admin.py``, so a Slack click and a curl produce the
-same audit trail.
+itself never forks ``services/ban_service.py``: this router is the second (and
+only other) caller alongside ``routers/admin.py``, so a Slack click and a curl
+produce the same audit trail.
 
 Flow:
 
@@ -30,13 +29,21 @@ Flow:
    fit, the footer is skipped rather than sent alone; see
    ``_MAX_PRIVATE_METADATA_LEN``.
 2. **view_submission** (modal submit): re-verify the acting user against the
-   allowlist server-side (never trust the client), validate the reason length
-   locally (defense in depth -- Slack's own ``plain_text_input`` bounds
+   authorized set server-side (never trust the client), validate the reason
+   length locally (defense in depth -- Slack's own ``plain_text_input`` bounds
    already stop most bad input from reaching here), call
    ``services/ban_service.ban`` with ``actor=None`` (a Slack user ID has no
    better-auth ``user`` row for BS's foreign key -- see
    ``services/ban_service.py``'s module docstring), then post an ephemeral
    ack and edit the original message with a "banned by" footer.
+
+"Against the allowlist" became "against the union" in #240: the authorized set
+is now ``SLACK_BAN_AUTHORIZED_USERS`` (break-glass) unioned with the roster
+stored in Backend-Service. Both authorization call sites are ``await``ed for
+that reason; the call-site *contract* is otherwise unchanged, which is what
+``services/slack_authorization.py`` predicted when this was a static list. An
+unreachable roster shrinks the authorized set to the break-glass list, never
+widens it.
 """
 
 from __future__ import annotations
@@ -55,6 +62,7 @@ from config.settings import Settings, get_settings
 from core.dependencies import (
     BAN_ADMIN_UNCONFIGURED_DETAIL,
     SlackService,
+    get_moderator_client,
     get_optional_ban_admin_client,
     get_slack_interactivity_service,
     verify_slack_request,
@@ -63,8 +71,9 @@ from core.exceptions import SlackPostError
 from services import ban_service
 from services.ban_admin_client import BanAdminClient, BanAdminClientError
 from services.fingerprint import normalize_fingerprint
+from services.moderator_client import ModeratorClient
 from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
-from services.slack_authorization import is_authorized_slack_user
+from services.slack_authorization import is_authorized_slack_user_in, resolve_authorized_users
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +242,7 @@ async def _handle_block_actions(
     slack: SlackService | None,
     settings: Settings,
     ban_client: BanAdminClient | None,
+    moderator_client: ModeratorClient | None,
 ) -> Response:
     actions = payload.get("actions") or []
     if not any(a.get("action_id") == BAN_BUTTON_ACTION_ID for a in actions):
@@ -255,7 +265,10 @@ async def _handle_block_actions(
     # device UUID out of the view payload, in a repo that otherwise truncates
     # fingerprints in logs precisely to avoid that. Checked before
     # _extract_fingerprint so an unauthorized click never reads the value.
-    if not is_authorized_slack_user(clicking_user, settings.slack_ban_authorized_users):
+    authorized = await resolve_authorized_users(
+        moderator_client, settings.slack_ban_authorized_users
+    )
+    if not is_authorized_slack_user_in(clicking_user, authorized):
         logger.warning(
             "slack_interactivity: unauthorized ban-button click user_id=%s", clicking_user
         )
@@ -337,6 +350,7 @@ async def _handle_view_submission(
     slack: SlackService | None,
     ban_client: BanAdminClient | None,
     settings: Settings,
+    moderator_client: ModeratorClient | None,
 ) -> Response:
     view = payload.get("view") or {}
     if view.get("callback_id") != BAN_MODAL_CALLBACK_ID:
@@ -375,7 +389,10 @@ async def _handle_view_submission(
     message_ts = context.get("message_ts")
     original_blocks = context.get("blocks")
 
-    if not is_authorized_slack_user(user_id, settings.slack_ban_authorized_users):
+    authorized = await resolve_authorized_users(
+        moderator_client, settings.slack_ban_authorized_users
+    )
+    if not is_authorized_slack_user_in(user_id, authorized):
         logger.warning("slack_interactivity: unauthorized ban attempt by user=%s", user_id)
         sentry_sdk.add_breadcrumb(
             category="slack_ban",
@@ -522,6 +539,7 @@ async def slack_interactivity(
     # with a 503 naming two ban-only env vars. The refusal moves into the ban
     # paths via _require_ban_client. See get_optional_ban_admin_client.
     ban_client: BanAdminClient | None = Depends(get_optional_ban_admin_client),
+    moderator_client: ModeratorClient | None = Depends(get_moderator_client),
 ) -> Response:
     """POST /slack/interactivity -- dispatch by interaction type.
 
@@ -553,9 +571,9 @@ async def slack_interactivity(
 
     interaction_type = payload.get("type")
     if interaction_type == "block_actions":
-        return await _handle_block_actions(payload, slack, settings, ban_client)
+        return await _handle_block_actions(payload, slack, settings, ban_client, moderator_client)
     if interaction_type == "view_submission":
-        return await _handle_view_submission(payload, slack, ban_client, settings)
+        return await _handle_view_submission(payload, slack, ban_client, settings, moderator_client)
 
     logger.info("slack_interactivity: ignoring unhandled interaction type=%s", interaction_type)
     return Response(status_code=200)
