@@ -245,7 +245,19 @@ class SlackService:
     async def _post_via_bot_token(
         self, blocks: list[dict], metadata: dict[str, Any] | None = None
     ) -> str:
-        payload: dict[str, Any] = {"channel": self.channel_id, "blocks": blocks}
+        payload: dict[str, Any] = {
+            "channel": self.channel_id,
+            "blocks": blocks,
+            # Slack unfurls app-posted links by default (`unfurl_media` is on),
+            # and a request post links out to Discogs, WXYC, and a streaming
+            # preview -- so going live with this transport grew a stack of
+            # preview cards, album art and an embedded player included, under
+            # every post. Incoming webhooks never unfurled, so suppressing it
+            # here is what keeps the two transports rendering the same thing
+            # from the same blocks.
+            "unfurl_links": False,
+            "unfurl_media": False,
+        }
         if metadata is not None:
             payload["metadata"] = metadata
         response = await self.http_client.post(
@@ -315,7 +327,16 @@ class SlackService:
         response = await self.http_client.post(
             "https://slack.com/api/chat.update",
             headers={"Authorization": f"Bearer {self.bot_token}"},
-            json={"channel": channel, "ts": ts, "blocks": blocks},
+            json={
+                "channel": channel,
+                "ts": ts,
+                "blocks": blocks,
+                # The footer edit re-sends the original blocks, links and all;
+                # without this the edit could re-add the preview cards
+                # _post_via_bot_token just suppressed.
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
         )
         response.raise_for_status()
         data = response.json()

@@ -455,9 +455,41 @@ class TestSlackServiceBotToken:
         mock_client.post.assert_called_once_with(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": "Bearer xoxb-test-token"},
-            json={"channel": "C123", "blocks": blocks},
+            json={
+                "channel": "C123",
+                "blocks": blocks,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
         )
         assert result == "1234.5678"
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_bot_token_suppresses_unfurling(self):
+        """Both unfurl flags must be sent false, matching the webhook's rendering.
+
+        Slack applies its own defaults when these are omitted -- ``unfurl_media``
+        is on for app-posted messages -- so a request post whose blocks link to
+        Discogs or Bandcamp grew full preview cards (album art, an embedded
+        player) the moment #215's transport went live. Incoming webhooks never
+        unfurled, so this was a visible regression in the channel rather than a
+        cosmetic difference, and it is the transport's job to suppress it: the
+        blocks are identical on both paths.
+        """
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1.2"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client, bot_token="xoxb-test-token", channel_id="C123"
+        )
+        await service.post_blocks([{"type": "section"}])
+
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert payload["unfurl_links"] is False
+        assert payload["unfurl_media"] is False
 
     @pytest.mark.asyncio
     async def test_post_blocks_bot_token_ok_false_raises(self):
@@ -523,7 +555,13 @@ class TestSlackServiceBotToken:
         mock_client.post.assert_called_once_with(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": "Bearer xoxb-test-token"},
-            json={"channel": "C123", "blocks": blocks, "metadata": metadata},
+            json={
+                "channel": "C123",
+                "blocks": blocks,
+                "unfurl_links": False,
+                "unfurl_media": False,
+                "metadata": metadata,
+            },
         )
         assert result == "1234.5678"
         posted_blocks = mock_client.post.call_args.kwargs["json"]["blocks"]
@@ -553,7 +591,12 @@ class TestSlackServiceBotToken:
         mock_client.post.assert_called_once_with(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": "Bearer xoxb-test-token"},
-            json={"channel": "C123", "blocks": blocks},
+            json={
+                "channel": "C123",
+                "blocks": blocks,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
         )
 
 
@@ -612,8 +655,35 @@ class TestSlackServiceUpdateMessage:
         mock_client.post.assert_called_once_with(
             "https://slack.com/api/chat.update",
             headers={"Authorization": "Bearer xoxb-test-token"},
-            json={"channel": "C123", "ts": "1234.5678", "blocks": blocks},
+            json={
+                "channel": "C123",
+                "ts": "1234.5678",
+                "blocks": blocks,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
         )
+
+    @pytest.mark.asyncio
+    async def test_update_message_suppresses_unfurling(self):
+        """The ban footer re-sends the original blocks, links and all.
+
+        Suppressing unfurls only on the initial post would leave the edit free
+        to re-add the preview cards the post deliberately skipped, so the two
+        writes have to agree.
+        """
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+        await service.update_message(channel="C123", ts="1.2", blocks=[{"type": "section"}])
+
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert payload["unfurl_links"] is False
+        assert payload["unfurl_media"] is False
 
     @pytest.mark.asyncio
     async def test_update_message_not_in_channel_names_channel(self):
