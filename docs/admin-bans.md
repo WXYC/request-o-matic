@@ -2,15 +2,15 @@
 
 Three operator endpoints on request-o-matic for managing request-line bans. ROM is a thin proxy: ban state lives in Backend-Service (BS#1261 `banned_fingerprints` table). This API exists so operators can manage bans without writing SQL or learning Backend-Service's better-auth admin flow.
 
-## When to use this vs the Slack-native ban button (#152)
+## When to use this vs the Slack-native ban menu (#152)
 
-The **"Ban requester" button** on each Slack request post is the primary operator UX — one click, a reason prompt, done, no curl required — **once `SLACK_USE_BOT_TOKEN=true` in the target environment** (see the caveat below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
+The **"Ban requester" item** in the overflow ("...") menu on each Slack request post is the primary operator UX — open the menu, pick it, give a reason, done, no curl required — **once `SLACK_USE_BOT_TOKEN=true` in the target environment** (see the caveat below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
 
 ## Where to find a fingerprint
 
-**Click "Ban requester" on the Slack post — this is the supported path, once the button is live (see caveat).** The button (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Every request to the interactivity endpoint — the click and the submission alike — has its Slack signature verified before anything else runs; an unsigned or stale one gets a flat `401` that looks identical whether or not the deployment is configured.
+**Open the "..." menu on the Slack post and choose "Ban requester" — this is the supported path, once the menu is live (see caveat).** The menu (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Every request to the interactivity endpoint — the click and the submission alike — has its Slack signature verified before anything else runs; an unsigned or stale one gets a flat `401` that looks identical whether or not the deployment is configured.
 
-Clicking the button checks the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)) **before** the modal opens. An unauthorized click gets an ephemeral refusal and no modal — the modal carries the listener's fingerprint in its `private_metadata`, so opening it for anyone who asked would hand out the device UUID this runbook otherwise takes care never to display. Authorization is then re-checked on submission, so the refusal is not something a crafted payload can skip.
+Choosing the menu item checks the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)) **before** the modal opens. An unauthorized click gets an ephemeral refusal and no modal — the modal carries the listener's fingerprint in its `private_metadata`, so opening it for anyone who asked would hand out the device UUID this runbook otherwise takes care never to display. Authorization is then re-checked on submission, so the refusal is not something a crafted payload can skip.
 
 Submitting the modal:
 
@@ -18,11 +18,11 @@ Submitting the modal:
 2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=None)` — the same function this HTTP API uses (`actor` is always `None` from rom; see that function's docstring for why).
 3. Posts an ephemeral confirmation to the clicking DJ, and edits the original message with a "🚫 Banned by @dj — reason" footer so the whole channel sees the outcome. On an unusually long post the footer is skipped and the ephemeral confirmation says so — the ban still lands, and the original message is left untouched rather than being replaced by a footer-only stub.
 
-**Caveat: the button is only live on the bot-token transport.** `chat.postMessage` `metadata` (#209, which the button depends on) is silently dropped by the incoming-webhook transport — see "The fingerprint is never displayed, only acted on" below. Until an environment has `SLACK_USE_BOT_TOKEN=true`, its buttons render but have nothing to act on; clicking one gets an ephemeral explaining that and pointing back to the PostHog fallback, rather than silently doing nothing. Staging carries the full ban stack already; production's cutover (flipping the flag and repointing the Slack app's interactivity Request URL) is a manual post-merge step, not a code change — see [#152](https://github.com/WXYC/request-o-matic/issues/152)'s acceptance criteria.
+**Caveat: the menu is only live on the bot-token transport.** `chat.postMessage` `metadata` (#209, which the menu depends on) is silently dropped by the incoming-webhook transport — see "The fingerprint is never displayed, only acted on" below. Until an environment has `SLACK_USE_BOT_TOKEN=true`, its menus render but have nothing to act on; choosing the item gets an ephemeral explaining that and pointing back to the PostHog fallback, rather than silently doing nothing. Staging carries the full ban stack already; production's cutover (flipping the flag and repointing the Slack app's interactivity Request URL) is a manual post-merge step, not a code change — see [#152](https://github.com/WXYC/request-o-matic/issues/152)'s acceptance criteria.
 
-Posts with **no button at all** have no usable fingerprint by construction — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, for a pre-cutover environment, or if the interactivity endpoint is down, fall back to the PostHog query below.
+Posts with **no menu at all** have no usable fingerprint by construction — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, for a pre-cutover environment, or if the interactivity endpoint is down, fall back to the PostHog query below.
 
-### PostHog fallback (when there's no button, the button isn't live yet, or the endpoint is down)
+### PostHog fallback (when there's no menu, the menu isn't live yet, or the endpoint is down)
 
 Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
@@ -45,7 +45,7 @@ Copy the `fp` value for the offending device into `POST /admin/bans` below. It i
 
 ### The fingerprint is never displayed, only acted on
 
-Request posts in Slack do **not** display the listener's fingerprint as visible text — it rides as private `chat.postMessage` `metadata` ([#209](https://github.com/WXYC/request-o-matic/issues/209)), read programmatically by the button's click handler (`routers/slack_interactivity.py`), not by a human scrolling the channel. Do not go looking for it in the rendered message; click the button instead, or use the PostHog query above if there is no button.
+Request posts in Slack do **not** display the listener's fingerprint as visible text — it rides as private `chat.postMessage` `metadata` ([#209](https://github.com/WXYC/request-o-matic/issues/209)), read programmatically by the menu's click handler (`routers/slack_interactivity.py`), not by a human scrolling the channel. Do not go looking for it in the rendered message; use the menu instead, or the PostHog query above if there is no menu.
 
 ## Authentication
 
@@ -99,7 +99,7 @@ Response (200):
 }
 ```
 
-`banned_by_user_id` is always `null` from request-o-matic — for HTTP admin callers because they're identified only by `ADMIN_TOKEN`, not an `auth_user.id`, and for Slack-triggered bans because a Slack user ID has no corresponding better-auth `user` row for Backend-Service's foreign key to reference (BS's own schema comment on `banned_fingerprints` calls this out explicitly). The Slack actor is recorded in Slack itself instead: the button posts an ephemeral ack to the clicking DJ and edits the original message with a "banned by @dj — reason" footer.
+`banned_by_user_id` is always `null` from request-o-matic — for HTTP admin callers because they're identified only by `ADMIN_TOKEN`, not an `auth_user.id`, and for Slack-triggered bans because a Slack user ID has no corresponding better-auth `user` row for Backend-Service's foreign key to reference (BS's own schema comment on `banned_fingerprints` calls this out explicitly). The Slack actor is recorded in Slack itself instead: the menu's handler posts an ephemeral ack to the acting DJ and edits the original message with a "banned by @dj — reason" footer.
 
 Curl:
 
@@ -184,4 +184,4 @@ See [`docs/env-vars.md`](env-vars.md) for the canonical reference. The three var
 
 - Storage: [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261) — `banned_fingerprints` table + `/internal/banned-fingerprints` CRUD.
 - Request-time enforcement: [#150](https://github.com/WXYC/request-o-matic/issues/150).
-- Slack-native ban button: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped — see "Where to find a fingerprint" above, and the transport caveat there for when it goes live in a given environment.
+- Slack-native ban menu: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped — see "Where to find a fingerprint" above, and the transport caveat there for when it goes live in a given environment.

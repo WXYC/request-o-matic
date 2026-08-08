@@ -71,7 +71,7 @@ SLACK_USE_BOT_TOKEN=false
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_CHANNEL_ID=C0123456789
 
-# Optional - Slack "Ban requester" button (see docs/admin-bans.md). Both
+# Optional - Slack "Ban requester" menu (see docs/admin-bans.md). Both
 # fail closed when unset: no signing secret means every /slack/interactivity
 # callback is rejected, and an empty allowlist means every ban click is
 # rejected. SLACK_BOT_TOKEN above is also required for this flow.
@@ -185,7 +185,7 @@ Request-line ban management (`Authorization: Bearer $ADMIN_TOKEN`). All writes a
 
 ### Slack Interactivity Endpoint
 
-- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" button on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call. See [`docs/admin-bans.md`](docs/admin-bans.md).
+- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" overflow-menu item on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call. See [`docs/admin-bans.md`](docs/admin-bans.md).
 
 ### Example Requests
 

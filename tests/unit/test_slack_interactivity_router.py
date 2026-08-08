@@ -35,7 +35,11 @@ from routers.slack_interactivity import (
     router,
 )
 from services.ban_admin_client import BanAdminClientError
-from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
+from services.slack import (
+    BAN_BUTTON_ACTION_ID,
+    BAN_MENU_OPTION_VALUE,
+    SLACK_METADATA_EVENT_TYPE,
+)
 
 SIGNING_SECRET = "test-signing-secret"
 FINGERPRINT = "11111111-2222-3333-4444-555555555555"
@@ -87,7 +91,21 @@ def _block_actions_payload(
         "user": {"id": user_id},
         "channel": {"id": CHANNEL_ID},
         "message": message,
-        "actions": [{"action_id": action_id, "type": "button"}],
+        # The realistic shape Slack sends for an overflow menu: ``action_id``
+        # rides at the same level a button's does (which is why the handler's
+        # matching needed no change), but the element type differs and a
+        # ``selected_option`` comes along. The handler must keep ignoring that
+        # option -- the fingerprint comes from verified message metadata.
+        "actions": [
+            {
+                "action_id": action_id,
+                "type": "overflow",
+                "selected_option": {
+                    "text": {"type": "plain_text", "text": "Ban requester"},
+                    "value": BAN_MENU_OPTION_VALUE,
+                },
+            }
+        ],
     }
 
 
