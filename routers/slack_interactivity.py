@@ -3,8 +3,12 @@
 
 ``POST /slack/interactivity`` is the single Request URL Slack calls for every
 button click and modal submission across the app (Slack allows exactly one
-per app). This router only handles the ban flow; any other interaction type
-or callback_id is a silent no-op so a future feature can share the same URL.
+per app). It handles two flows -- the ban modal (#152) and the moderator
+roster save (#240) -- and any other interaction type or callback_id is a
+silent 200 no-op so a future feature can share the same URL.
+
+The roster modal is *opened* by ``routers/slack_commands.py`` but *saved*
+here, because its ``view_submission`` has nowhere else to arrive.
 
 Every request is verified with :func:`services.slack_signature.verify_slack_signature`
 against the raw body *before* anything else -- an unverified callback is
@@ -160,6 +164,27 @@ def _field(payload: dict[str, Any], container: str, key: str) -> str | None:
         return None
     value = nested.get(key)
     return value if isinstance(value, str) else None
+
+
+def _nested_dict(container: Any, *keys: str) -> dict[str, Any]:
+    """Walk ``container`` through ``keys``, returning {} at the first non-dict.
+
+    The chained ``.get(k, {})`` idiom this replaces only guards *absent* keys:
+    a key present with a non-dict value returns that value, and the next
+    ``.get`` on it raises ``AttributeError``. Interaction payloads are
+    ``json.loads`` output, so every level is ``Any`` -- and on this route an
+    uncaught exception is a 500 whose Sentry event carries the settings object,
+    which holds every secret the process has. Only Slack can produce a
+    signature-verified payload that gets this far, so none of these shapes is
+    attacker-reachable; the cost of tolerating them is one isinstance check per
+    level, which is the same trade ``_field`` already makes.
+    """
+    current = container
+    for key in keys:
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, dict) else {}
 
 
 def _extract_fingerprint(message: dict[str, Any]) -> str | None:
@@ -421,12 +446,31 @@ async def _handle_moderator_view_submission(
     authorized = await resolve_authorized_users(
         moderator_client, settings.slack_ban_authorized_users
     )
-    if not is_authorized_slack_user_in(user_id, authorized):
+    if not is_authorized_slack_user_in(user_id, authorized.users):
+        if authorized.degraded:
+            # Do NOT call this a permissions decision. The roster half is
+            # missing, so this user may well be a moderator we simply could not
+            # confirm -- telling them they are unauthorized sends them to argue
+            # about their access during an outage that has nothing to do with
+            # them. The command that opens this modal already draws the same
+            # distinction; the save path was the half that did not.
+            logger.warning(
+                "slack_interactivity: moderator-roster save could not be authorized "
+                "(roster degraded) user=%s",
+                user_id,
+            )
+            return _roster_error(
+                "Couldn't reach the moderator list just now, so this couldn't be "
+                "saved. Nothing was changed -- try again in a moment."
+            )
         logger.warning(
             "slack_interactivity: unauthorized moderator-roster save by user=%s", user_id
         )
         sentry_sdk.add_breadcrumb(
-            category="slack_ban",
+            # Not "slack_ban": category is what Sentry indexes and groups by,
+            # and it cannot be re-bucketed retroactively. Roster edits and bans
+            # are different events with different operators and blast radii.
+            category="slack_moderators",
             level="warning",
             message="Unauthorized moderator-roster save via Slack interactivity",
             data={"user_id": user_id},
@@ -445,28 +489,31 @@ async def _handle_moderator_view_submission(
         )
 
     view = payload.get("view") or {}
-    selected = (
-        (view.get("state") or {})
-        .get("values", {})
-        .get(MODERATOR_BLOCK_ID, {})
-        .get(MODERATOR_ACTION_ID, {})
-        .get("selected_users")
+    selected = _nested_dict(view, "state", "values", MODERATOR_BLOCK_ID, MODERATOR_ACTION_ID).get(
+        "selected_users"
     )
     # json.loads output is Any, and a non-list (or a list of non-strings) would
     # reach .upper() in the client and 500. Same fail-closed-on-shape posture as
-    # is_authorized_slack_user_in.
+    # is_authorized_slack_user_in -- and applied at every level of the walk
+    # rather than only the leaf, which is where it used to stop.
     if not isinstance(selected, list) or not all(isinstance(uid, str) and uid for uid in selected):
         logger.error("slack_interactivity: moderator view_submission has malformed selected_users")
         return _roster_error("Could not read the selected users. Close this and try again.")
 
     try:
+        # TypeError as well as JSONDecodeError: private_metadata is Any, and
+        # json.loads of a dict/list/int raises TypeError, which the narrower
+        # except does not catch.
         context = json.loads(view.get("private_metadata") or "{}")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         logger.error("slack_interactivity: malformed private_metadata on moderator submission")
         return _roster_error("This form is stale. Close it and run /request-mods again.")
 
     expected = context.get("moderators") if isinstance(context, dict) else None
-    if not isinstance(expected, list) or not all(isinstance(uid, str) for uid in expected):
+    # ``and uid`` matches the selected_users guard above: an empty string can
+    # never equal a real Slack ID, so shipping one as expectedCurrent guarantees
+    # a 409 that blames a phantom concurrent editor.
+    if not isinstance(expected, list) or not all(isinstance(uid, str) and uid for uid in expected):
         logger.error("slack_interactivity: moderator private_metadata missing a usable roster")
         return _roster_error("This form is stale. Close it and run /request-mods again.")
 
@@ -481,7 +528,10 @@ async def _handle_moderator_view_submission(
             # Someone else saved between this modal opening and being submitted.
             # Surfacing it is the entire point: last-write-wins would silently
             # discard one of the two edits with nothing anywhere to show for it.
-            logger.warning("slack_interactivity: moderator roster save conflicted (409)")
+            current = exc.body.get("current") if isinstance(exc.body, dict) else None
+            logger.warning(
+                "slack_interactivity: moderator roster save conflicted (409) current=%r", current
+            )
             return _roster_error(
                 "Someone else changed the moderator list while this was open. "
                 "Close this and run /request-mods again to see the current list."
@@ -663,9 +713,12 @@ async def _handle_ban_view_submission(
     summary="Slack interactivity callback (button clicks + modal submissions)",
     description=(
         "The single Request URL for this Slack app's interactive components. "
-        "Handles the 'Ban requester' button (#152): a block_actions click opens "
-        "a reason modal, and the resulting view_submission bans the fingerprint "
-        "carried in the original message's metadata."
+        "Handles the 'Ban requester' button (#152) -- a block_actions click "
+        "opens a reason modal, and the resulting view_submission bans the "
+        "fingerprint carried in the original message's metadata -- and the "
+        "/request-mods moderator roster save (#240), whose modal is opened by "
+        "POST /slack/commands but submitted here. Any other callback_id is an "
+        "acknowledged no-op."
     ),
     responses={
         200: {"description": "Acknowledged (always, regardless of internal handling)"},
