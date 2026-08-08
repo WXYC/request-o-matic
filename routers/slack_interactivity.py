@@ -12,7 +12,9 @@ forgeable, and this one bans people. "Before anything else" is enforced by
 running that check as a route-level dependency (:func:`verify_slack_request`),
 which FastAPI resolves ahead of the handler's own dependencies; an unsigned
 request therefore cannot reach -- or learn anything from -- the ban-admin
-client's own configuration check. The flow itself never forks
+client's own configuration check, which lives in the handler's ban paths
+rather than on its dependencies (see :func:`_require_ban_client`). The flow
+itself never forks
 ``services/ban_service.py``: this router is the second (and only other)
 caller alongside ``routers/admin.py``, so a Slack click and a curl produce the
 same audit trail.
@@ -46,20 +48,38 @@ from urllib.parse import parse_qs
 
 import httpx
 import sentry_sdk
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from config.settings import Settings, get_settings
-from core.dependencies import SlackService, get_ban_admin_client, get_http_client
+from core.dependencies import (
+    BAN_ADMIN_UNCONFIGURED_DETAIL,
+    SlackService,
+    get_optional_ban_admin_client,
+    get_slack_interactivity_service,
+    verify_slack_request,
+)
 from core.exceptions import SlackPostError
 from services import ban_service
 from services.ban_admin_client import BanAdminClient, BanAdminClientError
 from services.fingerprint import normalize_fingerprint
 from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
 from services.slack_authorization import is_authorized_slack_user
-from services.slack_signature import verify_slack_signature
 
 logger = logging.getLogger(__name__)
+
+# Re-exported, NOT redefined. ``verify_slack_request`` and
+# ``get_slack_interactivity_service`` moved to core/dependencies.py so a second
+# Slack router (#240) can use them without importing a sibling router.
+# tests/unit/test_slack_interactivity_router.py keys a ``dependency_overrides``
+# entry off the name as imported from *this* module, and that mapping is
+# identity-based -- so these must stay the same object. A copy would silently
+# stop overriding, which is the failure mode to watch for.
+__all__ = [
+    "get_slack_interactivity_service",
+    "router",
+    "verify_slack_request",
+]
 
 router = APIRouter(prefix="/slack", tags=["slack-interactivity"])
 
@@ -80,54 +100,6 @@ REASON_MAX_LENGTH = 1000
 # (channels:history), a scope this app doesn't have -- so the long-post case
 # gives up the footer to keep the post, never the other way round.
 _MAX_PRIVATE_METADATA_LEN = 3000
-
-
-async def verify_slack_request(
-    request: Request,
-    settings: Settings = Depends(get_settings),
-    x_slack_request_timestamp: str | None = Header(default=None),
-    x_slack_signature: str | None = Header(default=None),
-) -> None:
-    """Reject anything without a valid Slack signature, before any other
-    dependency can observe the request.
-
-    Wired as a route-level ``dependencies=[...]`` entry rather than a handler
-    parameter: FastAPI inserts those at the front of the dependency list, so
-    this is guaranteed to resolve before ``get_ban_admin_client``. As a
-    handler parameter it would resolve *after* it, and an unsigned POST to a
-    deployment missing ``BS_INTERNAL_BANS_URL``/``BS_INTERNAL_KEY`` would come
-    back with that dependency's 503 -- handing an unauthenticated caller the
-    deployment's configuration state and two env var names, and contradicting
-    the 401 this route documents.
-
-    ``Request.body()`` caches the bytes it reads, so the handler's own
-    ``await request.body()`` sees the same payload rather than an exhausted
-    stream.
-    """
-    if not verify_slack_signature(
-        settings.slack_signing_secret,
-        timestamp=x_slack_request_timestamp,
-        body=await request.body(),
-        signature=x_slack_signature,
-    ):
-        raise HTTPException(status_code=401, detail="Invalid Slack signature")
-
-
-async def get_slack_interactivity_service(
-    settings: Settings = Depends(get_settings),
-    http_client: httpx.AsyncClient = Depends(get_http_client),
-) -> SlackService | None:
-    """Bot-token-only SlackService for interactivity callbacks.
-
-    Independent of ``SLACK_USE_BOT_TOKEN`` / ``ENABLE_SLACK_INTEGRATION``:
-    ``views.open``, ``chat.update``, and ``chat.postEphemeral`` are Web API
-    methods with no incoming-webhook equivalent, so this resolves off
-    ``SLACK_BOT_TOKEN`` alone rather than reusing ``get_slack_service``'s
-    webhook/bot-token transport selection for ``POST /request``.
-    """
-    if not settings.slack_bot_token:
-        return None
-    return SlackService(http_client, bot_token=settings.slack_bot_token)
 
 
 def _redact_fingerprint(fingerprint: str) -> str:
@@ -232,12 +204,36 @@ def _build_updated_blocks(
     return [*original_blocks, _build_footer_block(user_id, reason)]
 
 
+def _require_ban_client(ban_client: BanAdminClient | None) -> BanAdminClient:
+    """Raise the ban-admin 503 that used to live on the dependency.
+
+    ``get_optional_ban_admin_client`` returns None rather than raising so an
+    unsigned request -- or a future non-ban interaction sharing this Request
+    URL -- cannot be answered with a 503 naming two environment variables.
+    The refusal itself is unchanged: same status, same detail string, and
+    raised at the same two moments in the flow (the button click and the modal
+    submission), so an unwired deploy behaves exactly as it did before the
+    dependency became optional.
+    """
+    if ban_client is None:
+        raise HTTPException(status_code=503, detail=BAN_ADMIN_UNCONFIGURED_DETAIL)
+    return ban_client
+
+
 async def _handle_block_actions(
-    payload: dict[str, Any], slack: SlackService | None, settings: Settings
+    payload: dict[str, Any],
+    slack: SlackService | None,
+    settings: Settings,
+    ban_client: BanAdminClient | None,
 ) -> Response:
     actions = payload.get("actions") or []
     if not any(a.get("action_id") == BAN_BUTTON_ACTION_ID for a in actions):
         return Response(status_code=200)
+
+    # Refuse at click time, not at submit time. Opening a reason modal that
+    # cannot possibly save is a worse failure than the 503, and this is the
+    # moment the raising dependency used to fire.
+    _require_ban_client(ban_client)
 
     channel = _field(payload, "channel", "id")
     clicking_user = _field(payload, "user", "id")
@@ -331,12 +327,17 @@ async def _handle_block_actions(
 async def _handle_view_submission(
     payload: dict[str, Any],
     slack: SlackService | None,
-    ban_client: BanAdminClient,
+    ban_client: BanAdminClient | None,
     settings: Settings,
 ) -> Response:
     view = payload.get("view") or {}
     if view.get("callback_id") != BAN_MODAL_CALLBACK_ID:
         return Response(status_code=200)
+
+    # After the callback_id guard, so a submission for some other modal sharing
+    # this Request URL is still the 200 no-op it has always been rather than
+    # inheriting the ban flow's configuration requirements.
+    ban_client = _require_ban_client(ban_client)
 
     user_id = (payload.get("user") or {}).get("id")
     if not isinstance(user_id, str):
@@ -499,7 +500,12 @@ async def slack_interactivity(
     request: Request,
     settings: Settings = Depends(get_settings),
     slack: SlackService | None = Depends(get_slack_interactivity_service),
-    ban_client: BanAdminClient = Depends(get_ban_admin_client),
+    # Optional, NOT the raising variant: handler-parameter dependencies resolve
+    # before the interaction-type dispatch below, so the raising one answers
+    # every callback reaching this shared Request URL -- ban-related or not --
+    # with a 503 naming two ban-only env vars. The refusal moves into the ban
+    # paths via _require_ban_client. See get_optional_ban_admin_client.
+    ban_client: BanAdminClient | None = Depends(get_optional_ban_admin_client),
 ) -> Response:
     """POST /slack/interactivity -- dispatch by interaction type.
 
@@ -531,7 +537,7 @@ async def slack_interactivity(
 
     interaction_type = payload.get("type")
     if interaction_type == "block_actions":
-        return await _handle_block_actions(payload, slack, settings)
+        return await _handle_block_actions(payload, slack, settings, ban_client)
     if interaction_type == "view_submission":
         return await _handle_view_submission(payload, slack, ban_client, settings)
 

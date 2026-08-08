@@ -17,6 +17,7 @@ from core.dependencies import (
     get_ban_admin_client,
     get_groq_client,
     get_http_client,
+    get_optional_ban_admin_client,
     get_posthog_client,
     get_slack_bot_config,
     get_slack_service,
@@ -1049,3 +1050,72 @@ class TestGetBanAdminClient:
         finally:
             await http.aclose()
         assert excinfo.value.status_code == 503
+
+
+class TestGetOptionalBanAdminClient:
+    """The None-instead-of-503 variant used by POST /slack/interactivity."""
+
+    @pytest.mark.asyncio
+    async def test_builds_client_when_configured(self):
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+            bs_internal_key="key-123",
+        )
+        http = httpx.AsyncClient()
+        try:
+            client = await get_optional_ban_admin_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+
+        assert isinstance(client, BanAdminClient)
+        assert client.internal_key == "key-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("url", "key"),
+        [
+            (None, "key-123"),
+            ("https://bs.example.com/internal/banned-fingerprints", None),
+            (None, None),
+        ],
+        ids=["no-url", "no-key", "neither"],
+    )
+    async def test_returns_none_instead_of_raising(self, url, key):
+        """Never raises. The 503 moved into the router's ban paths.
+
+        If this raised, every callback sharing the interactivity Request URL --
+        including ones with nothing to do with bans -- would die on two
+        ban-only environment variables, because handler-parameter dependencies
+        resolve before the interaction-type dispatch.
+        """
+        settings = Settings(groq_api_key="x", bs_internal_bans_url=url, bs_internal_key=key)
+        http = httpx.AsyncClient()
+        try:
+            assert await get_optional_ban_admin_client(settings=settings, http_client=http) is None
+        finally:
+            await http.aclose()
+
+    @pytest.mark.asyncio
+    async def test_both_providers_agree_on_what_configured_means(self):
+        """Shared construction, so the pair cannot drift apart.
+
+        A deploy where one provider builds a client and the other returns None
+        (or 503s) would make the ban flow's behavior depend on which route you
+        came in through.
+        """
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+            bs_internal_key="key-123",
+        )
+        http = httpx.AsyncClient()
+        try:
+            raising = await get_ban_admin_client(settings=settings, http_client=http)
+            optional = await get_optional_ban_admin_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+
+        assert optional is not None
+        assert raising.base_url == optional.base_url
+        assert raising.internal_key == optional.internal_key

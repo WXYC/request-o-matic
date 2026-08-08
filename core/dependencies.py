@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from groq import AsyncGroq
 from wxyc_fastapi.http import async_singleton
 from wxyc_fastapi.observability import get_posthog_client as _shared_posthog_client
@@ -17,6 +17,7 @@ from core.exceptions import ServiceInitializationError, SlackPostError
 from services.ban_admin_client import BanAdminClient
 from services.ban_check_client import BanCheckClient
 from services.lookup_client import LookupServiceClient
+from services.slack_signature import verify_slack_signature
 
 if TYPE_CHECKING:
     from posthog import Posthog
@@ -471,6 +472,28 @@ def require_admin_token(
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
+#: Detail string for an unwired ban-admin upstream. Single-sourced so the
+#: raising and optional providers below cannot drift, and so the 503 the
+#: interactivity router raises from inside its ban paths is byte-identical to
+#: the one the dependency used to raise for it.
+BAN_ADMIN_UNCONFIGURED_DETAIL = (
+    "Ban admin upstream not configured: set BS_INTERNAL_BANS_URL and BS_INTERNAL_KEY"
+)
+
+
+def _build_ban_admin_client(
+    settings: Settings, http_client: httpx.AsyncClient
+) -> BanAdminClient | None:
+    """Construct a BanAdminClient, or None when either variable is unset."""
+    if not settings.bs_internal_bans_url or not settings.bs_internal_key:
+        return None
+    return BanAdminClient(
+        settings.bs_internal_bans_url,
+        http_client,
+        internal_key=settings.bs_internal_key,
+    )
+
+
 async def get_ban_admin_client(
     settings: Settings = Depends(get_settings),
     http_client: httpx.AsyncClient = Depends(get_http_client),
@@ -481,16 +504,92 @@ async def get_ban_admin_client(
     to Backend-Service. Surfacing the misconfiguration as 503 (not 500) tells
     operators "the upstream isn't wired" rather than implying a bug in the
     request they sent.
+
+    ``/admin/bans`` wants exactly this: the whole request *is* the upstream
+    call, so there is nothing useful to do without a client. Callers that serve
+    more than bans want :func:`get_optional_ban_admin_client`.
     """
-    if not settings.bs_internal_bans_url or not settings.bs_internal_key:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Ban admin upstream not configured: set BS_INTERNAL_BANS_URL and BS_INTERNAL_KEY"
-            ),
-        )
-    return BanAdminClient(
-        settings.bs_internal_bans_url,
-        http_client,
-        internal_key=settings.bs_internal_key,
-    )
+    client = _build_ban_admin_client(settings, http_client)
+    if client is None:
+        raise HTTPException(status_code=503, detail=BAN_ADMIN_UNCONFIGURED_DETAIL)
+    return client
+
+
+async def get_optional_ban_admin_client(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> BanAdminClient | None:
+    """Same client, but None instead of 503 when unconfigured.
+
+    Exists for ``POST /slack/interactivity``, which is the Slack app's single
+    interactivity Request URL and therefore cannot assume every callback
+    reaching it is a ban. FastAPI resolves handler-parameter dependencies
+    before the handler dispatches on interaction type and ``callback_id``, so
+    declaring the raising variant there makes *every* interaction the app ever
+    grows fail with a 503 naming two ban-related environment variables it may
+    never touch.
+
+    The 503 isn't discarded -- it moves to the ban paths, where the client is
+    actually used, so a deploy missing ``BS_INTERNAL_BANS_URL`` still refuses
+    bans at exactly the same two moments it did before. Only its blast radius
+    changes.
+    """
+    return _build_ban_admin_client(settings, http_client)
+
+
+async def verify_slack_request(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    x_slack_request_timestamp: str | None = Header(default=None),
+    x_slack_signature: str | None = Header(default=None),
+) -> None:
+    """Reject anything without a valid Slack signature, before any other
+    dependency can observe the request.
+
+    Wired as a route-level ``dependencies=[...]`` entry rather than a handler
+    parameter: FastAPI inserts those at the front of the dependency list, so
+    this is guaranteed to resolve before the upstream-client dependencies
+    below it. As a handler parameter it would resolve *after* them, and an
+    unsigned POST to a deployment missing ``BS_INTERNAL_BANS_URL``/
+    ``BS_INTERNAL_KEY`` would come back with that dependency's 503 -- handing
+    an unauthenticated caller the deployment's configuration state and two env
+    var names, and contradicting the 401 these routes document.
+
+    ``Request.body()`` caches the bytes it reads, so the handler's own
+    ``await request.body()`` sees the same payload rather than an exhausted
+    stream.
+
+    Lives here rather than in ``routers/slack_interactivity.py`` (its original
+    home) because a second Slack router needs it too (#240), and a router
+    importing a sibling router is the wrong direction of coupling. The
+    interactivity router re-exports it -- same object, new home -- because
+    ``dependency_overrides`` keys on identity.
+    """
+    if not verify_slack_signature(
+        settings.slack_signing_secret,
+        timestamp=x_slack_request_timestamp,
+        body=await request.body(),
+        signature=x_slack_signature,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+
+async def get_slack_interactivity_service(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> SlackService | None:
+    """Bot-token-only SlackService for Slack callbacks.
+
+    Independent of ``SLACK_USE_BOT_TOKEN`` / ``ENABLE_SLACK_INTEGRATION``:
+    ``views.open``, ``chat.update``, and ``chat.postEphemeral`` are Web API
+    methods with no incoming-webhook equivalent, so this resolves off
+    ``SLACK_BOT_TOKEN`` alone rather than reusing ``get_slack_service``'s
+    webhook/bot-token transport selection for ``POST /request``.
+
+    Moved here from ``routers/slack_interactivity.py`` alongside
+    :func:`verify_slack_request`, and re-exported there for the same
+    identity-keyed ``dependency_overrides`` reason.
+    """
+    if not settings.slack_bot_token:
+        return None
+    return SlackService(http_client, bot_token=settings.slack_bot_token)
