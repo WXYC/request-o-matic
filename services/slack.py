@@ -13,25 +13,43 @@ logger = logging.getLogger(__name__)
 # consumer, or every existing button silently stops finding a fingerprint.
 SLACK_METADATA_EVENT_TYPE = "request_posted"
 
-# action_id on the "Ban requester" button (request-o-matic#152).
+# action_id on the "Ban requester" overflow menu (request-o-matic#152).
 # routers/slack_interactivity.py matches on this to recognize the click --
 # keep in sync with that consumer, same rationale as SLACK_METADATA_EVENT_TYPE
-# above. The button deliberately carries no ``value``: the fingerprint it acts
-# on comes from the clicked message's own metadata (see
-# build_slack_metadata / SLACK_METADATA_EVENT_TYPE), read by the interactivity
-# handler from the verified Slack payload, not from anything set on the button.
+# above. Overflow actions carry ``action_id`` in the block_actions payload
+# exactly as buttons do, so the handler's matching is unchanged.
 BAN_BUTTON_ACTION_ID = "ban_requester"
 
+# Slack requires a ``value`` on every overflow option. The button this replaced
+# deliberately carried none, and that property has to survive the change: the
+# fingerprint acted on comes from the clicked message's own metadata (see
+# build_slack_metadata / SLACK_METADATA_EVENT_TYPE), read by the interactivity
+# handler out of the signature-verified payload. This constant exists so the
+# required field can be satisfied with something inert -- it is never read back,
+# and nothing request-specific may ever be encoded here.
+BAN_MENU_OPTION_VALUE = "ban_requester"
 
-def _build_ban_button_block() -> dict[str, Any]:
+
+def _build_ban_menu_block() -> dict[str, Any]:
+    """Build the overflow ("...") menu holding the ban action.
+
+    An overflow rather than a standalone ``danger`` button: the affordance sits
+    under every request post, and a red button there reads as an invitation to
+    use it. The menu keeps banning one click away without making it the loudest
+    thing in the channel.
+    """
     return {
         "type": "actions",
         "elements": [
             {
-                "type": "button",
-                "text": {"type": "plain_text", "text": "Ban requester"},
-                "style": "danger",
+                "type": "overflow",
                 "action_id": BAN_BUTTON_ACTION_ID,
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": "Ban requester"},
+                        "value": BAN_MENU_OPTION_VALUE,
+                    }
+                ],
             }
         ],
     }
@@ -69,14 +87,14 @@ def maybe_append_ban_button(
 
     Mirrors ``build_slack_metadata``'s usable/unusable split exactly, via the
     same ``normalize_fingerprint`` call: a post without a usable fingerprint
-    gets no button, since there is nothing behind it to ban and a button that
-    422s on every click is worse than no button. Returns a new list rather
-    than mutating ``blocks`` in place, containing a freshly-built button block
-    rather than a shared reference.
+    gets no menu, since there is nothing behind it to ban and an action that
+    422s on every click is worse than no action at all. Returns a new list
+    rather than mutating ``blocks`` in place, containing a freshly-built menu
+    block rather than a shared reference.
     """
     if normalize_fingerprint(fingerprint) is None:
         return blocks
-    return [*blocks, _build_ban_button_block()]
+    return [*blocks, _build_ban_menu_block()]
 
 
 def build_slack_blocks(

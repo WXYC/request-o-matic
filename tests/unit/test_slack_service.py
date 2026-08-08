@@ -7,6 +7,7 @@ import pytest
 from models import ReleaseMetadata
 from services.slack import (
     BAN_BUTTON_ACTION_ID,
+    BAN_MENU_OPTION_VALUE,
     SLACK_METADATA_EVENT_TYPE,
     build_simple_slack_blocks,
     build_slack_blocks,
@@ -320,7 +321,13 @@ class TestMaybeAppendBanButton:
     button with no fingerprint metadata behind it would 422 on every click.
     """
 
-    def test_appends_button_for_usable_fingerprint(self, sample_library_item):
+    def test_appends_overflow_menu_for_usable_fingerprint(self, sample_library_item):
+        """The affordance is an overflow menu, not a standalone danger button.
+
+        A red "Ban requester" button sitting under every request post reads as
+        an invitation; tucking it behind the menu's "..." keeps it one click
+        away without making banning the visually loudest thing in the channel.
+        """
         fingerprint = "11111111-1111-4111-8111-111111111111"
         blocks = build_slack_blocks(
             message="Here's what I found:",
@@ -330,11 +337,31 @@ class TestMaybeAppendBanButton:
         result = maybe_append_ban_button(blocks, fingerprint)
 
         assert len(result) == len(blocks) + 1
-        button_block = result[-1]
-        assert button_block["type"] == "actions"
-        button = button_block["elements"][0]
-        assert button["type"] == "button"
-        assert button["action_id"] == BAN_BUTTON_ACTION_ID
+        menu_block = result[-1]
+        assert menu_block["type"] == "actions"
+        menu = menu_block["elements"][0]
+        assert menu["type"] == "overflow"
+        assert menu["action_id"] == BAN_BUTTON_ACTION_ID
+        assert [opt["text"]["text"] for opt in menu["options"]] == ["Ban requester"]
+
+    def test_overflow_option_value_is_inert(self, sample_library_item):
+        """Slack requires a ``value`` on every overflow option, unlike the button
+        this replaced, which deliberately carried none.
+
+        The handler must keep ignoring it: the fingerprint comes from the
+        clicked message's verified metadata, never from the click payload. Pin
+        the value to a constant with no request-specific content so a future
+        edit can't quietly start smuggling state through it.
+        """
+        blocks = build_slack_blocks(
+            message="Here's what I found:",
+            items_with_artwork=[(sample_library_item, None)],
+        )
+
+        result = maybe_append_ban_button(blocks, "11111111-1111-4111-8111-111111111111")
+
+        options = result[-1]["elements"][0]["options"]
+        assert [opt["value"] for opt in options] == [BAN_MENU_OPTION_VALUE]
 
     def test_does_not_mutate_input_blocks(self, sample_library_item):
         blocks = build_slack_blocks(
