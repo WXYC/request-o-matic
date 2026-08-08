@@ -71,11 +71,19 @@ logger = logging.getLogger(__name__)
 # Re-exported, NOT redefined. ``verify_slack_request`` and
 # ``get_slack_interactivity_service`` moved to core/dependencies.py so a second
 # Slack router (#240) can use them without importing a sibling router.
-# tests/unit/test_slack_interactivity_router.py keys a ``dependency_overrides``
-# entry off the name as imported from *this* module, and that mapping is
-# identity-based -- so these must stay the same object. A copy would silently
-# stop overriding, which is the failure mode to watch for.
+#
+# The re-export must stay the same object rather than a copy, because
+# ``dependency_overrides`` is keyed on identity. To be precise about when that
+# bites: a copy would NOT break this module's own tests, which import the name
+# from here and thus override whatever this module holds. It bites once a
+# second router overrides the ``core.dependencies`` name -- then one override
+# would silently miss this route. That is the near-miss the optional/raising
+# ban-client pair actually hit during this work, and the reason it is pinned
+# here before the second router exists rather than after.
 __all__ = [
+    "BAN_MODAL_CALLBACK_ID",
+    "BAN_REASON_ACTION_ID",
+    "BAN_REASON_BLOCK_ID",
     "get_slack_interactivity_service",
     "router",
     "verify_slack_request",
@@ -493,7 +501,15 @@ async def _handle_view_submission(
     ),
     responses={
         200: {"description": "Acknowledged (always, regardless of internal handling)"},
+        400: {"description": "Missing or malformed interaction payload"},
         401: {"description": "Invalid or missing Slack request signature"},
+        503: {
+            "description": (
+                "Ban upstream not configured. Raised only from the ban paths, "
+                "not from the route's dependencies -- interactions that do not "
+                "need a ban client are unaffected."
+            )
+        },
     },
 )
 async def slack_interactivity(
