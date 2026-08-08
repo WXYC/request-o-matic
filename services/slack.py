@@ -29,6 +29,22 @@ BAN_BUTTON_ACTION_ID = "ban_requester"
 # and nothing request-specific may ever be encoded here.
 BAN_MENU_OPTION_VALUE = "ban_requester"
 
+# Slack caps ``private_metadata`` at 3000 characters on any view payload.
+#
+# Two routers now stash state there -- the ban modal (the original consumer,
+# which degrades by dropping the message blocks and skipping its chat.update
+# footer when they don't fit) and the moderator modal (#240, which round-trips
+# the roster it read so Backend-Service can detect a concurrent edit). It lives
+# here, beside the other cross-router Slack constants, rather than staying
+# module-private in one of them: a router importing a sibling router's
+# underscored name is the coupling this design rejects everywhere else.
+#
+# The moderator modal's guard against this is unreachable in practice -- at
+# BS's 100-ID cap, a JSON array of 11-character IDs runs about 1,400 characters,
+# under half the budget -- and it is written anyway so that if the cap ever
+# rises, the ceiling is enforced rather than rediscovered.
+MAX_PRIVATE_METADATA_LEN = 3000
+
 
 def _build_ban_menu_block() -> dict[str, Any]:
     """Build the overflow ("...") menu holding the ban action.

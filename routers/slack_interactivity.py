@@ -71,8 +71,12 @@ from core.exceptions import SlackPostError
 from services import ban_service
 from services.ban_admin_client import BanAdminClient, BanAdminClientError
 from services.fingerprint import normalize_fingerprint
-from services.moderator_client import ModeratorClient
-from services.slack import BAN_BUTTON_ACTION_ID, SLACK_METADATA_EVENT_TYPE
+from services.moderator_client import ModeratorClient, ModeratorClientError
+from services.slack import (
+    BAN_BUTTON_ACTION_ID,
+    MAX_PRIVATE_METADATA_LEN,
+    SLACK_METADATA_EVENT_TYPE,
+)
 from services.slack_authorization import is_authorized_slack_user_in, resolve_authorized_users
 
 logger = logging.getLogger(__name__)
@@ -104,19 +108,27 @@ BAN_MODAL_CALLBACK_ID = "ban_reason_modal"
 BAN_REASON_BLOCK_ID = "ban_reason_block"
 BAN_REASON_ACTION_ID = "ban_reason_input"
 
+# The /request-mods roster modal (#240). Defined here rather than in the module
+# that opens it, because this module is where the submission is dispatched --
+# and a callback_id whose producer and consumer sit in different modules is
+# exactly the pair that drifts.
+MODERATOR_MODAL_CALLBACK_ID = "moderator_roster_modal"
+MODERATOR_BLOCK_ID = "moderator_roster_block"
+MODERATOR_ACTION_ID = "moderator_roster_select"
+
 REASON_MIN_LENGTH = 1
 REASON_MAX_LENGTH = 1000
 
-# Slack caps private_metadata at 3000 characters, and an unbounded result set
-# clears that easily. When the original message's blocks don't fit alongside
-# the fingerprint/channel/ts context we stash None, and _handle_view_submission
-# skips the chat.update entirely rather than sending the footer alone:
-# chat.update replaces a message's blocks wholesale, so a footer-only edit
-# would delete the request post the channel is looking at. Re-fetching the
-# blocks at submit time instead would need conversations.history
+# Alias for the ceiling that moved to services/slack.py so a second modal could
+# share it without importing this router's underscored name. When the original
+# message's blocks don't fit alongside the fingerprint/channel/ts context we
+# stash None, and the ban branch skips the chat.update entirely rather than
+# sending the footer alone: chat.update replaces a message's blocks wholesale,
+# so a footer-only edit would delete the request post the channel is looking at.
+# Re-fetching the blocks at submit time instead would need conversations.history
 # (channels:history), a scope this app doesn't have -- so the long-post case
 # gives up the footer to keep the post, never the other way round.
-_MAX_PRIVATE_METADATA_LEN = 3000
+_MAX_PRIVATE_METADATA_LEN = MAX_PRIVATE_METADATA_LEN
 
 
 def _redact_fingerprint(fingerprint: str) -> str:
@@ -352,15 +364,154 @@ async def _handle_view_submission(
     settings: Settings,
     moderator_client: ModeratorClient | None,
 ) -> Response:
-    view = payload.get("view") or {}
-    if view.get("callback_id") != BAN_MODAL_CALLBACK_ID:
-        return Response(status_code=200)
+    """Dispatch a modal submission by ``callback_id``.
 
-    # After the callback_id guard, so a submission for some other modal sharing
-    # this Request URL is still the 200 no-op it has always been rather than
-    # inheriting the ban flow's configuration requirements.
+    Was an early-return guard when the ban modal was the only one; a second
+    modal turns it into a dispatch. **An unrecognized callback_id still returns
+    200 and does nothing** -- that is not leniency, it is the contract: Slack
+    delivers every modal submission across the whole app to this single
+    Request URL, so an unknown id is a routine event rather than an error.
+    """
+    view = payload.get("view") or {}
+    callback_id = view.get("callback_id")
+
+    if callback_id == BAN_MODAL_CALLBACK_ID:
+        return await _handle_ban_view_submission(
+            payload, slack, ban_client, settings, moderator_client
+        )
+    if callback_id == MODERATOR_MODAL_CALLBACK_ID:
+        return await _handle_moderator_view_submission(payload, settings, moderator_client)
+
+    return Response(status_code=200)
+
+
+def _roster_error(message: str) -> JSONResponse:
+    """Keep the roster modal open and show ``message`` under the picker.
+
+    Every refusal on this branch uses it. A bare 200 would close the modal and
+    look exactly like a successful save -- which is the failure mode the whole
+    optimistic-concurrency design exists to avoid, so it must not be the way
+    refusals are rendered.
+    """
+    return JSONResponse(
+        content={"response_action": "errors", "errors": {MODERATOR_BLOCK_ID: message}}
+    )
+
+
+async def _handle_moderator_view_submission(
+    payload: dict[str, Any],
+    settings: Settings,
+    moderator_client: ModeratorClient | None,
+) -> Response:
+    """Save the moderator roster submitted from the /request-mods modal (#240).
+
+    Takes no ``SlackService``: every outcome is rendered through this
+    response's own body, so unlike the ban branch there is nothing here that
+    needs the Web API and nothing that goes silent without ``SLACK_BOT_TOKEN``.
+    """
+    user_id = (payload.get("user") or {}).get("id")
+    if not isinstance(user_id, str):
+        logger.error("slack_interactivity: moderator view_submission missing user.id")
+        return _roster_error("Could not identify the submitting user. Try again.")
+
+    # Re-authorize. The submission is a separate HTTP request from the one that
+    # opened the modal, so the authorization done there does not carry over --
+    # a user whose access was revoked in between must not be able to save a
+    # modal they already had open.
+    authorized = await resolve_authorized_users(
+        moderator_client, settings.slack_ban_authorized_users
+    )
+    if not is_authorized_slack_user_in(user_id, authorized):
+        logger.warning(
+            "slack_interactivity: unauthorized moderator-roster save by user=%s", user_id
+        )
+        sentry_sdk.add_breadcrumb(
+            category="slack_ban",
+            level="warning",
+            message="Unauthorized moderator-roster save via Slack interactivity",
+            data={"user_id": user_id},
+        )
+        return _roster_error("You are not authorized to manage moderators.")
+
+    # Unreachable in practice -- resolve_authorized_users above would have
+    # authorized off the environment allowlist alone, and the command that opens
+    # this modal refuses to do so without a client. Checked anyway because the
+    # alternative is an AttributeError on None, and because "the modal cannot
+    # exist without a client" is an invariant held in another module.
+    if moderator_client is None:
+        logger.error("slack_interactivity: moderator roster save with no upstream configured")
+        return _roster_error(
+            "Moderator management is not configured. Set BS_INTERNAL_MODERATORS_URL."
+        )
+
+    view = payload.get("view") or {}
+    selected = (
+        (view.get("state") or {})
+        .get("values", {})
+        .get(MODERATOR_BLOCK_ID, {})
+        .get(MODERATOR_ACTION_ID, {})
+        .get("selected_users")
+    )
+    # json.loads output is Any, and a non-list (or a list of non-strings) would
+    # reach .upper() in the client and 500. Same fail-closed-on-shape posture as
+    # is_authorized_slack_user_in.
+    if not isinstance(selected, list) or not all(isinstance(uid, str) and uid for uid in selected):
+        logger.error("slack_interactivity: moderator view_submission has malformed selected_users")
+        return _roster_error("Could not read the selected users. Close this and try again.")
+
+    try:
+        context = json.loads(view.get("private_metadata") or "{}")
+    except json.JSONDecodeError:
+        logger.error("slack_interactivity: malformed private_metadata on moderator submission")
+        return _roster_error("This form is stale. Close it and run /request-mods again.")
+
+    expected = context.get("moderators") if isinstance(context, dict) else None
+    if not isinstance(expected, list) or not all(isinstance(uid, str) for uid in expected):
+        logger.error("slack_interactivity: moderator private_metadata missing a usable roster")
+        return _roster_error("This form is stale. Close it and run /request-mods again.")
+
+    try:
+        saved = await moderator_client.replace_moderators(
+            slack_user_ids=selected,
+            expected_current=expected,
+            actor_slack_user_id=user_id,
+        )
+    except ModeratorClientError as exc:
+        if exc.status_code == 409:
+            # Someone else saved between this modal opening and being submitted.
+            # Surfacing it is the entire point: last-write-wins would silently
+            # discard one of the two edits with nothing anywhere to show for it.
+            logger.warning("slack_interactivity: moderator roster save conflicted (409)")
+            return _roster_error(
+                "Someone else changed the moderator list while this was open. "
+                "Close this and run /request-mods again to see the current list."
+            )
+        logger.warning(
+            "slack_interactivity: moderator roster save failed status=%d body=%r",
+            exc.status_code,
+            exc.body,
+        )
+        return _roster_error("Could not save the moderator list. Try again in a moment.")
+
+    logger.info(
+        "slack_interactivity: user=%s saved moderator roster (%d members)", user_id, len(saved)
+    )
+    return Response(status_code=200)
+
+
+async def _handle_ban_view_submission(
+    payload: dict[str, Any],
+    slack: SlackService | None,
+    ban_client: BanAdminClient | None,
+    settings: Settings,
+    moderator_client: ModeratorClient | None,
+) -> Response:
+    # Reached only for the ban modal's callback_id, so a submission for some
+    # other modal sharing this Request URL is still the 200 no-op it has always
+    # been rather than inheriting the ban flow's configuration requirements.
     ban_client = _require_ban_client(ban_client)
 
+    view = payload.get("view") or {}
     user_id = (payload.get("user") or {}).get("id")
     if not isinstance(user_id, str):
         logger.error("slack_interactivity: view_submission payload missing user.id")
