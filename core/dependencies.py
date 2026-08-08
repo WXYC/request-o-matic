@@ -17,6 +17,7 @@ from core.exceptions import ServiceInitializationError, SlackPostError
 from services.ban_admin_client import BanAdminClient
 from services.ban_check_client import BanCheckClient
 from services.lookup_client import LookupServiceClient
+from services.moderator_client import ModeratorClient
 from services.slack_signature import verify_slack_signature
 
 if TYPE_CHECKING:
@@ -535,6 +536,32 @@ async def get_optional_ban_admin_client(
     changes.
     """
     return _build_ban_admin_client(settings, http_client)
+
+
+async def get_moderator_client(
+    settings: Settings = Depends(get_settings),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> ModeratorClient | None:
+    """Build a :class:`ModeratorClient`, or None when the upstream is unwired.
+
+    **Deliberately not its sibling's posture.** ``get_ban_admin_client`` raises
+    503 when unconfigured, which is right for ``/admin/bans`` where the whole
+    request *is* the upstream call. It is wrong here: this client is resolved
+    on the ban-button authorization path (#240), so a 503 would take the ban
+    button down along with the roster it was only trying to read.
+
+    Returning None instead matches ``get_slack_interactivity_service``'s
+    optional-dependency shape, and leaves each caller to decide what an absent
+    roster means for it -- which differs by caller, and is the reason this is
+    not a judgement the provider should be making.
+    """
+    if not settings.bs_internal_moderators_url or not settings.bs_internal_key:
+        return None
+    return ModeratorClient(
+        settings.bs_internal_moderators_url,
+        http_client,
+        internal_key=settings.bs_internal_key,
+    )
 
 
 async def verify_slack_request(
