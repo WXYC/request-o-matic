@@ -17,6 +17,7 @@ from core.dependencies import (
     get_ban_admin_client,
     get_groq_client,
     get_http_client,
+    get_moderator_client,
     get_optional_ban_admin_client,
     get_posthog_client,
     get_slack_bot_config,
@@ -26,6 +27,7 @@ from core.dependencies import (
 )
 from core.exceptions import ServiceInitializationError, SlackPostError
 from services.ban_admin_client import BanAdminClient
+from services.moderator_client import ModeratorClient
 
 
 @pytest.fixture
@@ -1135,3 +1137,89 @@ class TestGetOptionalBanAdminClient:
         if optional is not None:
             assert raising.base_url == optional.base_url
             assert raising.internal_key == optional.internal_key
+
+
+class TestGetModeratorClient:
+    """Tests for the ``get_moderator_client`` FastAPI dependency (#240)."""
+
+    @pytest.mark.asyncio
+    async def test_builds_client_with_settings(self):
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_moderators_url="https://bs.example.com/internal/slack-ban-moderators",
+            bs_internal_key="key-123",
+        )
+        http = httpx.AsyncClient()
+        try:
+            client = await get_moderator_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+
+        assert isinstance(client, ModeratorClient)
+        assert client.base_url == "https://bs.example.com/internal/slack-ban-moderators"
+        assert client.internal_key == "key-123"
+        assert client.http_client is http
+
+    @pytest.mark.asyncio
+    async def test_reuses_the_bans_internal_key(self):
+        """One shared secret across both BS /internal surfaces, not two."""
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
+            bs_internal_moderators_url="https://bs.example.com/internal/slack-ban-moderators",
+            bs_internal_key="shared-key",
+        )
+        http = httpx.AsyncClient()
+        try:
+            bans = await get_ban_admin_client(settings=settings, http_client=http)
+            mods = await get_moderator_client(settings=settings, http_client=http)
+        finally:
+            await http.aclose()
+
+        assert mods is not None
+        assert bans.internal_key == mods.internal_key == "shared-key"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("url", "key"),
+        [
+            (None, "key-123"),
+            ("https://bs.example.com/internal/slack-ban-moderators", None),
+            (None, None),
+        ],
+        ids=["no-url", "no-key", "neither"],
+    )
+    async def test_returns_none_rather_than_503(self, url, key):
+        """Deliberately NOT the sibling's 503 posture.
+
+        This client is resolved on the ban-button authorization path, so a 503
+        would take the ban button down along with the roster it was only trying
+        to read. None leaves each caller to decide what an absent roster means
+        for it, which is a decision that differs by caller.
+        """
+        settings = Settings(groq_api_key="x", bs_internal_moderators_url=url, bs_internal_key=key)
+        http = httpx.AsyncClient()
+        try:
+            assert await get_moderator_client(settings=settings, http_client=http) is None
+        finally:
+            await http.aclose()
+
+    @pytest.mark.asyncio
+    async def test_an_unset_bans_url_does_not_disable_the_roster_client(self):
+        """The two upstreams are configured independently.
+
+        They share a key but not a URL, and coupling them would make a missing
+        bans URL silently cost the roster too.
+        """
+        settings = Settings(
+            groq_api_key="x",
+            bs_internal_bans_url=None,
+            bs_internal_moderators_url="https://bs.example.com/internal/slack-ban-moderators",
+            bs_internal_key="key-123",
+        )
+        http = httpx.AsyncClient()
+        try:
+            assert await get_moderator_client(settings=settings, http_client=http) is not None
+            assert await get_optional_ban_admin_client(settings=settings, http_client=http) is None
+        finally:
+            await http.aclose()

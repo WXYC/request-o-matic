@@ -115,12 +115,25 @@ class Settings(BaseSettings):
             "'https://api.wxyc.org/internal/banned-fingerprints'."
         ),
     )
+    bs_internal_moderators_url: str | None = Field(
+        None,
+        description=(
+            "Base URL of Backend-Service's /internal/slack-ban-moderators roster "
+            "(BS#2045). Example: "
+            "'https://api.wxyc.org/internal/slack-ban-moderators'. Reuses "
+            "BS_INTERNAL_KEY -- no second secret. Unset means no roster client "
+            "is built; unlike BS_INTERNAL_BANS_URL that is a degraded mode "
+            "rather than a 503, because this client is read on the ban-button "
+            "authorization path."
+        ),
+    )
     bs_internal_key: str | None = Field(
         None,
         description=(
             "Shared secret forwarded as X-Internal-Key on calls to BS internal "
-            "endpoints (BS#1261 ROM_INTERNAL_KEY). Used by /admin/bans (#151); "
-            "the public /auth/check-request-ban handler does NOT consume this."
+            "endpoints (BS#1261 ROM_INTERNAL_KEY). Used by /admin/bans (#151) "
+            "and the moderator roster (#240); the public /auth/check-request-ban "
+            "handler does NOT consume this."
         ),
     )
 
