@@ -73,10 +73,15 @@ SLACK_CHANNEL_ID=C0123456789
 
 # Optional - Slack "Ban requester" menu (see docs/admin-bans.md). Both
 # fail closed when unset: no signing secret means every /slack/interactivity
-# callback is rejected, and an empty allowlist means every ban click is
-# rejected. SLACK_BOT_TOKEN above is also required for this flow.
+# callback is rejected, and an empty allowlist contributes nobody to the
+# authorized set. SLACK_BOT_TOKEN above is also required for this flow.
+#
+# SLACK_BAN_AUTHORIZED_USERS is the break-glass list, not the moderator
+# roster: the roster lives in Backend-Service (BS_INTERNAL_MODERATORS_URL)
+# and is edited from Slack with /request-mods. Who can ban is the union.
 SLACK_SIGNING_SECRET=
 SLACK_BAN_AUTHORIZED_USERS=U01ABC,U02DEF
+BS_INTERNAL_MODERATORS_URL=https://api.wxyc.org/internal/slack-ban-moderators
 
 # Optional - Telemetry
 POSTHOG_API_KEY=your_posthog_project_api_key
@@ -336,9 +341,10 @@ If Slack integration fails:
 | `SENTRY_DSN` | No | - | Sentry DSN for error tracking |
 | `ADMIN_TOKEN` | No | - | Bearer token gating `/admin/bans`. Fail-closed when unset. |
 | `BS_INTERNAL_BANS_URL` | No | - | Base URL of Backend-Service's `/internal/banned-fingerprints` CRUD (BS#1261). |
-| `BS_INTERNAL_KEY` | No | - | Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. |
-| `SLACK_SIGNING_SECRET` | No | - | Verifies `X-Slack-Signature` on `POST /slack/interactivity` (the "Ban requester" button). Fail-closed when unset. |
-| `SLACK_BAN_AUTHORIZED_USERS` | No | - | Comma-separated Slack user IDs allowed to complete a ban via the button. Fail-closed (deny-all) when unset or empty. |
+| `BS_INTERNAL_MODERATORS_URL` | No | - | Base URL of Backend-Service's `/internal/slack-ban-moderators` roster (BS#2045), backing `/request-mods`. Unset falls back to `SLACK_BAN_AUTHORIZED_USERS` alone and makes `/request-mods` refuse visibly — it does **not** 503 like the bans URL. |
+| `BS_INTERNAL_KEY` | No | - | Shared secret forwarded as `X-Internal-Key` on calls to BS internal endpoints. Shared by both `BS_INTERNAL_*_URL` surfaces. |
+| `SLACK_SIGNING_SECRET` | No | - | Verifies `X-Slack-Signature` on `POST /slack/interactivity` and `POST /slack/commands`. Fail-closed when unset. |
+| `SLACK_BAN_AUTHORIZED_USERS` | No | - | Comma-separated Slack user IDs. The **break-glass** list since #240, not the roster — who can ban is the union of this and the Backend-Service roster edited via `/request-mods`. Contributes nobody when unset or empty (fail-closed). |
 
 ## Architecture
 

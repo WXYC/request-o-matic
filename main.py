@@ -17,6 +17,7 @@ from routers.admin import router as admin_router
 from routers.health import build_readiness_router
 from routers.parse import router as parse_router
 from routers.request import router as request_router
+from routers.slack_commands import router as slack_commands_router
 from routers.slack_interactivity import router as slack_interactivity_router
 
 load_dotenv()
@@ -100,8 +101,17 @@ app.include_router(admin_router)
 
 # Slack interactivity callback for the in-Slack "Ban requester" button (#152).
 # Mounted at root as ``/slack/interactivity`` -- this is the literal URL
-# configured as the Slack app's (single) interactivity Request URL.
+# configured as the Slack app's (single) interactivity Request URL. Since #240
+# it also receives the /request-mods modal's submission, because Slack sends
+# every modal submission in the app to this one URL.
 app.include_router(slack_interactivity_router)
+
+# Slack slash commands (#240). Mounted at root as ``/slack/commands`` -- the
+# literal URL configured as /request-mods' Request URL. Slash-command URLs are
+# per-command rather than per-app, but /request-mods still has exactly one, and
+# staging and production share a single Slack app: the command reaches whichever
+# environment that URL names and only that one.
+app.include_router(slack_commands_router)
 
 if __name__ == "__main__":
     import uvicorn

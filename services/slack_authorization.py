@@ -1,16 +1,17 @@
 """Ban authorization: the environment allowlist unioned with the stored roster.
 
-``routers/slack_interactivity.py`` calls :func:`resolve_authorized_users` on
-the acting Slack user ID taken from a signature-verified interaction payload
--- never from anything a client sets directly.
+``routers/slack_interactivity.py`` and ``routers/slack_commands.py`` call
+:func:`resolve_authorized_users` on the acting Slack user ID taken from a
+signature-verified interaction payload -- never from anything a client sets
+directly.
 
 v1 was a static comma-separated allowlist (``SLACK_BAN_AUTHORIZED_USERS``) and
 predicted it "can graduate to a user-group or channel-membership check later
 without changing this call site's contract" (request-o-matic#152). It graduated
 in request-o-matic#240 to the **union** of that allowlist and a roster stored in
-Backend-Service (BS#2045). The prediction held in the part that mattered: the
-call sites still ask one question and get one boolean, they just ``await`` it
-now.
+Backend-Service and edited from Slack via ``/request-mods``. The prediction held
+in the part that mattered: the call sites still ask one question and get one
+boolean, they just ``await`` it now.
 
 ``SLACK_BAN_AUTHORIZED_USERS`` survives as a small break-glass superuser list,
 not as the roster. That is what makes the fail-closed direction below coherent:
