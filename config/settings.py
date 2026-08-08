@@ -46,8 +46,12 @@ class Settings(BaseSettings):
         description=(
             "Comma-separated Slack user IDs allowed to ban a requester via the "
             "in-Slack 'Ban requester' button (request-o-matic#152), e.g. "
-            "'U01ABC,U02DEF'. Unset or empty means deny-all: fail closed rather than "
-            "letting a dropped env var open banning to the whole workspace."
+            "'U01ABC,U02DEF'. Since #240 this is the BREAK-GLASS half, not the "
+            "whole allowlist: who can ban is the union of this and the "
+            "Backend-Service roster, so unset/empty no longer means deny-all -- "
+            "it means this half contributes nobody, and the roster decides. "
+            "Deny-all now requires both halves to be empty. This half is what "
+            "keeps an unreachable Backend-Service from locking everyone out."
         ),
     )
 

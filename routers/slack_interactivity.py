@@ -268,7 +268,7 @@ async def _handle_block_actions(
     authorized = await resolve_authorized_users(
         moderator_client, settings.slack_ban_authorized_users
     )
-    if not is_authorized_slack_user_in(clicking_user, authorized):
+    if not is_authorized_slack_user_in(clicking_user, authorized.users):
         logger.warning(
             "slack_interactivity: unauthorized ban-button click user_id=%s", clicking_user
         )
@@ -392,7 +392,7 @@ async def _handle_view_submission(
     authorized = await resolve_authorized_users(
         moderator_client, settings.slack_ban_authorized_users
     )
-    if not is_authorized_slack_user_in(user_id, authorized):
+    if not is_authorized_slack_user_in(user_id, authorized.users):
         logger.warning("slack_interactivity: unauthorized ban attempt by user=%s", user_id)
         sentry_sdk.add_breadcrumb(
             category="slack_ban",
