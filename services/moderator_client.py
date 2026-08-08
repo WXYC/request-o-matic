@@ -26,16 +26,25 @@ an operator curling an endpoint will wait. It is wrong here, because every
 call this client makes sits inside a Slack deadline:
 
 * The authorization read runs inside the ~3s `trigger_id` window with a
-  `views.open` still to follow it, so it gets **1.5s**.
-* The roster save runs inside the 3s `view_submission` window, after which
-  Slack shows the submitter a timeout error instead of the result, so it gets
-  **2.5s**.
+  `views.open` still to follow it, so it gets a **1.0s** budget.
+* The roster save runs inside the 3s `view_submission` window -- sharing it
+  with the re-authorization read that precedes it -- so it gets **1.5s**.
 
 A 10s default would not merely be slow: it would guarantee `expired_trigger_id`
-on the read path and a Slack-rendered timeout on the write path. A timeout
-raises `ModeratorClientError` like any other transport failure, so the caller's
-fail-closed fallback already covers it -- the short deadline is simply what
-*triggers* that fallback while it can still do some good.
+on the read path and a Slack-rendered timeout on the write path.
+
+Those budgets are *sums of named phases*, not bare floats. httpx applies
+connect/read/write/pool independently, so `httpx.Timeout(1.5)` is four
+independent 1.5s bounds with a 6s worst case -- a number that silently blows
+every window this module reasons about. The constants below name each phase so
+the documented budget is the arithmetic rather than an aspiration, and the
+tests assert the sum.
+
+One thing the short deadline does NOT solve, and callers must handle: the
+damaging case is a Backend-Service that is slow but *succeeding*. It returns a
+valid roster, raises nothing, and the fail-closed fallback never fires -- it
+has simply eaten the window the caller needed for `views.open`. Timeouts bound
+that; they do not make it visible.
 """
 
 from __future__ import annotations
@@ -48,8 +57,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "MODERATOR_READ_TIMEOUT_SECONDS",
-    "MODERATOR_WRITE_TIMEOUT_SECONDS",
+    "MODERATOR_READ_TIMEOUT",
+    "MODERATOR_WRITE_TIMEOUT",
     "ModeratorClient",
     "ModeratorClientError",
     "normalize_slack_user_ids",
@@ -71,18 +80,52 @@ def normalize_slack_user_ids(user_ids: list[str]) -> list[str]:
     Note this is the *wire* contract, and deliberately not the same posture as
     ``resolve_authorized_users``, which unions the environment allowlist
     verbatim. Storage normalizes; authorization comparison does not.
+
+    Raises:
+        ModeratorClientError: If any entry is not a non-empty string. The
+            client's contract is that every failure funnels into that one
+            exception; letting a bare ``AttributeError`` out of the module's
+            only public helper would break it for callers that catch only
+            ``ModeratorClientError`` -- which, on the authorization path, means
+            a 500 instead of a fallback.
     """
+    if not all(isinstance(user_id, str) and user_id for user_id in user_ids):
+        raise ModeratorClientError(0, {"error": "malformed_user_ids"})
     return sorted({user_id.upper() for user_id in user_ids})
 
 
 #: Authorization read deadline. Sits inside Slack's ~3s `trigger_id` window
 #: *and* leaves room for the `views.open` that follows it. See the module
 #: docstring -- this is the number the sibling's 10s default must not become.
-MODERATOR_READ_TIMEOUT_SECONDS = 1.5
+#:
+#: Phases are named rather than collapsed into one float, for the same reason
+#: as ``SLACK_VIEW_OPEN_TIMEOUT``: httpx applies connect/read/write/pool
+#: *independently*, so ``httpx.Timeout(1.5)`` is not a 1.5s bound but four of
+#: them, worst case 6s. The budget below is the sum, and the sum is what has to
+#: fit inside a Slack deadline. ``connect`` carries the largest share because
+#: ban clicks are minutes apart and keepalive expires after 5s, so nearly every
+#: call pays a fresh handshake.
+MODERATOR_READ_TIMEOUT = httpx.Timeout(connect=0.35, read=0.45, write=0.1, pool=0.1)
+MODERATOR_READ_BUDGET_SECONDS = 1.0
 
 #: Roster write deadline. Slack shows the submitter an error if
 #: `view_submission` doesn't respond within 3s; this leaves headroom to render.
-MODERATOR_WRITE_TIMEOUT_SECONDS = 2.5
+#:
+#: Sized against the *whole* handler, not this call alone: the save path
+#: re-authorizes first, so a roster read shares the same 3s window. Read budget
+#: 1.0 + write budget 1.5 = 2.5s, leaving ~0.5s for delivery, signature
+#: verification, and rendering the response.
+MODERATOR_WRITE_TIMEOUT = httpx.Timeout(connect=0.4, read=0.8, write=0.2, pool=0.1)
+MODERATOR_WRITE_BUDGET_SECONDS = 1.5
+
+#: Largest roster rom will accept from Backend-Service, in rows.
+#:
+#: This is a *security* bound, not a performance one: every ID in the response
+#: is unioned into the set that may ban a listener, so an unbounded read is the
+#: only path by which the union can widen without anything failing. WXYC's exec
+#: staff is a dozen-ish people; 200 leaves room for a decade of turnover while
+#: still refusing a roster that could only be a bug on the far side.
+MAX_ROSTER_SIZE = 200
 
 
 class ModeratorClientError(Exception):
@@ -117,10 +160,10 @@ class ModeratorClient:
             ``X-Internal-Key`` header on every request. Reuses the sibling's
             secret -- BS gates both `/internal` surfaces on the same key.
         read_timeout: Per-call timeout for :meth:`list_moderators`. Defaults to
-            :data:`MODERATOR_READ_TIMEOUT_SECONDS`; see the module docstring
+            :data:`MODERATOR_READ_TIMEOUT`; see the module docstring
             before raising it.
         write_timeout: Per-call timeout for :meth:`replace_moderators`.
-            Defaults to :data:`MODERATOR_WRITE_TIMEOUT_SECONDS`.
+            Defaults to :data:`MODERATOR_WRITE_TIMEOUT`.
     """
 
     def __init__(
@@ -129,8 +172,8 @@ class ModeratorClient:
         http_client: httpx.AsyncClient,
         *,
         internal_key: str,
-        read_timeout: float = MODERATOR_READ_TIMEOUT_SECONDS,
-        write_timeout: float = MODERATOR_WRITE_TIMEOUT_SECONDS,
+        read_timeout: httpx.Timeout | float = MODERATOR_READ_TIMEOUT,
+        write_timeout: httpx.Timeout | float = MODERATOR_WRITE_TIMEOUT,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.http_client = http_client
@@ -184,6 +227,20 @@ class ModeratorClient:
         if not isinstance(items, list):
             raise ModeratorClientError(200, {"error": "malformed_roster_items"})
 
+        # The grow direction, which the reasoning above omitted. Every ID in
+        # this list gains the power to ban a listener, so an oversized roster is
+        # the one shape that fails *open*: a Backend-Service regression dropping
+        # the WHERE clause would return every user row, and rom would union all
+        # of it into the authorized set with nothing raised and nothing logged.
+        # Refusing costs a real roster nothing -- MAX_ROSTER_SIZE is two orders
+        # of magnitude above WXYC's exec staff -- and turns a silent
+        # privilege-escalation into the same break-glass fallback as any other
+        # malformed response.
+        if len(items) > MAX_ROSTER_SIZE:
+            raise ModeratorClientError(
+                200, {"error": "roster_too_large", "count": len(items), "max": MAX_ROSTER_SIZE}
+            )
+
         ids: list[str] = []
         for row in items:
             if not isinstance(row, dict):
@@ -207,7 +264,7 @@ class ModeratorClient:
         Raises:
             ModeratorClientError: On any non-2xx, a non-JSON 2xx, a malformed
                 success shape, or a transport failure (``status_code=0``),
-                including exceeding :data:`MODERATOR_READ_TIMEOUT_SECONDS`.
+                including exceeding :data:`MODERATOR_READ_TIMEOUT`.
         """
         try:
             response = await self.http_client.get(
@@ -215,7 +272,7 @@ class ModeratorClient:
                 headers=self._headers(),
                 timeout=self.read_timeout,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
             raise ModeratorClientError(
                 0, {"error": "upstream_unreachable", "detail": str(exc)}
             ) from exc
@@ -262,7 +319,7 @@ class ModeratorClient:
                 headers=self._headers(),
                 timeout=self.write_timeout,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
             raise ModeratorClientError(
                 0, {"error": "upstream_unreachable", "detail": str(exc)}
             ) from exc
