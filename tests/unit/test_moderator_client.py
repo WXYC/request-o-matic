@@ -18,10 +18,14 @@ import httpx
 import pytest
 
 from services.moderator_client import (
-    MODERATOR_READ_TIMEOUT_SECONDS,
-    MODERATOR_WRITE_TIMEOUT_SECONDS,
+    MAX_ROSTER_SIZE,
+    MODERATOR_READ_BUDGET_SECONDS,
+    MODERATOR_READ_TIMEOUT,
+    MODERATOR_WRITE_BUDGET_SECONDS,
+    MODERATOR_WRITE_TIMEOUT,
     ModeratorClient,
     ModeratorClientError,
+    normalize_slack_user_ids,
 )
 
 BS_BASE = "https://bs.example.com/internal/slack-ban-moderators"
@@ -61,6 +65,18 @@ def _items(*user_ids: str) -> dict[str, object]:
             for user_id in user_ids
         ]
     }
+
+
+def _budget(timeout: httpx.Timeout) -> float:
+    """Worst-case wall clock of an httpx.Timeout: the sum of its phases.
+
+    httpx applies connect/read/write/pool independently, so a bare float is
+    four bounds rather than one. Every deadline claim in this module is about
+    this number.
+    """
+    phases = [timeout.connect, timeout.read, timeout.write, timeout.pool]
+    assert all(p is not None for p in phases), "an unset phase inherits the client's 30s"
+    return sum(p for p in phases if p is not None)
 
 
 class TestListModerators:
@@ -117,8 +133,8 @@ class TestListModerators:
 
         await _client(http).list_moderators()
 
-        assert http.get.call_args[1]["timeout"] == MODERATOR_READ_TIMEOUT_SECONDS
-        assert MODERATOR_READ_TIMEOUT_SECONDS == 1.5
+        assert http.get.call_args[1]["timeout"] == MODERATOR_READ_TIMEOUT
+        assert _budget(MODERATOR_READ_TIMEOUT) == pytest.approx(MODERATOR_READ_BUDGET_SECONDS)
 
     @pytest.mark.asyncio
     async def test_timeout_raises_rather_than_hanging(self):
@@ -268,8 +284,8 @@ class TestReplaceModerators:
 
         await _client(http).replace_moderators(slack_user_ids=[U_ONE], expected_current=[])
 
-        assert http.put.call_args[1]["timeout"] == MODERATOR_WRITE_TIMEOUT_SECONDS
-        assert MODERATOR_WRITE_TIMEOUT_SECONDS == 2.5
+        assert http.put.call_args[1]["timeout"] == MODERATOR_WRITE_TIMEOUT
+        assert _budget(MODERATOR_WRITE_TIMEOUT) == pytest.approx(MODERATOR_WRITE_BUDGET_SECONDS)
 
     @pytest.mark.asyncio
     async def test_409_surfaces_faithfully_with_its_body(self):
@@ -370,3 +386,110 @@ class TestWireNormalization:
         sent = http.put.call_args[1]["json"]
         assert sent["slackUserIds"] == [U_ONE, U_TWO]
         assert sent["expectedCurrent"] == [U_ONE, U_TWO]
+
+
+class TestRosterSizeCeiling:
+    """The one shape that fails *open* (#240 review).
+
+    Every ID in a roster response is unioned into the set that may ban a
+    listener. `_extract_ids`'s other guards all fail closed -- a malformed row
+    shrinks the set to break-glass. An unbounded list is the exception: a
+    Backend-Service regression dropping the WHERE clause hands rom every user
+    row, and without a ceiling rom grants all of them ban rights with nothing
+    raised and nothing logged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_roster_at_the_ceiling_is_accepted(self):
+        rows = [{"slack_user_id": f"U{i:09d}"} for i in range(MAX_ROSTER_SIZE)]
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=_response(200, {"items": rows}))
+
+        assert len(await _client(http).list_moderators()) == MAX_ROSTER_SIZE
+
+    @pytest.mark.asyncio
+    async def test_one_row_over_the_ceiling_is_refused(self):
+        rows = [{"slack_user_id": f"U{i:09d}"} for i in range(MAX_ROSTER_SIZE + 1)]
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=_response(200, {"items": rows}))
+
+        with pytest.raises(ModeratorClientError) as excinfo:
+            await _client(http).list_moderators()
+        assert excinfo.value.body["error"] == "roster_too_large"
+
+    @pytest.mark.asyncio
+    async def test_a_runaway_roster_refuses_rather_than_widening(self):
+        """The failure this exists for, at the scale it would actually arrive."""
+        rows = [{"slack_user_id": f"U{i:09d}"} for i in range(50_000)]
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=_response(200, {"items": rows}))
+
+        with pytest.raises(ModeratorClientError):
+            await _client(http).list_moderators()
+
+
+class TestEveryFailureFunnelsIntoModeratorClientError:
+    """The client's contract, which callers' fail-closed logic depends on.
+
+    `resolve_authorized_users` catches `ModeratorClientError` and nothing else.
+    Anything that escapes is a 500 on the ban-authorization path -- and since
+    Sentry captures frame locals by default, that 500 ships the settings object.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "https://api.wxyc.org/internal/slack-ban-moderators\n",
+            "https://api.wxyc.org:8080x/internal/slack-ban-moderators",
+        ],
+        ids=["trailing-newline", "bad-port"],
+    )
+    async def test_a_malformed_base_url_is_contained(self, bad_url):
+        """`httpx.InvalidURL` is NOT an `httpx.HTTPError` -- it escaped the
+        funnel until the `except` was widened.
+
+        This is the realistic operator error: a URL pasted into the Railway
+        dashboard with a trailing newline. Note the inversion it used to cause
+        -- *forgetting* the variable degraded gracefully, while *setting it
+        wrong* took the ban button down.
+        """
+        async with httpx.AsyncClient() as real:
+            client = ModeratorClient(bad_url, real, internal_key=INTERNAL_KEY)
+            with pytest.raises(ModeratorClientError):
+                await client.list_moderators()
+
+    def test_normalize_rejects_non_strings_rather_than_attribute_erroring(self):
+        """`normalize_slack_user_ids` is the module's only public helper; a bare
+        `AttributeError` out of it would break the same contract."""
+        with pytest.raises(ModeratorClientError):
+            normalize_slack_user_ids([None])  # type: ignore[list-item]
+        with pytest.raises(ModeratorClientError):
+            normalize_slack_user_ids(["U01ABC", ""])
+
+
+class TestExtractIdsUncoveredShapes:
+    """Branches the original suite never reached (#240 review)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [[{"slack_user_id": "U01ABC"}], "U01ABC", 42, None],
+        ids=["top-level-list", "bare-string", "int", "null"],
+    )
+    async def test_non_dict_payload_is_refused(self, payload):
+        """A reverse proxy or a version-skewed BS can return any of these."""
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=_response(200, payload))
+
+        with pytest.raises(ModeratorClientError):
+            await _client(http).list_moderators()
+
+    @pytest.mark.asyncio
+    async def test_empty_string_user_id_is_refused(self):
+        """`""` must never enter a set that authorizes anything."""
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=_response(200, {"items": [{"slack_user_id": ""}]}))
+
+        with pytest.raises(ModeratorClientError):
+            await _client(http).list_moderators()
