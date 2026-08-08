@@ -1097,25 +1097,41 @@ class TestGetOptionalBanAdminClient:
             await http.aclose()
 
     @pytest.mark.asyncio
-    async def test_both_providers_agree_on_what_configured_means(self):
+    @pytest.mark.parametrize(
+        ("url", "key"),
+        [
+            ("https://bs.example.com/internal/banned-fingerprints", "key-123"),
+            (None, "key-123"),
+            ("https://bs.example.com/internal/banned-fingerprints", None),
+            (None, None),
+        ],
+        ids=["both", "no-url", "no-key", "neither"],
+    )
+    async def test_both_providers_agree_on_what_configured_means(self, url, key):
         """Shared construction, so the pair cannot drift apart.
 
-        A deploy where one provider builds a client and the other returns None
-        (or 503s) would make the ban flow's behavior depend on which route you
-        came in through.
+        A deploy where one provider builds a client and the other declines to
+        would make the ban flow's behavior depend on which route you came in
+        through. Every configuration combination is exercised, not just the
+        fully-configured one -- the earlier version of this test passed only
+        `both`, so a provider that disagreed on a *partial* configuration (the
+        only way they realistically drift) went uncaught.
         """
-        settings = Settings(
-            groq_api_key="x",
-            bs_internal_bans_url="https://bs.example.com/internal/banned-fingerprints",
-            bs_internal_key="key-123",
-        )
+        settings = Settings(groq_api_key="x", bs_internal_bans_url=url, bs_internal_key=key)
         http = httpx.AsyncClient()
         try:
-            raising = await get_ban_admin_client(settings=settings, http_client=http)
             optional = await get_optional_ban_admin_client(settings=settings, http_client=http)
+            try:
+                raising = await get_ban_admin_client(settings=settings, http_client=http)
+                raising_declined = False
+            except HTTPException:
+                raising_declined = True
         finally:
             await http.aclose()
 
-        assert optional is not None
-        assert raising.base_url == optional.base_url
-        assert raising.internal_key == optional.internal_key
+        assert raising_declined is (optional is None), (
+            "the raising and optional providers disagree about whether this configuration is usable"
+        )
+        if optional is not None:
+            assert raising.base_url == optional.base_url
+            assert raising.internal_key == optional.internal_key

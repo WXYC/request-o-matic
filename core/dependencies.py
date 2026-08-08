@@ -548,12 +548,18 @@ async def verify_slack_request(
 
     Wired as a route-level ``dependencies=[...]`` entry rather than a handler
     parameter: FastAPI inserts those at the front of the dependency list, so
-    this is guaranteed to resolve before the upstream-client dependencies
-    below it. As a handler parameter it would resolve *after* them, and an
-    unsigned POST to a deployment missing ``BS_INTERNAL_BANS_URL``/
-    ``BS_INTERNAL_KEY`` would come back with that dependency's 503 -- handing
-    an unauthenticated caller the deployment's configuration state and two env
-    var names, and contradicting the 401 these routes document.
+    this is guaranteed to resolve before any handler-parameter dependency,
+    whatever those turn out to be.
+
+    The hazard is not hypothetical, but it *is* currently latent: every
+    provider these routes declare returns rather than raises, so no unsigned
+    request can presently be answered with anything but a 401. Wiring it here
+    is what keeps that true when a future dependency does raise -- which is why
+    the regression test injects a deliberately-raising dependency instead of
+    relying on today's providers to supply the hazard. Left as a handler
+    parameter, such a dependency would hand an unauthenticated caller the
+    deployment's configuration state, contradicting the 401 these routes
+    document.
 
     ``Request.body()`` caches the bytes it reads, so the handler's own
     ``await request.body()`` sees the same payload rather than an exhausted

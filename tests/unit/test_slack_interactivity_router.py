@@ -338,10 +338,13 @@ class TestSignatureIsCheckedBeforeAnythingElse:
     """Signature verification must be the first thing that can affect the
     response.
 
-    ``get_ban_admin_client`` 503s with the names of two env vars when
-    BS_INTERNAL_BANS_URL/BS_INTERNAL_KEY are unset. Resolved as a handler
-    parameter it ran *before* the in-body signature check, so an unsigned POST
-    could read a deployment's configuration state straight off the response.
+    Historically ``get_ban_admin_client`` supplied the hazard: it 503s with the
+    names of two env vars, and resolved as a handler parameter it ran *before*
+    the in-body signature check, so an unsigned POST could read a deployment's
+    configuration state straight off the response. This route no longer
+    declares that provider, so the first test below can no longer fail for the
+    right reason on its own -- see the injected-dependency test, which supplies
+    the hazard deliberately.
     """
 
     @pytest.mark.asyncio
@@ -908,6 +911,25 @@ class TestTheBanAdmin503MovedButDidNotDisappear:
         resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
 
         assert resp.json()["detail"] == BAN_ADMIN_UNCONFIGURED_DETAIL
+
+    @pytest.mark.asyncio
+    async def test_a_non_ban_click_is_unaffected_by_the_bans_config(self):
+        """The half of the blast-radius claim that was previously untested.
+
+        A `block_actions` click for some other button sharing this Request URL
+        must not inherit the ban flow's configuration requirements. Verified by
+        mutation: hoisting `_require_ban_client` above the ban-button guard --
+        which reintroduces exactly the bug this PR fixes -- left the whole
+        suite green before this test existed.
+        """
+        payload = _block_actions_payload(action_id="some_other_button")
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), ban_upstream_configured=False)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert "BS_INTERNAL" not in resp.text
 
     @pytest.mark.asyncio
     async def test_an_unrelated_modal_submission_is_unaffected_by_the_bans_config(self):
