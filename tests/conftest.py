@@ -258,6 +258,57 @@ def sample_parsed_request():
     )
 
 
+REQUEST_MESSAGE = "play la paradoja by juana molina"
+
+
+def make_request_app(*, lookup_client, slack_service, posthog_client):
+    """App with the `/request` router and its four core dependencies overridden.
+
+    Shared by `test_request_completed_fingerprint.py` and
+    `test_posthog_capture_budget.py`; tests needing more overrides (settings,
+    ban-check client) add them onto the returned app.
+    """
+    from fastapi import FastAPI
+
+    from core.dependencies import (
+        get_groq_client,
+        get_lookup_client,
+        get_posthog_client,
+        get_slack_service,
+    )
+    from routers.request import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_groq_client] = lambda: Mock()
+    app.dependency_overrides[get_slack_service] = lambda: slack_service
+    app.dependency_overrides[get_posthog_client] = lambda: posthog_client
+    app.dependency_overrides[get_lookup_client] = lambda: lookup_client
+    return app
+
+
+@pytest.fixture
+def parsed_request():
+    """A fresh clean-path ParsedRequest per test.
+
+    Deliberately not a module-level constant: on the clean path the router
+    mutates `parsed.artist` in place from `LookupResponse.corrected_artist`, so
+    a shared instance would leak that mutation into every later test.
+    """
+    return make_parsed_request(
+        song="la paradoja",
+        artist="juana molina",
+        raw_message=REQUEST_MESSAGE,
+    )
+
+
+@pytest.fixture
+def mock_lookup_client():
+    from services.lookup_client import LookupServiceClient
+
+    return AsyncMock(spec=LookupServiceClient)
+
+
 def make_parsed_request(
     artist: str | None = None,
     song: str | None = None,
