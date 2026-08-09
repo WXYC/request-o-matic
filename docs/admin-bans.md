@@ -183,15 +183,41 @@ You must already be authorized to ban in order to open it. A non-moderator gets 
 | | Where it lives | Who edits it | What it's for |
 |---|---|---|---|
 | **Moderator roster** | Backend-Service `slack_ban_moderators` table | any moderator, via `/request-mods` | the actual roster; turns over every semester as MDs rotate |
-| **`SLACK_BAN_AUTHORIZED_USERS`** | Railway env var, per ROM environment | anyone with Railway access | **intended as break-glass only.** Until it is trimmed (see below) it still holds the full pre-#240 roster, so both halves currently overlap |
+| **`SLACK_BAN_AUTHORIZED_USERS`** | Railway env var, per ROM environment | anyone with Railway access | **break-glass only** — a small set of administrators, trimmed to that on 2026-08-08 |
 
-**On the day this ships, the env var has not been trimmed yet** — that is a deliberate follow-up step, not part of the code change, so this table describes the intent and the paragraph below describes the state. Authorization is the union, so a person on either list can ban. That is what makes the design safe to operate: **if Backend-Service is unreachable, or the table is emptied by accident, the break-glass list still works** and nobody is locked out of their own moderation tool by an upstream outage.
+Authorization is the union, so a person on either list can ban. That is what makes the design safe to operate: **if Backend-Service is unreachable, or the table is emptied by accident, the break-glass list still works** and nobody is locked out of their own moderation tool by an upstream outage.
 
-The picker edits the table only. Environment-allowlist members appear in a read-only block beneath it, because otherwise the modal would lie: on day one the table is empty while several people can demonstrably ban, and after the break-glass trim, deselecting an administrator would appear to work and change nothing.
+The picker edits the table only. Environment-allowlist members appear in a read-only block beneath it, because otherwise the modal would lie — deselecting an administrator would appear to work and change nothing.
+
+**Moving someone between the two lists is not atomic, and the order matters.** Removing an administrator from `SLACK_BAN_AUTHORIZED_USERS` revokes their access the moment the service restarts; adding them to the roster grants it on their next click. Add first, then trim — the reverse leaves a window where they cannot ban, and nothing anywhere reports it, because a union that has shrunk looks exactly like a person who was never authorized. This is also why the two lists are checked separately below rather than assumed to agree.
 
 ### The roster is single, not per-environment
 
 Both ROM environments point `BS_INTERNAL_MODERATORS_URL` at *production* Backend-Service under a shared key — staging has no Backend-Service of its own. Editing the roster from staging edits the production roster. This matches the existing posture for `BS_INTERNAL_BANS_URL`.
+
+### Checking who can actually ban
+
+The modal is the everyday answer, but it renders the roster — it is not an independent check of it. To read both halves from outside Slack:
+
+```bash
+# Break-glass half (per environment; both should match).
+railway variable list --service request-o-matic --environment production --json \
+  | jq -r '.SLACK_BAN_AUTHORIZED_USERS'
+
+# Roster half. Read the key into the environment rather than pasting it, so it
+# stays out of your shell history and the terminal.
+export BS_INTERNAL_KEY=$(railway variable list --service request-o-matic \
+  --environment production --json | jq -r '.BS_INTERNAL_KEY')
+curl -s -H "X-Internal-Key: $BS_INTERNAL_KEY" \
+  https://api.wxyc.org/internal/slack-ban-moderators | jq '.items'
+```
+
+Who can ban is the **union** of the two. Note the roster is production-only, so the second command is the same regardless of which ROM environment you asked about.
+
+Two traps worth knowing:
+
+- **A variable change does nothing until the service restarts.** `get_settings` is `lru_cache`d, so a trimmed allowlist stays in effect for the life of the process. Railway redeploys on a variable change by default; if you set one with deploys skipped, the old value is still live.
+- **Read the roster immediately before trimming, not from earlier in the session.** It can change under you — anyone with `/request-mods` can edit it — and a stale read is how you revoke someone you believed was covered.
 
 ### When something goes wrong
 
