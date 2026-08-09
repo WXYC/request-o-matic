@@ -22,63 +22,18 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from core.dependencies import (
-    get_groq_client,
-    get_lookup_client,
-    get_posthog_client,
-    get_slack_service,
-)
 from generated.api_models import SearchType
-from routers.request import router
-from services.lookup_client import LookupResponse, LookupResult, LookupServiceClient
-from tests.conftest import make_parsed_request
-
-MESSAGE = "play la paradoja by juana molina"
+from services.lookup_client import LookupResponse, LookupResult
+from tests.conftest import REQUEST_MESSAGE as MESSAGE
+from tests.conftest import make_request_app
 
 FINGERPRINT = "11111111-2222-3333-4444-555555555555"
 MALFORMED_FINGERPRINT = "not-a-uuid"
 
-
-@pytest.fixture
-def parsed_request():
-    """A fresh ParsedRequest per test.
-
-    Deliberately not a module-level constant: on the clean path the router
-    mutates `parsed.artist` in place from `LookupResponse.corrected_artist`, so
-    a shared instance would leak that mutation into every later test in the
-    file.
-    """
-    return make_parsed_request(
-        song="la paradoja",
-        artist="juana molina",
-        raw_message=MESSAGE,
-    )
-
-
-def _make_app(*, lookup_client, slack_service, posthog_client):
-    app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
-    app.dependency_overrides[get_groq_client] = lambda: Mock()
-    app.dependency_overrides[get_slack_service] = lambda: slack_service
-    app.dependency_overrides[get_posthog_client] = lambda: posthog_client
-    app.dependency_overrides[get_lookup_client] = lambda: lookup_client
-    return app
-
-
-@pytest.fixture
-def mock_lookup_client():
-    return AsyncMock(spec=LookupServiceClient)
-
-
-@pytest.fixture
-def mock_slack_service():
-    svc = AsyncMock()
-    svc.post_blocks = AsyncMock()
-    svc.webhook_url = "https://hooks.slack.com/test"
-    return svc
+# `parsed_request`, `mock_lookup_client`, and `mock_slack_service` come from
+# tests/conftest.py, shared with test_posthog_capture_budget.py.
 
 
 @pytest.fixture
@@ -137,7 +92,7 @@ class TestCleanPathFingerprint:
             ),
             server_timing=None,
         )
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -165,7 +120,7 @@ class TestCleanPathFingerprint:
             response=LookupResponse(results=[], search_type=SearchType.none),
             server_timing=None,
         )
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -192,7 +147,7 @@ class TestCleanPathFingerprint:
             response=LookupResponse(results=[], search_type=SearchType.none),
             server_timing=None,
         )
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -219,7 +174,7 @@ class TestSearchDegradedPathFingerprint:
         self, mock_lookup_client, mock_slack_service, posthog, parsed_request
     ):
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("lml down")
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -239,7 +194,7 @@ class TestSearchDegradedPathFingerprint:
         self, mock_lookup_client, mock_slack_service, posthog, parsed_request
     ):
         mock_lookup_client.lookup.side_effect = httpx.ConnectError("lml down")
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -262,7 +217,7 @@ class TestParsingDegradedPathFingerprint:
     async def test_fingerprint_present_is_included(
         self, mock_lookup_client, mock_slack_service, posthog
     ):
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -283,7 +238,7 @@ class TestParsingDegradedPathFingerprint:
     async def test_fingerprint_absent_is_omitted(
         self, mock_lookup_client, mock_slack_service, posthog
     ):
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
@@ -306,7 +261,7 @@ class TestParsingDegradedPathFingerprint:
     ):
         """Both emit sites run the same normalizer -- neither may leak a raw
         header value into telemetry."""
-        app = _make_app(
+        app = make_request_app(
             lookup_client=mock_lookup_client,
             slack_service=mock_slack_service,
             posthog_client=posthog,
