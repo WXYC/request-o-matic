@@ -517,6 +517,23 @@ async def _handle_moderator_view_submission(
         logger.error("slack_interactivity: moderator private_metadata missing a usable roster")
         return _roster_error("This form is stale. Close it and run /request-mods again.")
 
+    # A retry view opens with an empty picker because Slack rejected the
+    # pre-selection, so an empty submission from one is almost certainly "I did
+    # not notice" rather than "remove everyone" -- and an empty save whose
+    # expectedCurrent still matches wipes the roster without a 409. Removing
+    # everyone stays possible from a normally-populated modal.
+    if selected == [] and context.get("initial_users_dropped") is True:
+        logger.warning(
+            "slack_interactivity: refusing an empty roster save from a modal whose "
+            "initial_users were dropped (user=%s)",
+            user_id,
+        )
+        return _roster_error(
+            "This list opened empty because Slack could not pre-select the "
+            "current moderators, so saving it would remove everyone. Close this "
+            "and run /request-mods again, or re-select the moderators you want."
+        )
+
     try:
         saved = await moderator_client.replace_moderators(
             slack_user_ids=selected,

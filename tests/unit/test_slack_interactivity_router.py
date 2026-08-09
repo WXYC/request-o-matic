@@ -1610,3 +1610,64 @@ class TestRosterSaveOutcomesAreDistinguishable:
 
         assert "not authorized" in _errors_for(resp)[MODERATOR_BLOCK_ID]
         moderators.replace_moderators.assert_not_awaited()
+
+
+class TestEmptySaveFromARetryModalIsRefused:
+    """The save-side half of the roster-wipe guard (#240 review).
+
+    `/request-mods` retries `views.open` without `initial_users` when Slack
+    rejects the pre-selection, so the picker opens empty. An empty save from
+    that view carries an `expectedCurrent` that still matches the stored
+    roster, so no 409 fires and Backend-Service empties the table.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_selection_from_a_marked_view_is_refused(self):
+        moderators = _mock_moderator_client([MOD_ONE, MOD_TWO])
+        payload = _roster_submission_payload(
+            selected=[],
+            private_metadata=json.dumps(
+                {"moderators": [MOD_ONE, MOD_TWO], "initial_users_dropped": True}
+            ),
+        )
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.json()["response_action"] == "errors"
+        assert "remove everyone" in _errors_for(resp)[MODERATOR_BLOCK_ID]
+        moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_deliberate_reselection_from_a_marked_view_still_saves(self):
+        """The guard must not make a retry modal unusable -- only refuse the
+        one submission that is almost certainly an accident."""
+        moderators = _mock_moderator_client([MOD_ONE, MOD_TWO])
+        payload = _roster_submission_payload(
+            selected=[MOD_ONE],
+            private_metadata=json.dumps(
+                {"moderators": [MOD_ONE, MOD_TWO], "initial_users_dropped": True}
+            ),
+        )
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        moderators.replace_moderators.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_removing_everyone_from_a_normal_modal_still_works(self):
+        """The guard is scoped to retry views. Emptying the roster deliberately
+        is the one operation the picker's `optional: true` exists for."""
+        moderators = _mock_moderator_client([MOD_ONE])
+        payload = _roster_submission_payload(selected=[], expected=[MOD_ONE])
+        body = _form_body(payload)
+        app = _build_app(slack=_mock_slack_service(), moderator_client=moderators)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert moderators.replace_moderators.await_args[1]["slack_user_ids"] == []

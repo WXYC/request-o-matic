@@ -561,7 +561,20 @@ class TestStaleInitialUsersRetry:
 
         await _post(app, body, _signed_headers(SIGNING_SECRET, body))
 
-        assert MOD_ONE in json.dumps(slack.open_view.await_args_list[1][1]["view"])
+        # Assert against the CONTEXT BLOCK, not the whole view. The previous
+        # version searched the serialized view for the ID, which is present in
+        # private_metadata regardless -- so it passed with the "dropped" block
+        # deleted entirely, leaving the retry's whole user-facing affordance
+        # untested.
+        retry_view = slack.open_view.await_args_list[1][1]["view"]
+        context_text = " ".join(
+            element.get("text", "")
+            for block in retry_view["blocks"]
+            if block.get("type") == "context"
+            for element in block.get("elements", [])
+        )
+        assert MOD_ONE in context_text
+        assert "pre-select" in context_text or "couldn't" in context_text.lower()
 
     @pytest.mark.asyncio
     async def test_retry_preserves_private_metadata(self):
@@ -681,3 +694,113 @@ class TestUnknownCommand:
 
         assert resp.status_code == 200
         slack.open_view.assert_not_awaited()
+
+
+class TestRetryModalCannotSilentlyWipeTheRoster:
+    """The retry opens an EMPTY picker, which makes empty the default state.
+
+    An empty save from it carries an `expectedCurrent` that still matches the
+    stored roster, so no 409 fires and Backend-Service empties the table. On
+    the normal path an empty save requires deliberately deselecting everyone;
+    here it requires only not noticing -- and the path is reached precisely
+    when the roster is already in trouble.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_retry_view_is_marked_so_the_save_branch_can_refuse_it(self):
+        slack = _mock_slack_service()
+        slack.open_view = AsyncMock(
+            side_effect=[SlackPostError("Slack views.open failed: invalid_arguments"), None]
+        )
+        body = _command_body()
+        app = _build_app(slack=slack, moderator_client=_mock_moderator_client([MOD_ONE]))
+
+        await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        retry_view = slack.open_view.await_args_list[1][1]["view"]
+        context = json.loads(retry_view["private_metadata"])
+        assert context["initial_users_dropped"] is True
+        # The roster is still carried, so a deliberate re-selection can save.
+        assert context["moderators"] == [MOD_ONE]
+
+    @pytest.mark.asyncio
+    async def test_the_normal_view_is_not_marked(self):
+        """Or "remove every moderator" would become impossible from the only
+        UI that can remove moderators."""
+        slack = _mock_slack_service()
+        body = _command_body()
+        app = _build_app(slack=slack, moderator_client=_mock_moderator_client([MOD_ONE]))
+
+        await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        view = slack.open_view.await_args_list[0][1]["view"]
+        assert "initial_users_dropped" not in json.loads(view["private_metadata"])
+
+
+class TestConfigurationStateIsNotWorkspaceReadable:
+    """Both misconfiguration refusals name an environment variable.
+
+    They sat ahead of the authorization check, so any workspace member could
+    type /request-mods and read the deployment's configuration state -- the
+    same disclosure class the signature-ordering tests exist to prevent, one
+    step further in.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_upstream_tells_a_stranger_nothing(self):
+        body = _command_body(user_id="U99ZZZ")
+        app = _build_app(
+            slack=_mock_slack_service(),
+            moderator_client=None,
+            moderator_upstream_configured=False,
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert "BS_INTERNAL" not in resp.text
+        assert "unavailable" in resp.json()["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_upstream_still_tells_a_break_glass_admin(self):
+        """The operator who can fix it must still learn what to fix."""
+        body = _command_body(user_id=ACTING_USER)
+        app = _build_app(
+            slack=_mock_slack_service(),
+            moderator_client=None,
+            moderator_upstream_configured=False,
+        )
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert "BS_INTERNAL_MODERATORS_URL" in resp.json()["text"]
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_roster_tells_a_stranger_nothing(self):
+        broken = _mock_moderator_client()
+        broken.list_moderators = AsyncMock(
+            side_effect=ModeratorClientError(0, {"error": "upstream_unreachable"})
+        )
+        body = _command_body(user_id="U99ZZZ")
+        app = _build_app(slack=_mock_slack_service(), moderator_client=broken)
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert "unavailable" in resp.json()["text"].lower()
+        assert "reach" not in resp.json()["text"].lower()
+
+
+class TestTheAckIsAnEmptyBody:
+    @pytest.mark.asyncio
+    async def test_success_acks_with_no_body_rather_than_null(self):
+        """`JSONResponse(content=None)` sends b"null" with a JSON content-type,
+        which Slack may parse as a command response and render to the invoker
+        after the modal already opened."""
+        slack = _mock_slack_service()
+        body = _command_body()
+        app = _build_app(slack=slack, moderator_client=_mock_moderator_client([MOD_ONE]))
+
+        resp = await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        assert resp.status_code == 200
+        assert resp.content == b""
+        slack.open_view.assert_awaited_once()

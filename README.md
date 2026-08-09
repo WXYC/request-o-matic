@@ -188,9 +188,10 @@ Request-line ban management (`Authorization: Bearer $ADMIN_TOKEN`). All writes a
 - `DELETE /admin/bans/{fingerprint}` - Remove a ban (idempotent)
 - `GET /admin/bans` - List bans (keyset-paginated)
 
-### Slack Interactivity Endpoint
+### Slack Endpoints
 
-- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" overflow-menu item on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call. See [`docs/admin-bans.md`](docs/admin-bans.md).
+- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" overflow-menu item on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call -- and the `/request-mods` roster save, whose modal is opened by `POST /slack/commands` but submitted here because Slack delivers every modal submission in the app to this one URL. See [`docs/admin-bans.md`](docs/admin-bans.md).
+- `POST /slack/commands` - Slash-command Request URL for `/request-mods`, which opens the moderator-roster picker. Every refusal is a 200 with an ephemeral body rather than a `chat.postEphemeral` call, so a deploy without `SLACK_BOT_TOKEN` refuses visibly instead of silently.
 
 ### Example Requests
 
