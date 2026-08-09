@@ -183,9 +183,9 @@ You must already be authorized to ban in order to open it. A non-moderator gets 
 | | Where it lives | Who edits it | What it's for |
 |---|---|---|---|
 | **Moderator roster** | Backend-Service `slack_ban_moderators` table | any moderator, via `/request-mods` | the actual roster; turns over every semester as MDs rotate |
-| **`SLACK_BAN_AUTHORIZED_USERS`** | Railway env var, per ROM environment | anyone with Railway access | **break-glass only** — three administrators |
+| **`SLACK_BAN_AUTHORIZED_USERS`** | Railway env var, per ROM environment | anyone with Railway access | **intended as break-glass only.** Until it is trimmed (see below) it still holds the full pre-#240 roster, so both halves currently overlap |
 
-Authorization is the union, so a person on either list can ban. That is what makes the design safe to operate: **if Backend-Service is unreachable, or the table is emptied by accident, the break-glass list still works** and nobody is locked out of their own moderation tool by an upstream outage.
+**On the day this ships, the env var has not been trimmed yet** — that is a deliberate follow-up step, not part of the code change, so this table describes the intent and the paragraph below describes the state. Authorization is the union, so a person on either list can ban. That is what makes the design safe to operate: **if Backend-Service is unreachable, or the table is emptied by accident, the break-glass list still works** and nobody is locked out of their own moderation tool by an upstream outage.
 
 The picker edits the table only. Environment-allowlist members appear in a read-only block beneath it, because otherwise the modal would lie: on day one the table is empty while several people can demonstrably ban, and after the break-glass trim, deselecting an administrator would appear to work and change nothing.
 
@@ -201,6 +201,9 @@ Both ROM environments point `BS_INTERNAL_MODERATORS_URL` at *production* Backend
 | "Couldn't reach the moderator list just now" | Backend-Service unreachable or slow (>1.5s) | Bans still work off the break-glass list. Retry. |
 | "Someone else changed the moderator list while this was open" | Concurrent edit; your `expectedCurrent` is stale | Nothing was saved. Close and re-run `/request-mods`. |
 | Modal opens with nobody pre-selected and a "could not pre-select" note | Slack rejected `initial_users`, most likely a deactivated account in the roster | Re-select everyone who should stay, then save — this is how a deactivated ID gets removed. |
+| "This list opened empty because Slack could not pre-select the current moderators" | You hit **Save** on that empty retry modal without re-selecting | Nothing was changed. Saving it would have removed every moderator, so it is refused — re-select, or close and re-run. |
+| "Couldn't reach the moderator list just now, so this couldn't be saved" | Backend-Service went down while your modal was open | Nothing was changed. This is deliberately *not* worded as a permissions refusal: your access is fine, the roster just couldn't be read. |
+| "Moderator management is unavailable right now." | Same as the two rows above, but you are not on the break-glass list | The specific cause is withheld from non-administrators on purpose. Ask someone on `SLACK_BAN_AUTHORIZED_USERS`. |
 
 An unreachable Backend-Service can only ever **shrink** who can ban, never widen it.
 
