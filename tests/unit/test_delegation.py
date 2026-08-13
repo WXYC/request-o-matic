@@ -142,10 +142,24 @@ class TestDelegationBranch:
 
     @pytest.mark.asyncio
     async def test_delegation_maps_response_fields(self, app, mock_lookup_client):
-        """All LookupResponse metadata fields map to UnifiedResponse correctly."""
+        """All LookupResponse metadata fields map to UnifiedResponse correctly.
+
+        The compilation row is shelved (a real id) on purpose. This case is about
+        field mapping, and #256 made an *empty* list incompatible with
+        ``found_on_compilation=True``: a response delivering no rows may no longer
+        claim a match, so staging one here would assert the very contradiction that
+        issue removed rather than the mapping this test is named for.
+        """
         mock_lookup_client.lookup.return_value = _lr(
             LookupResponse(
-                results=[],
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=7, title="Sound of Kouté", artist="Manu Dibango"
+                        ),
+                        artwork=None,
+                    )
+                ],
                 search_type=SearchType.compilation,
                 song_not_found=True,
                 found_on_compilation=True,
@@ -509,6 +523,163 @@ class TestDelegationBranch:
         posted = json.dumps(mock_slack.post_blocks.call_args.args[0])
         assert "No results found" in posted
         assert "Not In Library" not in posted
+
+
+class TestRowlessSignalReconciliation:
+    """#256: the row-less filter must not leave the signals promising a match.
+
+    Filtering mutates what the caller receives; ``found_on_compilation`` /
+    ``song_not_found`` / ``context_message`` describe what LML sent. When the filter
+    empties the list, the two contradict — a DJ reads a header over nothing.
+    """
+
+    @staticmethod
+    def _rowless_compilation_response():
+        """LML's shape for "the track is on a compilation WXYC doesn't shelve"."""
+        return _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=0,
+                            title="Unshelved Compilation",
+                            artist="Juana Molina",
+                            call_number="(external)",
+                            library_url="",
+                        ),
+                        artwork=make_release_metadata(release_id=999),
+                    ),
+                ],
+                search_type=SearchType.compilation,
+                found_on_compilation=True,
+                song_not_found=False,
+                context_message='Found "la paradoja" by Juana Molina on:',
+            )
+        )
+
+    @staticmethod
+    async def _post(app, message="play la paradoja"):
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                return await client.post("/api/v1/request", json={"message": message})
+
+    @pytest.mark.asyncio
+    async def test_emptied_list_downgrades_the_compilation_claim(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """Nothing shelved survives the filter, so nothing may claim a match."""
+        mock_lookup_client.lookup.return_value = self._rowless_compilation_response()
+
+        data = (await self._post(app)).json()
+
+        assert data["library_results"] == []
+        assert data["found_on_compilation"] is False
+        assert data["song_not_found"] is True
+        assert data["context_message"] == '"la paradoja" by Juana Molina not found in library.'
+
+    @pytest.mark.asyncio
+    async def test_emptied_list_never_posts_a_header_over_nothing_to_slack(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """The 'Found ... on:' header must not reach the request channel either."""
+        mock_lookup_client.lookup.return_value = self._rowless_compilation_response()
+
+        await self._post(app)
+
+        posted = json.dumps(mock_slack.post_blocks.call_args.args[0])
+        assert 'Found \\"la paradoja\\"' not in posted
+        assert "No results found" in posted
+
+    @pytest.mark.asyncio
+    async def test_surviving_library_rows_keep_lmls_signals(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """A shelved row survived: LML's verdict stands.
+
+        ROM cannot tell which row carried the track, so it does not second-guess a
+        response it is still delivering rows for. Since LML#1184 that is sound rather
+        than merely conservative: LML itself now returns ``found_on_compilation=False``
+        whenever the only row carrying the track is row-less, so a ``True`` that
+        arrives alongside shelved rows means a shelved row carries it.
+        """
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=42, title="Aluminum Tunes", artist="Stereolab"
+                        ),
+                        artwork=None,
+                    ),
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=0,
+                            title="Unshelved Compilation",
+                            artist="Stereolab",
+                            call_number="(external)",
+                            library_url="",
+                        ),
+                        artwork=make_release_metadata(release_id=999),
+                    ),
+                ],
+                search_type=SearchType.compilation,
+                found_on_compilation=True,
+                song_not_found=False,
+                context_message='Found "la paradoja" by Juana Molina on:',
+            )
+        )
+
+        data = (await self._post(app)).json()
+
+        assert [r["id"] for r in data["library_results"]] == [42]
+        assert data["found_on_compilation"] is True
+        assert data["context_message"] == 'Found "la paradoja" by Juana Molina on:'
+
+    @pytest.mark.asyncio
+    async def test_genuine_miss_keeps_lmls_own_message(self, app, mock_lookup_client, mock_slack):
+        """LML already reconciles a true no-match; don't recompose over it."""
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[],
+                search_type=SearchType.none,
+                found_on_compilation=False,
+                song_not_found=True,
+                context_message='"la paradoja" by Juana Molina not found in library.',
+            )
+        )
+
+        data = (await self._post(app)).json()
+
+        assert data["library_results"] == []
+        assert data["song_not_found"] is True
+        assert data["context_message"] == '"la paradoja" by Juana Molina not found in library.'
+
+    @pytest.mark.asyncio
+    async def test_emptied_list_without_a_typed_song_drops_the_claim_silently(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """No song to name: kill the false header rather than invent a message."""
+        mock_lookup_client.lookup.return_value = self._rowless_compilation_response()
+        album_only = make_parsed_request(
+            album="DOGA", artist="Juana Molina", raw_message="play DOGA by juana molina"
+        )
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=album_only
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/api/v1/request", json={"message": "play DOGA"})
+
+        data = response.json()
+        assert data["library_results"] == []
+        assert data["found_on_compilation"] is False
+        assert data["context_message"] is None
 
 
 class TestFingerprintMetadata:
