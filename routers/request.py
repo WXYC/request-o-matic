@@ -124,7 +124,7 @@ def _parsed_context_parts(parsed: ParsedRequest) -> list[str]:
     return parts
 
 
-def _not_in_library_context(parsed: ParsedRequest) -> str | None:
+def _not_in_library_context(parsed: ParsedRequest, artist: str | None) -> str | None:
     """Context line for "nothing shelved matched", once filtering empties the list (#256).
 
     Deliberately a local re-composition rather than a call into LML: this repo does not
@@ -134,11 +134,18 @@ def _not_in_library_context(parsed: ParsedRequest) -> str | None:
     state (``build_context_message``'s ``song_not_found and not has_results`` branch) so
     the two services don't drift into describing one outcome two ways.
 
+    ``artist`` is passed separately, and must be the name the listener **typed**, not
+    ``parsed.artist``: the caller overwrites that with ``corrected_artist`` for Slack
+    display, while LML composes the sibling message from the typed name (its fuzzy
+    correction rides a separate field, LML#626). Reading ``parsed.artist`` here would
+    make the same listener text produce two different sentences depending on which
+    service phrased it — precisely the drift this shared wording exists to prevent.
+
     Returns ``None`` when there is no song and artist to name. Dropping a false header
     beats inventing a message about a request we can't phrase.
     """
-    if parsed.song and parsed.artist:
-        return f'"{parsed.song}" by {parsed.artist} not found in library.'
+    if parsed.song and artist:
+        return f'"{parsed.song}" by {artist} not found in library.'
     return None
 
 
@@ -622,6 +629,15 @@ async def handle_request(
                 lookup_failure = e
 
     if lookup_response is not None:
+        # The artist as the listener typed it. Captured before the correction below
+        # overwrites it, because LML composes its own context messages from the typed
+        # name — the LML#626 two-channel seam threads the fuzzy correction onto a
+        # separate field rather than replacing `parsed.artist` — and the #256
+        # recomposition has to name the artist the same way LML would for the same
+        # state, or the identical listener text gets described two ways depending on
+        # which service happened to phrase it.
+        typed_artist = parsed.artist
+
         # Apply corrected artist for Slack display
         if lookup_response.corrected_artist:
             parsed.artist = lookup_response.corrected_artist
@@ -629,6 +645,7 @@ async def handle_request(
         # Extract results for Slack posting. Generated LookupResponse fields
         # are nullable in the schema; coerce to non-null defaults for callers.
         results = lookup_response.results or []
+        received_count = len(results)
         # Exclude non-library results from the request channel. LML surfaces
         # albums not in the WXYC catalog as row-less items (LML#631: id=0, empty
         # library_url, call_number="(external)"). A DJ can't pull a non-shelved
@@ -649,20 +666,30 @@ async def handle_request(
         # nothing underneath, which parses as a broken client rather than "we don't
         # shelve this". Reconcile against what is actually being delivered.
         #
-        # Only when the list *empties*. A surviving shelved row means LML's verdict
-        # still describes something the caller is receiving, and since LML#1184 that
-        # is sound rather than merely conservative: LML returns
-        # found_on_compilation=False whenever the only row carrying the track is
-        # row-less, so a True arriving alongside shelved rows means a shelved row
-        # carries it.
+        # Gated on *this filter* having emptied the list, not merely on the list being
+        # empty. LML already reconciles its own signals, and an empty response it
+        # produced on its own is not ours to reinterpret: a genuine artist-not-in-
+        # library miss deliberately carries no context message, and a shed response
+        # (`degraded=true`) means "we couldn't finish the search", which must never be
+        # laundered into the definitive "WXYC doesn't have it" this branch asserts.
+        # Both arrive with nothing to strip, so requiring a strip excludes them.
+        #
+        # Only when the list *empties*, too. A surviving shelved row means LML's
+        # verdict still describes something the caller is receiving. Once
+        # WXYC/library-metadata-lookup#1184 lands that is sound rather than merely
+        # conservative — LML will return found_on_compilation=False whenever the only
+        # row carrying the track is row-less, so a True arriving alongside shelved rows
+        # means a shelved row carries it. Until then it is the conservative read, and
+        # correct either way.
         #
         # `search_type` is deliberately untouched — it is provenance ("which strategy
         # ran"), not a claim about the rows, and the CLI's `Strategy:` line should
         # keep reporting the real one.
-        if not library_results and (found_on_compilation or not song_not_found):
+        stripped_rowless = received_count > len(results)
+        if stripped_rowless and not library_results:
             found_on_compilation = False
             song_not_found = True
-            context = _not_in_library_context(parsed)
+            context = _not_in_library_context(parsed, typed_artist)
 
         # Prefer the lookup service's cache stats over local counters,
         # which stay at 0 since all Discogs/cache work is delegated.
