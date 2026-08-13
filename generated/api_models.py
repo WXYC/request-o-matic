@@ -2049,6 +2049,15 @@ class AppConfig(BaseModel):
     )
 
 
+class AppSecrets(BaseModel):
+    discogsApiKey: str = Field(
+        ..., description="Discogs API consumer key, for clients that call Discogs directly."
+    )
+    discogsApiSecret: str = Field(
+        ..., description="Discogs API consumer secret, for clients that call Discogs directly."
+    )
+
+
 class TrackListItem(BaseModel):
     position: str = Field(..., description='Track position (e.g. "1", "A1")')
     title: str = Field(..., description="Track title")
