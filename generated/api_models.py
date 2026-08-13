@@ -114,6 +114,35 @@ class FlowsheetEntryBase(BaseModel):
     show_id: int
 
 
+class FlowsheetRangeEntryBase(BaseModel):
+    id: int
+    play_order: int
+    show_id: int = Field(
+        ...,
+        description="The show this entry belongs to, or `null` for an **unattributed** entry — a row that exists with no linked show. 20 of 2,619,011 rows are in that state (2005-02-06 → 2026-04-21), and the Phase 0 audit for the tubafrenzy decommissioning decided against backfilling them, so this endpoint returns them rather than dropping them. Consumers that group entries by show must render an unattributed bucket; they must not assume every entry joins to a member of `shows`, and must not crash on the null. The key is always present.",
+    )
+
+
+class FlowsheetRangeShow(BaseModel):
+    id: int = Field(
+        ...,
+        description="Matches `FlowsheetRangeEntry.show_id` for every entry belonging to this show.",
+    )
+    show_name: str | None = Field(
+        None, description="Specialty-show name, or `null` for a regular show."
+    )
+    dj_name: str | None = Field(
+        None,
+        description="Resolved public display name of the show's DJ. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> `user.djName` -> `shows.legacy_dj_name` (tubafrenzy's `DJ_HANDLE`) -> null. Never the real-name column.",
+    )
+    specialty_id: int | None = None
+    start_time: AwareDatetime = Field(..., description="When the DJ signed on (ISO 8601).")
+    end_time: AwareDatetime | None = Field(
+        None,
+        description='When the DJ signed off (ISO 8601), or `null`. Null has **two** causes and they are not distinguishable from this field alone: the show is genuinely on the air, or its `show_end` delivery was dropped and the column stayed null permanently (nothing re-closes it on a schedule). Do not render a null `end_time` as "on air now"; compare `start_time` against the present, or read the `show_end` marker row in `entries`, which is the second independent signal.',
+    )
+
+
 class FlowsheetSongEntry(FlowsheetEntryBase):
     track_title: str
     artist_name: str
@@ -2414,7 +2443,7 @@ class AutoDJDeactivateResponse(BaseModel):
     deactivatedAt: AwareDatetime
 
 
-class FlowsheetEntryResponse(FlowsheetEntryBase):
+class FlowsheetEntryFields(BaseModel):
     album_id: int | None = None
     track_title: str | None = None
     album_title: str | None = None
@@ -2459,6 +2488,25 @@ class FlowsheetEntryResponse(FlowsheetEntryBase):
     dj_name: str | None = Field(
         None,
         description="Resolved public display name of the DJ on the row's show. Nullable per the PII-safe resolution chain (BS#1371): user.djName -> shows.legacy_dj_name -> null; never the real-name PII column.",
+    )
+
+
+class FlowsheetEntryResponse(FlowsheetEntryBase, FlowsheetEntryFields):
+    pass
+
+
+class FlowsheetRangeEntry(FlowsheetRangeEntryBase, FlowsheetEntryFields):
+    pass
+
+
+class FlowsheetRangeResponse(BaseModel):
+    shows: list[FlowsheetRangeShow] = Field(
+        ...,
+        description="Every show overlapping the window, ordered by `start_time` ascending. Empty when the window contains no shows.",
+    )
+    entries: list[FlowsheetRangeEntry] = Field(
+        ...,
+        description="Every flowsheet row in the window, ordered by `add_time` ascending and tie-broken on `id` — NOT by `play_order`, which is per-show and interleaves a multi-show window (see the endpoint description). Includes the `show_start` / `show_end` marker rows. Those markers are a convenience, not a guarantee: a show whose `show_end` delivery was dropped has no closing marker (the same failure that leaves `FlowsheetRangeShow.end_time` null), so a consumer that segments purely on markers will run one show's entries into the next. Segment on `show_id` and treat the markers as labels.",
     )
 
 
