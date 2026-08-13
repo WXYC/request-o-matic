@@ -124,6 +124,24 @@ def _parsed_context_parts(parsed: ParsedRequest) -> list[str]:
     return parts
 
 
+def _not_in_library_context(parsed: ParsedRequest) -> str | None:
+    """Context line for "nothing shelved matched", once filtering empties the list (#256).
+
+    Deliberately a local re-composition rather than a call into LML: this repo does not
+    import lookup-orchestrator internals, and the alternative — asking LML to recompute
+    a message for a list *this* service just filtered — would put the sentence's
+    authorship on the wrong side of the hop. It matches LML's own wording for the same
+    state (``build_context_message``'s ``song_not_found and not has_results`` branch) so
+    the two services don't drift into describing one outcome two ways.
+
+    Returns ``None`` when there is no song and artist to name. Dropping a false header
+    beats inventing a message about a request we can't phrase.
+    """
+    if parsed.song and parsed.artist:
+        return f'"{parsed.song}" by {parsed.artist} not found in library.'
+    return None
+
+
 async def post_results_to_slack(
     slack_service: SlackService | None,
     message: str,
@@ -624,6 +642,27 @@ async def handle_request(
         song_not_found = bool(lookup_response.song_not_found)
         found_on_compilation = bool(lookup_response.found_on_compilation)
         context = lookup_response.context_message
+
+        # #256: the filter above mutates what the caller receives; the four signals
+        # just read off describe what LML sent. When filtering empties the list they
+        # contradict each other — a DJ reads `Found "<song>" by <artist> on:` with
+        # nothing underneath, which parses as a broken client rather than "we don't
+        # shelve this". Reconcile against what is actually being delivered.
+        #
+        # Only when the list *empties*. A surviving shelved row means LML's verdict
+        # still describes something the caller is receiving, and since LML#1184 that
+        # is sound rather than merely conservative: LML returns
+        # found_on_compilation=False whenever the only row carrying the track is
+        # row-less, so a True arriving alongside shelved rows means a shelved row
+        # carries it.
+        #
+        # `search_type` is deliberately untouched — it is provenance ("which strategy
+        # ran"), not a claim about the rows, and the CLI's `Strategy:` line should
+        # keep reporting the real one.
+        if not library_results and (found_on_compilation or not song_not_found):
+            found_on_compilation = False
+            song_not_found = True
+            context = _not_in_library_context(parsed)
 
         # Prefer the lookup service's cache stats over local counters,
         # which stay at 0 since all Discogs/cache work is delegated.
