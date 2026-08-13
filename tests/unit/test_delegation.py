@@ -601,10 +601,12 @@ class TestRowlessSignalReconciliation:
         """A shelved row survived: LML's verdict stands.
 
         ROM cannot tell which row carried the track, so it does not second-guess a
-        response it is still delivering rows for. Since LML#1184 that is sound rather
-        than merely conservative: LML itself now returns ``found_on_compilation=False``
-        whenever the only row carrying the track is row-less, so a ``True`` that
-        arrives alongside shelved rows means a shelved row carries it.
+        response it is still delivering rows for. Once
+        WXYC/library-metadata-lookup#1184 lands that becomes sound rather than merely
+        conservative — LML will return ``found_on_compilation=False`` whenever the only
+        row carrying the track is row-less, so a ``True`` arriving alongside shelved
+        rows will mean a shelved row carries it. Until then it is the conservative
+        read, and correct either way.
         """
         mock_lookup_client.lookup.return_value = _lr(
             LookupResponse(
@@ -638,6 +640,109 @@ class TestRowlessSignalReconciliation:
         assert [r["id"] for r in data["library_results"]] == [42]
         assert data["found_on_compilation"] is True
         assert data["context_message"] == 'Found "la paradoja" by Juana Molina on:'
+
+    @pytest.mark.asyncio
+    async def test_artist_absent_from_library_is_not_rewritten(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """LML returned empty on its own — nothing was stripped, so nothing to reconcile.
+
+        The artist isn't in the library at all, and LML deliberately emits no context
+        message for that pair. Fabricating one here would put words in LML's mouth
+        about a response this service never altered.
+        """
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[],
+                search_type=SearchType.none,
+                song_not_found=False,
+                found_on_compilation=False,
+                context_message=None,
+            )
+        )
+
+        data = (await self._post(app)).json()
+
+        assert data["library_results"] == []
+        assert data["song_not_found"] is False
+        assert data["context_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_shed_response_is_not_laundered_into_a_definitive_miss(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """A degraded response means "we couldn't finish", never "WXYC doesn't have it".
+
+        LML's `_build_degraded_response` returns empty results with `song_not_found`
+        left at whatever it was — often False — and `degraded=true`. Rewriting that to
+        a definitive not-found would turn an outage into a factual claim about the
+        collection. Nothing was stripped, so the reconciliation must not fire.
+        """
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[],
+                search_type=SearchType.none,
+                song_not_found=False,
+                found_on_compilation=False,
+                context_message=None,
+                degraded=True,
+            )
+        )
+
+        data = (await self._post(app)).json()
+
+        assert data["library_results"] == []
+        assert data["song_not_found"] is False
+        assert data["context_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_recomposed_message_names_the_typed_artist_not_the_correction(
+        self, app, mock_lookup_client, mock_slack
+    ):
+        """Parity with LML's sibling message, which is composed from the typed name.
+
+        ROM overwrites `parsed.artist` with `corrected_artist` for Slack display; LML
+        threads its correction onto a separate field (LML#626) and keeps composing from
+        what the listener typed. Reading the overwritten value here would describe one
+        outcome two ways depending on which service phrased it.
+        """
+        mock_lookup_client.lookup.return_value = _lr(
+            LookupResponse(
+                results=[
+                    LookupResultItem(
+                        library_item=make_library_item(
+                            id=0,
+                            title="Unshelved Compilation",
+                            artist="Juana Molina",
+                            call_number="(external)",
+                            library_url="",
+                        ),
+                        artwork=make_release_metadata(release_id=999),
+                    ),
+                ],
+                search_type=SearchType.compilation,
+                found_on_compilation=True,
+                song_not_found=False,
+                context_message='Found "la paradoja" by Juana Molena on:',
+                corrected_artist="Juana Molina",
+            )
+        )
+        typo = make_parsed_request(
+            song="la paradoja",
+            artist="Juana Molena",
+            raw_message="play la paradoja by juana molena",
+        )
+
+        with patch("routers.request.parse_request", new_callable=AsyncMock, return_value=typo):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post("/api/v1/request", json={"message": "play it"})
+
+        data = response.json()
+        assert data["context_message"] == '"la paradoja" by Juana Molena not found in library.'
+        # The correction still reaches the caller through `parsed`, as before.
+        assert data["parsed"]["artist"] == "Juana Molina"
 
     @pytest.mark.asyncio
     async def test_genuine_miss_keeps_lmls_own_message(self, app, mock_lookup_client, mock_slack):
