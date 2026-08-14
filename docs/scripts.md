@@ -23,3 +23,7 @@ The installer's control flow (arg dispatch, guard clauses) is covered by fast, n
 - **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`).
 - **`scripts/repl.py`** - Interactive REPL with command history, server switching (`:local`/`:prod`)
 - **`scripts/create_posthog_dashboard.py`** - Creates PostHog dashboard for telemetry visualization (requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`)
+
+## CI Helpers
+- **`scripts/nlp_nightly_gate.py`** - Decides whether tonight's Groq NLP validation run is needed: picks the DST-correct 03:00 ET cron entry and diffs the NLP surface against the last green run. Called by `.github/workflows/nlp-nightly.yml`; see [Nightly NLP Check](testing.md#nightly-nlp-check-conditional).
+- **`scripts/wait_for_railway_deployment.sh`** - Polls the Railway deployment API for a terminal status, so the CI smoke test does not race the rollout.

@@ -11,6 +11,11 @@ name: External API Tests
 #
 # The deploy-staging smoke test in ci.yml is the actual deploy gate; this
 # workflow exists as a deeper on-demand check.
+#
+# nlp-nightly.yml covers the parser half of this suite automatically: it runs
+# TestParserIntegration at 03:00 ET on nights when the NLP surface changed. This
+# workflow stays the only way to run TestFullRequestIntegration, which POSTs to
+# the deployed staging container.
 
 on:
   workflow_dispatch:

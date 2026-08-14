@@ -1,0 +1,159 @@
+name: Nightly NLP Check
+
+# Validates the Groq NLP parser against the real model -- but only on nights
+# when the NLP surface actually changed. See scripts/nlp_nightly_gate.py for
+# the gate (DST-twin selection + watched-path diff) and docs/testing.md for the
+# operator view.
+#
+# Why conditional rather than every night: the external_api suite shares a
+# per-org Groq TPM bucket with the deployed containers, and issue #118 traced a
+# staging outage to exactly that contention. Running only when
+# services/parser.py & co. move keeps the spend and the 429 risk proportional
+# to the risk being covered.
+#
+# Why 03:00 ET: station traffic and staging load are at their floor, so the
+# suite gets the TPM bucket to itself. GitHub cron is UTC-only, so the two
+# entries below are the same 03:00 ET in each DST regime and the gate discards
+# whichever one is not tonight's.
+#
+# Scope: TestParserIntegration only. It calls parse_request() directly with a
+# real Groq client, so it exercises the prompt and the model without POSTing to
+# /request -- which would post test results into Slack from the deployed
+# container. The rest of the external_api suite stays manual, in
+# external-api.yml.
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 03:00 America/New_York while EDT (UTC-4)
+    - cron: "0 8 * * *" # 03:00 America/New_York while EST (UTC-5)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # the gate reads this workflow's own run history for a baseline
+
+concurrency:
+  group: nlp-nightly
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The gate diffs HEAD against the last green run's SHA, which can be
+          # many commits back; the default shallow clone would not contain it.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # The baseline is the head SHA of the last *successful* run of this
+      # workflow on this branch. Using success (not merely "completed") is what
+      # makes a red night sticky: the baseline does not advance past a failure,
+      # so the suite keeps re-running until it is green again. A run that gated
+      # itself off still counts as green, which is correct -- it proved there
+      # was nothing to test.
+      - name: Find the last green run
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          base="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nlp-nightly.yml/runs?branch=${BRANCH}&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""')"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "Baseline: ${base:-<none: first run, or no green run on this branch yet>}"
+
+      - name: Decide whether to run
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          BASE_SHA: ${{ steps.baseline.outputs.base }}
+        run: |
+          set -euo pipefail
+          python scripts/nlp_nightly_gate.py \
+            --event-name "$EVENT_NAME" \
+            --event-schedule "$EVENT_SCHEDULE" \
+            --base "$BASE_SHA" \
+            --head "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  nlp:
+    name: Groq Parser Suite
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    # 21 tests, but well over 21 Groq round-trips (one case parses the same
+    # message ten times to check reliability): ~7 minutes measured end-to-end,
+    # and a throttled bucket stretches that. Generous enough not to fail on a
+    # slow night, tight enough that a hung client cannot burn an hour.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Without a key every test in the class is skipif'd away and the job goes
+      # green having validated nothing -- the same silent-pass failure mode the
+      # marker-sync check guards against. Fail loudly instead.
+      - name: Require a Groq key
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "${GROQ_API_KEY:-}" ]; then
+            echo "::error::GROQ_API_KEY is unset; the parser suite would skip itself into a false green."
+            exit 1
+          fi
+
+      # TEST_ENV=staging makes the autouse local_server fixture a no-op. These
+      # tests never touch that server -- they call parse_request() in-process --
+      # but the fixture would otherwise try to boot uvicorn on the runner.
+      - name: Run the Groq parser suite
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TEST_ENV: staging
+        run: pytest tests/integration/test_integration.py::TestParserIntegration -v -m external_api
+
+  notify-failure:
+    # Nobody is watching Actions at 03:00, so a red nightly has to come find
+    # someone. Mirrors the notify-failure job in ci.yml.
+    name: Notify on failure
+    needs: [gate, nlp]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_MONITORING_WEBHOOK }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL: "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          COMMIT_SHA: ${{ github.sha }}
+          REASON: ${{ needs.gate.outputs.reason }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "SLACK_MONITORING_WEBHOOK unset; skipping Slack post."
+            exit 0
+          fi
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"text\":\":x: *request-o-matic nightly NLP check failed*\nThe Groq parser suite is red against the live model.\nTrigger: ${REASON}\nCommit: <$COMMIT_URL|$SHORT_SHA>\nRun: $RUN_URL\"}" \
+            || true

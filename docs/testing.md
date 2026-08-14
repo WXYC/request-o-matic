@@ -36,9 +36,38 @@ venv/bin/python -m pytest tests/integration/ -v -m external_api
 
 External-API tests are skipped if required env vars (`GROQ_API_KEY`) are missing.
 
-These tests are **not** part of the auto-CI run on `main`. The suite shares a per-org Groq TPM bucket with the staging container and saturates the 6000 TPM cap on `llama-3.1-8b-instant`, so running it on every push cascades into 429s + timeouts (see [#118](https://github.com/WXYC/request-o-matic/issues/118) for the diagnosis). Trigger it manually from the GitHub Actions UI via the **External API Tests** workflow (`.github/workflows/external-api.yml`); it always targets staging. The `deploy-staging` smoke test in `ci.yml` remains the actual deploy gate.
+These tests are **not** part of the auto-CI run on `main`. The suite shares a per-org Groq TPM bucket with the staging container and saturates the 6000 TPM cap on `llama-3.1-8b-instant`, so running it on every push cascades into 429s + timeouts (see [#118](https://github.com/WXYC/request-o-matic/issues/118) for the diagnosis). Trigger it manually from the GitHub Actions UI via the **External API Tests** workflow (`.github/workflows/external-api.yml`); it always targets staging. The `deploy-staging` smoke test in `ci.yml` remains the actual deploy gate. The parser half of the suite is also covered automatically — see [Nightly NLP Check](#nightly-nlp-check-conditional) below.
 
 Two caveats when running the manual workflow: (1) trigger it *after* the `deploy-staging` job finishes if you want the test code and the deployed code to match — the suite hits a fixed staging URL, so it sees whatever was last deployed there, regardless of when you trigger. (2) Pick the same git ref in the workflow-dispatch UI as is currently deployed; the test source comes from the chosen ref while the deployed service comes from `main`. Production is deliberately not an option: `TestFullRequestIntegration` POSTs to `/request`, which posts to Slack from the deployed container, so a prod run would spam the live WXYC channel. To test prod, run pytest locally with `TEST_ENV=production` after disabling Slack posting.
+
+## Nightly NLP Check (conditional)
+
+`.github/workflows/nlp-nightly.yml` runs `TestParserIntegration` — the 21 tests that call `parse_request()` against the real Groq model — at **03:00 ET**, but only on nights when the NLP surface actually changed. A week with no parser work costs nothing; a prompt edit is validated against the live model within a day of landing.
+
+The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
+
+1. **Which cron entry is tonight's.** GitHub cron is UTC-only, so 03:00 ET needs two entries — `0 7 * * *` (EDT) and `0 8 * * *` (EST) — and both fire year-round. The gate keeps whichever matches the UTC offset in effect and no-ops the other. It compares offsets rather than wall-clock hours, so GitHub's habitual scheduler lag can delay a run but cannot skip a night.
+2. **Whether anything relevant changed.** It diffs `HEAD` against the head SHA of the last *successful* run of this workflow on the branch, and filters that diff through `WATCHED_PATHS`:
+
+   | Watched | Why |
+   |---|---|
+   | `services/parser.py` | The prompt, the model pin, and `parse_request()` itself |
+   | `routers/parse.py` | The `/parse` entry point |
+   | `core/dependencies.py`, `core/groq_tracing.py` | Groq client construction and span wiring |
+   | `config/settings.py` | Groq settings/env surface |
+   | `tests/scenarios.py` | The shared assertion corpus |
+   | `tests/integration/test_integration.py` | The suite itself |
+   | `.github/workflows/nlp-nightly.yml`, `scripts/nlp_nightly_gate.py` | A broken trigger gets caught by the run it triggers |
+
+Because the baseline is the last *green* run, a red night is sticky: the baseline does not advance past a failure, so the suite keeps re-running nightly until it passes. Dependency pins (`requirements*.txt`, `uv.lock`) are deliberately **not** watched — every unrelated dependency bump moves them. After a `groq` SDK bump, trigger the workflow by hand.
+
+Scope is `TestParserIntegration` only. It exercises the prompt and model in-process; `TestFullRequestIntegration` POSTs to a deployed container, which posts to Slack, and stays manual in `external-api.yml`. A missing `GROQ_API_KEY` fails the job rather than skipping into a false green, and a failed run posts to `SLACK_MONITORING_WEBHOOK` the same way `ci.yml` does.
+
+To force a run regardless of the diff, dispatch it manually (**Actions → Nightly NLP Check → Run workflow**, or `gh workflow run nlp-nightly.yml`). To preview the decision locally:
+
+```bash
+python scripts/nlp_nightly_gate.py --event-name schedule --event-schedule "0 7 * * *" --base <sha> --head HEAD
+```
 
 ## Test Environment Configuration
 Use `TEST_ENV` to control which server external-API and performance tests hit:
