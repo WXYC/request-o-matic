@@ -14,8 +14,9 @@ Two gates, in order:
    rather than the wall-clock hour, so GitHub's habitual scheduler lag cannot
    skip a night.
 2. **Path diff.** `git diff <last-validated-sha> <head>` filtered through
-   `WATCHED_PATHS`. When the baseline is unknown (first run, or the SHA is gone
-   after a force-push) the gate fails open and runs.
+   `WATCHED_PATHS`, plus `KEYWORD_WATCHED` for shared files where only a
+   Groq-mentioning hunk counts. When the baseline is unknown (first run, or the
+   SHA is gone after a force-push) the gate fails open and runs.
 
 Usage:
     python scripts/nlp_nightly_gate.py \\
@@ -57,10 +58,7 @@ _EDT_OFFSET = timedelta(hours=-4)
 # SDK bump with a manual `workflow_dispatch` instead of running most nights.
 WATCHED_PATHS: tuple[str, ...] = (
     "services/parser.py",
-    "routers/parse.py",
-    "core/dependencies.py",
     "core/groq_tracing.py",
-    "config/settings.py",
     "tests/scenarios.py",
     "tests/integration/test_integration.py",
     # The suite's fixtures are load-bearing for the nightly specifically: the
@@ -72,6 +70,27 @@ WATCHED_PATHS: tuple[str, ...] = (
     ".github/workflows/nlp-nightly.yml",
     "scripts/nlp_nightly_gate.py",
 )
+
+# Shared files that hold a little Groq wiring inside a lot of unrelated code:
+# core/dependencies.py also builds the LML, PostHog, and ban clients, and
+# config/settings.py carries Slack/LML/PostHog/ban config. Watching them whole
+# defeats the point of gating -- over the 120 days before this was written they
+# changed on 15 days, of which exactly one touched a Groq line. Every other one
+# would have spent the shared TPM bucket (#118, the resource this gate exists to
+# conserve) on a change that cannot move the prompt or the model.
+#
+# So they trigger only when the *diff itself* mentions the keyword. The one that
+# would have qualified is the commit that switched the client to AsyncGroq --
+# precisely the kind of change worth a live run.
+KEYWORD_WATCHED: dict[str, str] = {
+    "core/dependencies.py": "groq",
+    "config/settings.py": "groq",
+}
+
+# Not watched at all: routers/parse.py. It looks like NLP surface, but
+# TestParserIntegration calls parse_request() directly and never routes through
+# /parse, so a live run could not validate a change there -- the route's error
+# mapping is covered by tests/unit/test_parse_router.py instead.
 
 # Cap how many filenames the reason string names, so a sweeping refactor does
 # not produce an unreadable job summary.
@@ -101,6 +120,22 @@ def watched_changes(paths: Iterable[str], patterns: Sequence[str] = WATCHED_PATH
     return [path for path in paths if any(fnmatch(path, pattern) for pattern in patterns)]
 
 
+def hunk_mentions(diff_text: str, keyword: str) -> bool:
+    """True when an added or removed line in `diff_text` mentions `keyword`.
+
+    Only `+`/`-` lines count: a context line means the keyword was already there
+    and did not move. The `+++`/`---` file headers are excluded too, or every
+    diff of a file whose own name contains the keyword would match itself.
+    """
+    needle = keyword.lower()
+    for line in diff_text.splitlines():
+        if line.startswith(("+++", "---")) or not line.startswith(("+", "-")):
+            continue
+        if needle in line.lower():
+            return True
+    return False
+
+
 def _summarize(files: Sequence[str]) -> str:
     """Render matched files as a single line, truncated past _MAX_NAMED_FILES."""
     named = ", ".join(files[:_MAX_NAMED_FILES])
@@ -114,8 +149,14 @@ def decide(
     event_schedule: str,
     changed_files: Sequence[str] | None,
     now_et: datetime,
+    keyword_hits: Sequence[str] = (),
 ) -> Decision:
-    """Apply the DST-twin gate and then the path-diff gate."""
+    """Apply the DST-twin gate and then the path-diff gate.
+
+    Args:
+        keyword_hits: KEYWORD_WATCHED files whose diff mentioned their keyword.
+            Disjoint from WATCHED_PATHS, so they simply extend the match list.
+    """
     if event_name != "schedule":
         return Decision(True, f"{event_name}: running unconditionally")
 
@@ -129,7 +170,7 @@ def decide(
     if changed_files is None:
         return Decision(True, "no usable baseline from a previously validated run; running")
 
-    matched = watched_changes(changed_files)
+    matched = watched_changes(changed_files) + list(keyword_hits)
     if not matched:
         return Decision(
             False,
@@ -177,6 +218,36 @@ def resolve_changed_files(
     return [line.strip() for line in diff.stdout.splitlines() if line.strip()]
 
 
+def resolve_keyword_hits(
+    changed_files: Sequence[str],
+    base: str,
+    head: str,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> list[str]:
+    """Return the KEYWORD_WATCHED files whose own diff mentions their keyword.
+
+    One `git diff` per candidate file, and only for files that actually changed,
+    so the common case (no shared file touched) costs nothing.
+    """
+    hits = []
+    for path in changed_files:
+        keyword = KEYWORD_WATCHED.get(path)
+        if keyword is None:
+            continue
+        diff = run(
+            ["git", "diff", "-U0", base, head, "--", path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # A failed diff for one file is not worth failing the night over, but it
+        # must not read as "no Groq change" either -- treat it as a hit and let
+        # the suite decide, consistent with the gate's fail-open posture.
+        if diff.returncode != 0 or hunk_mentions(diff.stdout, keyword):
+            hits.append(path)
+    return hits
+
+
 def _write_github_output(decision: Decision) -> None:
     """Append the decision to $GITHUB_OUTPUT, if the workflow set one."""
     output_path = os.environ.get("GITHUB_OUTPUT")
@@ -201,11 +272,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     changed_files = (
         resolve_changed_files(args.base, args.head) if args.event_name == "schedule" else None
     )
+    keyword_hits = (
+        resolve_keyword_hits(changed_files, args.base, args.head) if changed_files else []
+    )
     decision = decide(
         event_name=args.event_name,
         event_schedule=args.event_schedule,
         changed_files=changed_files,
         now_et=datetime.now(EASTERN),
+        keyword_hits=keyword_hits,
     )
 
     verdict = "RUN" if decision.should_run else "SKIP"

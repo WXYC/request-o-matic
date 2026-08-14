@@ -177,6 +177,12 @@ jobs:
           name: ${{ env.GREEN_MARKER }}
           path: ${{ runner.temp }}/${{ env.GREEN_MARKER }}.txt
           if-no-files-found: error
+          # Artifacts are immutable and scoped to the run, not the attempt, so a
+          # re-run of an already-green night would 409 without this, fail the
+          # step, and -- since a re-run keeps `event_name == schedule` -- post
+          # "the parser suite is red" about a suite that passed. Re-running to
+          # confirm a suspected flake is exactly when that would happen.
+          overwrite: true
           # Long enough that a quiet stretch of parser work does not expire the
           # baseline and force a needless run; short enough to stay tidy. An
           # expired marker degrades to "no baseline", i.e. one re-validating run.
