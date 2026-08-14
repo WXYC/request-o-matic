@@ -3,7 +3,7 @@
 
 Used by `.github/workflows/nlp-nightly.yml`. The workflow is scheduled but
 conditional: the real-Groq parser suite only runs when the NLP surface actually
-changed since the last green nightly, so an untouched week costs nothing and a
+changed since the last validated run, so an untouched week costs nothing and a
 parser edit is validated against the live model within a day.
 
 Two gates, in order:
@@ -13,7 +13,7 @@ Two gates, in order:
    act on any given night. `is_tonights_cron` keys off the UTC offset in effect
    rather than the wall-clock hour, so GitHub's habitual scheduler lag cannot
    skip a night.
-2. **Path diff.** `git diff <last-green-sha> <head>` filtered through
+2. **Path diff.** `git diff <last-validated-sha> <head>` filtered through
    `WATCHED_PATHS`. When the baseline is unknown (first run, or the SHA is gone
    after a force-push) the gate fails open and runs.
 
@@ -63,6 +63,12 @@ WATCHED_PATHS: tuple[str, ...] = (
     "config/settings.py",
     "tests/scenarios.py",
     "tests/integration/test_integration.py",
+    # The suite's fixtures are load-bearing for the nightly specifically: the
+    # workflow leans on TEST_ENV to keep the autouse local_server fixture from
+    # booting uvicorn on the runner. A change there breaks this job and nothing
+    # else, so it must be able to trigger its own validation.
+    "tests/conftest.py",
+    "tests/integration/conftest.py",
     ".github/workflows/nlp-nightly.yml",
     "scripts/nlp_nightly_gate.py",
 )
@@ -121,13 +127,13 @@ def decide(
         )
 
     if changed_files is None:
-        return Decision(True, "no usable baseline from a previous green run; running")
+        return Decision(True, "no usable baseline from a previously validated run; running")
 
     matched = watched_changes(changed_files)
     if not matched:
         return Decision(
             False,
-            f"no changes to the NLP surface since the last green run "
+            f"no changes to the NLP surface since the last validated run "
             f"({len(changed_files)} other file(s) changed)",
         )
     return Decision(True, f"NLP surface changed: {_summarize(matched)}")
@@ -141,7 +147,7 @@ def resolve_changed_files(
     """List files changed between `base` and `head`, or None if `base` is unusable.
 
     Args:
-        base: SHA of the last green run, or "" when there is none.
+        base: SHA of the last validated run, or "" when there is none.
         head: SHA under test.
         run: subprocess.run seam, swapped out in tests.
 
@@ -186,7 +192,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--event-name", default="workflow_dispatch", help="github.event_name")
     parser.add_argument("--event-schedule", default="", help="github.event.schedule")
-    parser.add_argument("--base", default="", help="SHA of the last green nightly run")
+    parser.add_argument(
+        "--base", default="", help="SHA of the last commit validated against live Groq"
+    )
     parser.add_argument("--head", default="HEAD", help="SHA under test")
     args = parser.parse_args(argv)
 

@@ -47,7 +47,7 @@ Two caveats when running the manual workflow: (1) trigger it *after* the `deploy
 The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
 
 1. **Which cron entry is tonight's.** GitHub cron is UTC-only, so 03:00 ET needs two entries — `0 7 * * *` (EDT) and `0 8 * * *` (EST) — and both fire year-round. The gate keeps whichever matches the UTC offset in effect and no-ops the other. It compares offsets rather than wall-clock hours, so GitHub's habitual scheduler lag can delay a run but cannot skip a night.
-2. **Whether anything relevant changed.** It diffs `HEAD` against the head SHA of the last *successful* run of this workflow on the branch, and filters that diff through `WATCHED_PATHS`:
+2. **Whether anything relevant changed.** It diffs `HEAD` against the last commit whose parser suite actually passed, and filters that diff through `WATCHED_PATHS`:
 
    | Watched | Why |
    |---|---|
@@ -57,9 +57,12 @@ The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
    | `config/settings.py` | Groq settings/env surface |
    | `tests/scenarios.py` | The shared assertion corpus |
    | `tests/integration/test_integration.py` | The suite itself |
+   | `tests/conftest.py`, `tests/integration/conftest.py` | The fixtures the job leans on (`TEST_ENV`, autouse `local_server`) |
    | `.github/workflows/nlp-nightly.yml`, `scripts/nlp_nightly_gate.py` | A broken trigger gets caught by the run it triggers |
 
-Because the baseline is the last *green* run, a red night is sticky: the baseline does not advance past a failure, so the suite keeps re-running nightly until it passes. Dependency pins (`requirements*.txt`, `uv.lock`) are deliberately **not** watched — every unrelated dependency bump moves them. After a `groq` SDK bump, trigger the workflow by hand.
+The baseline comes from a marker artifact (`nlp-green-sha`, 90-day retention) that only a **passing** suite uploads; the gate reads the commit from the artifact's `workflow_run.head_sha` metadata. It is deliberately not "the head SHA of the last successful workflow run", because both cron entries fire every night and the one that is not tonight's exits green having validated nothing. A run-conclusion baseline would let that decoy advance the baseline to `HEAD` — and under EST the decoy fires an *hour before* the real entry, so the real run would diff `HEAD` against `HEAD` and skip. The suite would never run between November and March, with every job green while it happened.
+
+Because only a passing suite writes the marker, a red night is sticky: the baseline does not advance past a failure, so the suite keeps re-running nightly until it passes. A gated-off night writes nothing either, which keeps the diff anchored to the last commit whose parser behaviour was actually observed. Dependency pins (`requirements*.txt`, `uv.lock`) are deliberately **not** watched — every unrelated dependency bump moves them. After a `groq` SDK bump, trigger the workflow by hand.
 
 Scope is `TestParserIntegration` only. It exercises the prompt and model in-process; `TestFullRequestIntegration` POSTs to a deployed container, which posts to Slack, and stays manual in `external-api.yml`. A missing `GROQ_API_KEY` fails the job rather than skipping into a false green, and a failed run posts to `SLACK_MONITORING_WEBHOOK` the same way `ci.yml` does.
 
