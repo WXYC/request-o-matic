@@ -1,7 +1,9 @@
 """Unit tests for scripts/nlp_nightly_gate.py (the nightly Groq NLP check's gate)."""
 
+import re
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +26,9 @@ from scripts.nlp_nightly_gate import (
 # entries exist.
 WINTER_3AM_ET = datetime(2026, 1, 15, 3, 0, tzinfo=EASTERN)
 SUMMER_3AM_ET = datetime(2026, 7, 15, 3, 0, tzinfo=EASTERN)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nlp-nightly.yml"
 
 
 class FakeRun:
@@ -110,6 +115,32 @@ class TestWatchedChanges:
         to either is caught the same night rather than by never firing again."""
         assert "scripts/nlp_nightly_gate.py" in WATCHED_PATHS
         assert ".github/workflows/nlp-nightly.yml" in WATCHED_PATHS
+
+
+class TestStaysInSyncWithTheRepo:
+    """Both halves of the gate depend on strings that live somewhere else.
+
+    Neither kind of drift announces itself: a cron retimed in the YAML alone
+    makes *both* entries decoys, so every night gates itself off and every job
+    is green while the workflow is dead. A watched file renamed elsewhere leaves
+    a pattern that matches nothing, so the surface it was guarding stops
+    triggering runs. These tests are the only thing that would notice.
+    """
+
+    def test_cron_entries_match_the_gates_constants(self):
+        # Scraped rather than YAML-parsed on purpose: pyyaml reaches this repo
+        # only as a transitive dependency of datamodel-code-generator, and the
+        # default unit suite should not break the day that changes.
+        crons = set(re.findall(r'^\s*-\s*cron:\s*["\']([^"\']+)["\']', WORKFLOW.read_text(), re.M))
+        assert crons == {CRON_EDT, CRON_EST}, (
+            f"workflow crons {sorted(crons)} do not match the gate's constants "
+            f"{sorted({CRON_EDT, CRON_EST})}; every night would gate itself off silently"
+        )
+
+    def test_every_watched_path_still_exists(self):
+        literal = [pattern for pattern in WATCHED_PATHS if "*" not in pattern]
+        missing = [pattern for pattern in literal if not (REPO_ROOT / pattern).exists()]
+        assert missing == [], f"watched paths that no longer exist (renamed or deleted): {missing}"
 
 
 class TestDecide:

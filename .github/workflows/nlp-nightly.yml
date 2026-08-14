@@ -30,11 +30,17 @@ on:
 
 permissions:
   contents: read
-  actions: read # the gate reads this workflow's own run history for a baseline
+  actions: read # the gate reads this workflow's own artifacts for a baseline
 
 concurrency:
   group: nlp-nightly
   cancel-in-progress: false
+
+env:
+  # Named once so the writer (the suite job) and the reader (the gate) cannot
+  # drift apart. The artifact's own metadata carries the commit; its contents
+  # are for whoever downloads it wondering what it is.
+  GREEN_MARKER: nlp-green-sha
 
 jobs:
   gate:
@@ -46,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # The gate diffs HEAD against the last green run's SHA, which can be
+          # The gate diffs HEAD against the last validated SHA, which can be
           # many commits back; the default shallow clone would not contain it.
           fetch-depth: 0
 
@@ -55,30 +61,45 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The baseline is the head SHA of the last *successful* run of this
-      # workflow on this branch. Using success (not merely "completed") is what
-      # makes a red night sticky: the baseline does not advance past a failure,
-      # so the suite keeps re-running until it is green again. A run that gated
-      # itself off still counts as green, which is correct -- it proved there
-      # was nothing to test.
-      - name: Find the last green run
+      # The baseline is the commit of the last run that *actually passed the
+      # suite*, read from the marker artifact the suite job uploads.
+      #
+      # It deliberately is NOT "the last successful workflow run". Both cron
+      # entries fire every night and the one that is not tonight's exits green
+      # after doing nothing, so a run-conclusion baseline would be advanced to
+      # HEAD by a run that validated nothing. Under EST the decoy fires an hour
+      # *before* the real entry, so the real run would then diff HEAD against
+      # HEAD and skip -- the suite would never run from November to March, and
+      # every job would be green while it happened. The same mechanism would
+      # unstick a red night: the decoy would move the baseline past the failure
+      # and the suite would go quiet after reporting the regression once.
+      #
+      # Only a passing suite writes the marker, so: a red night leaves the
+      # baseline where it was and re-runs until green, and a gated-off night
+      # writes nothing, which keeps the diff anchored to the last commit whose
+      # parser behaviour was actually observed.
+      - name: Find the last validated commit
         id: baseline
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
+          MARKER: ${{ env.GREEN_MARKER }}
         run: |
           set -euo pipefail
           # `|| true`: a 5xx or a throttled API must not fail the gate. An
           # unresolved baseline degrades to "run the suite" (see the gate's
           # fail-open rule), which is the right side to err on -- the wrong side
           # is a red job at 03:00 that pages someone about GitHub's API rather
-          # than about the parser. Empty `workflow_runs` also lands here: jq
-          # indexes null happily, so `// ""` covers the no-green-run-yet case.
+          # than about the parser. An empty artifact list lands here too: jq
+          # indexes null happily, so `// ""` covers the no-run-yet case, as it
+          # does the case where the marker has aged out of retention.
           base="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/nlp-nightly.yml/runs?branch=${BRANCH}&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // ""' || true)"
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${MARKER}&per_page=100" \
+            --jq '[.artifacts[]
+                   | select(.expired == false and .workflow_run.head_branch == env.BRANCH)]
+                  | sort_by(.created_at) | last | .workflow_run.head_sha // ""' || true)"
           echo "base=${base}" >> "$GITHUB_OUTPUT"
-          echo "Baseline: ${base:-<none: first run, or no green run on this branch yet>}"
+          echo "Baseline: ${base:-<none: no validated run on this branch yet, or the marker expired>}"
 
       - name: Decide whether to run
         id: gate
@@ -137,6 +158,29 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TEST_ENV: staging
         run: pytest tests/integration/test_integration.py::TestParserIntegration -v -m external_api
+
+      # Reached only when the suite passed -- no `if:`, so a failing step above
+      # stops the job here and the marker is not written. That absence is what
+      # keeps the next night's baseline anchored to the last commit whose parser
+      # behaviour was actually observed against the live model.
+      - name: Record this commit as validated
+        run: |
+          {
+            echo "$GITHUB_SHA"
+            echo "# Marker for .github/workflows/nlp-nightly.yml. Its existence"
+            echo "# means TestParserIntegration passed against live Groq at this"
+            echo "# commit; the gate reads the SHA from the artifact's metadata."
+          } > "$RUNNER_TEMP/$GREEN_MARKER.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.GREEN_MARKER }}
+          path: ${{ runner.temp }}/${{ env.GREEN_MARKER }}.txt
+          if-no-files-found: error
+          # Long enough that a quiet stretch of parser work does not expire the
+          # baseline and force a needless run; short enough to stay tidy. An
+          # expired marker degrades to "no baseline", i.e. one re-validating run.
+          retention-days: 90
 
   notify-failure:
     # Nobody is watching Actions at 03:00, so a red nightly has to come find
