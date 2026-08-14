@@ -52,13 +52,11 @@ The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
    | Watched | Why |
    |---|---|
    | `services/parser.py` | The prompt, the model pin, and `parse_request()` itself |
-   | `routers/parse.py` | The `/parse` entry point |
-   | `core/dependencies.py`, `core/groq_tracing.py` | Groq client construction and span wiring |
-   | `config/settings.py` | Groq settings/env surface |
+   | `core/groq_tracing.py` | Groq span wiring |
    | `tests/scenarios.py` | The shared assertion corpus |
    | `tests/integration/test_integration.py` | The suite itself |
    | `tests/conftest.py`, `tests/integration/conftest.py` | The fixtures the job leans on (`TEST_ENV`, autouse `local_server`) |
-   | `core/dependencies.py`, `config/settings.py` | **Only when the diff mentions `groq`** — see below |
+   | `core/dependencies.py`, `config/settings.py` | Groq client construction and config — but **only when the diff mentions `groq`**; see below |
    | `.github/workflows/nlp-nightly.yml`, `scripts/nlp_nightly_gate.py` | A broken trigger gets caught by the run it triggers |
 
 The baseline comes from a marker artifact (`nlp-green-sha`, 90-day retention) that only a **passing** suite uploads; the gate reads the commit from the artifact's `workflow_run.head_sha` metadata. It is deliberately not "the head SHA of the last successful workflow run", because both cron entries fire every night and the one that is not tonight's exits green having validated nothing. A run-conclusion baseline would let that decoy advance the baseline to `HEAD` — and under EST the decoy fires an *hour before* the real entry, so the real run would diff `HEAD` against `HEAD` and skip. The suite would never run between November and March, with every job green while it happened.
