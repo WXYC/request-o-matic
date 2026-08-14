@@ -2,7 +2,7 @@
 
 import re
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,12 +12,15 @@ from scripts.nlp_nightly_gate import (
     CRON_EDT,
     CRON_EST,
     EASTERN,
+    KEYWORD_WATCHED,
     WATCHED_PATHS,
     decide,
     expected_cron,
+    hunk_mentions,
     is_tonights_cron,
     main,
     resolve_changed_files,
+    resolve_keyword_hits,
     watched_changes,
 )
 
@@ -65,6 +68,30 @@ class TestExpectedCron:
         assert CRON_EDT != CRON_EST
 
     @pytest.mark.parametrize(
+        ("cron", "sample_day"),
+        [(CRON_EDT, (2026, 7, 15)), (CRON_EST, (2026, 1, 15))],
+        ids=["edt", "est"],
+    )
+    def test_each_cron_actually_lands_at_3am_et(self, cron, sample_day):
+        """Derived from the clock, not asserted against the same constants.
+
+        Every other test here compares `expected_cron` output to CRON_EDT /
+        CRON_EST, so transposing the two literals keeps all of them green while
+        making *both* entries decoys -- the nightly would gate itself off every
+        night, forever, with every job passing. Converting each cron's UTC hour
+        into Eastern is the only check that pins them to reality. ("EST is the
+        earlier UTC hour" is the intuitive reading, and it is backwards.)
+        """
+        minute, hour = cron.split()[0], cron.split()[1]
+        assert minute == "0", f"cron '{cron}' does not fire on the hour"
+        year, month, day = sample_day
+        fires_at = datetime(year, month, day, int(hour), tzinfo=UTC)
+        assert fires_at.astimezone(EASTERN).hour == 3, (
+            f"cron '{cron}' fires at {fires_at.astimezone(EASTERN):%H:%M %Z} on "
+            f"{sample_day}, not 03:00 ET"
+        )
+
+    @pytest.mark.parametrize(
         ("schedule", "now_et", "expected"),
         [
             (CRON_EST, WINTER_3AM_ET, True),
@@ -96,8 +123,8 @@ class TestWatchedChanges:
         assert watched_changes(["README.md", "docs/deployment.md"]) == []
 
     def test_returns_only_the_watched_subset_in_input_order(self):
-        changed = ["README.md", "tests/scenarios.py", "services/slack.py", "routers/parse.py"]
-        assert watched_changes(changed) == ["tests/scenarios.py", "routers/parse.py"]
+        changed = ["README.md", "tests/scenarios.py", "services/slack.py", "services/parser.py"]
+        assert watched_changes(changed) == ["tests/scenarios.py", "services/parser.py"]
 
     def test_glob_patterns_are_supported(self):
         assert watched_changes(["core/groq_tracing.py"], patterns=("core/groq_*.py",)) == [
@@ -115,6 +142,108 @@ class TestWatchedChanges:
         to either is caught the same night rather than by never firing again."""
         assert "scripts/nlp_nightly_gate.py" in WATCHED_PATHS
         assert ".github/workflows/nlp-nightly.yml" in WATCHED_PATHS
+
+
+class TestKeywordWatchedFiles:
+    """Shared files trigger only when their own diff moves something Groq-shaped.
+
+    core/dependencies.py also builds the LML, PostHog, and ban clients; watching
+    it whole spent the shared TPM bucket on ban-roster and LML work about once a
+    fortnight, which is the resource #118 says to conserve.
+    """
+
+    GROQ_DIFF = """\
+diff --git a/core/dependencies.py b/core/dependencies.py
+--- a/core/dependencies.py
++++ b/core/dependencies.py
+@@ -40,1 +40,1 @@
+-    return Groq(api_key=settings.groq_api_key)
++    return AsyncGroq(api_key=settings.groq_api_key)
+"""
+
+    BAN_ROSTER_DIFF = """\
+diff --git a/core/dependencies.py b/core/dependencies.py
+--- a/core/dependencies.py
++++ b/core/dependencies.py
+@@ -120,0 +121,2 @@
++def get_moderator_client() -> ModeratorClient:
++    return ModeratorClient(base_url=settings.backend_url)
+"""
+
+    def test_a_groq_hunk_counts(self):
+        assert hunk_mentions(self.GROQ_DIFF, "groq") is True
+
+    def test_an_unrelated_hunk_does_not(self):
+        assert hunk_mentions(self.BAN_ROSTER_DIFF, "groq") is False
+
+    def test_file_headers_do_not_match_themselves(self):
+        """`+++ b/core/groq_tracing.py` is not evidence that a Groq line moved."""
+        header_only = "--- a/core/groq_tracing.py\n+++ b/core/groq_tracing.py\n"
+        assert hunk_mentions(header_only, "groq") is False
+
+    def test_context_lines_do_not_count(self):
+        """An unchanged mention means the keyword was already there and stayed."""
+        assert hunk_mentions("@@ -1 +1 @@\n     client = AsyncGroq()\n", "groq") is False
+
+    def test_keyword_is_matched_case_insensitively(self):
+        assert hunk_mentions("+from groq import AsyncGroq\n", "GROQ") is True
+
+    def test_only_keyword_watched_files_are_diffed(self):
+        """An ordinary changed file must not cost a git call."""
+        run = FakeRun(diff_output=self.GROQ_DIFF)
+        assert resolve_keyword_hits(["README.md", "services/slack.py"], "base", "head", run) == []
+        assert run.calls == []
+
+    def test_a_groq_touching_shared_file_is_a_hit(self):
+        run = FakeRun(diff_output=self.GROQ_DIFF)
+        hits = resolve_keyword_hits(["core/dependencies.py"], "base", "head", run)
+        assert hits == ["core/dependencies.py"]
+
+    def test_an_unrelated_shared_file_change_is_not(self):
+        run = FakeRun(diff_output=self.BAN_ROSTER_DIFF)
+        assert resolve_keyword_hits(["core/dependencies.py"], "base", "head", run) == []
+
+    def test_a_failed_diff_counts_as_a_hit(self):
+        """Fail open, consistent with the unknown-baseline rule: a diff we could
+        not read must not be reported as "no Groq change"."""
+        run = FakeRun(diff_returncode=128)
+        assert resolve_keyword_hits(["config/settings.py"], "base", "head", run) == [
+            "config/settings.py"
+        ]
+
+    def test_keyword_hits_make_the_gate_run(self):
+        decision = decide(
+            event_name="schedule",
+            event_schedule=CRON_EST,
+            changed_files=["core/dependencies.py", "README.md"],
+            now_et=WINTER_3AM_ET,
+            keyword_hits=["core/dependencies.py"],
+        )
+        assert decision.should_run is True
+        assert "core/dependencies.py" in decision.reason
+
+    def test_shared_file_without_a_hit_does_not_run(self):
+        decision = decide(
+            event_name="schedule",
+            event_schedule=CRON_EST,
+            changed_files=["core/dependencies.py", "README.md"],
+            now_et=WINTER_3AM_ET,
+            keyword_hits=[],
+        )
+        assert decision.should_run is False
+
+    def test_the_two_watch_lists_are_disjoint(self):
+        """Overlap would list a file twice in the reason and make the keyword
+        scoping a no-op for it -- the unconditional match would win."""
+        assert not set(WATCHED_PATHS) & set(KEYWORD_WATCHED)
+
+    def test_the_parse_route_is_not_watched(self):
+        """It looks like NLP surface and is not: TestParserIntegration calls
+        parse_request() directly and never routes through /parse, so a live run
+        cannot validate a change here. tests/unit/test_parse_router.py covers it.
+        """
+        assert "routers/parse.py" not in WATCHED_PATHS
+        assert "routers/parse.py" not in KEYWORD_WATCHED
 
 
 class TestStaysInSyncWithTheRepo:
@@ -138,7 +267,7 @@ class TestStaysInSyncWithTheRepo:
         )
 
     def test_every_watched_path_still_exists(self):
-        literal = [pattern for pattern in WATCHED_PATHS if "*" not in pattern]
+        literal = [p for p in (*WATCHED_PATHS, *KEYWORD_WATCHED) if "*" not in p]
         missing = [pattern for pattern in literal if not (REPO_ROOT / pattern).exists()]
         assert missing == [], f"watched paths that no longer exist (renamed or deleted): {missing}"
 
