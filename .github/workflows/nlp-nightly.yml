@@ -68,9 +68,15 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # `|| true`: a 5xx or a throttled API must not fail the gate. An
+          # unresolved baseline degrades to "run the suite" (see the gate's
+          # fail-open rule), which is the right side to err on -- the wrong side
+          # is a red job at 03:00 that pages someone about GitHub's API rather
+          # than about the parser. Empty `workflow_runs` also lands here: jq
+          # indexes null happily, so `// ""` covers the no-green-run-yet case.
           base="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/nlp-nightly.yml/runs?branch=${BRANCH}&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // ""')"
+            --jq '.workflow_runs[0].head_sha // ""' || true)"
           echo "base=${base}" >> "$GITHUB_OUTPUT"
           echo "Baseline: ${base:-<none: first run, or no green run on this branch yet>}"
 
