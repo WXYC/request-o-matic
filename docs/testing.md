@@ -58,9 +58,14 @@ The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
    | `tests/scenarios.py` | The shared assertion corpus |
    | `tests/integration/test_integration.py` | The suite itself |
    | `tests/conftest.py`, `tests/integration/conftest.py` | The fixtures the job leans on (`TEST_ENV`, autouse `local_server`) |
+   | `core/dependencies.py`, `config/settings.py` | **Only when the diff mentions `groq`** — see below |
    | `.github/workflows/nlp-nightly.yml`, `scripts/nlp_nightly_gate.py` | A broken trigger gets caught by the run it triggers |
 
 The baseline comes from a marker artifact (`nlp-green-sha`, 90-day retention) that only a **passing** suite uploads; the gate reads the commit from the artifact's `workflow_run.head_sha` metadata. It is deliberately not "the head SHA of the last successful workflow run", because both cron entries fire every night and the one that is not tonight's exits green having validated nothing. A run-conclusion baseline would let that decoy advance the baseline to `HEAD` — and under EST the decoy fires an *hour before* the real entry, so the real run would diff `HEAD` against `HEAD` and skip. The suite would never run between November and March, with every job green while it happened.
+
+Two files are watched by keyword rather than wholesale (`KEYWORD_WATCHED`). `core/dependencies.py` also builds the LML, PostHog, and ban clients, and `config/settings.py` carries Slack/LML/PostHog/ban config; over the 120 days before this was written they changed on 15 days, of which exactly one touched a Groq line. Watching them whole would have spent the shared TPM bucket on ban-roster and LML work about half the nights the gate fired. They now trigger only when the diff's own `+`/`-` lines mention `groq`.
+
+`routers/parse.py` is deliberately *not* watched. It looks like NLP surface, but `TestParserIntegration` calls `parse_request()` directly and never routes through `/parse`, so a live run could not validate a change there — `tests/unit/test_parse_router.py` covers it instead.
 
 Because only a passing suite writes the marker, a red night is sticky: the baseline does not advance past a failure, so the suite keeps re-running nightly until it passes. A gated-off night writes nothing either, which keeps the diff anchored to the last commit whose parser behaviour was actually observed. Dependency pins (`requirements*.txt`, `uv.lock`) are deliberately **not** watched — every unrelated dependency bump moves them. After a `groq` SDK bump, trigger the workflow by hand.
 
