@@ -75,7 +75,7 @@ WATCHED_PATHS: tuple[str, ...] = (
 # core/dependencies.py also builds the LML, PostHog, and ban clients, and
 # config/settings.py carries Slack/LML/PostHog/ban config. Watching them whole
 # defeats the point of gating -- over the 120 days before this was written they
-# changed on 15 days, of which exactly one touched a Groq line. Every other one
+# changed on 10 days, of which exactly one touched a Groq line. Every other one
 # would have spent the shared TPM bucket (#118, the resource this gate exists to
 # conserve) on a change that cannot move the prompt or the model.
 #
