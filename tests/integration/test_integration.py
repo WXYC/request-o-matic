@@ -17,6 +17,7 @@ from tests.scenarios import (
     ANY_TROUBLE_DETERMINER_ARTIST,
     BECK_EDITORIAL_ALBUM,
     BIOSPHERE_ALBUM_FILTER,
+    BORIS_QUOTED_ALBUM_FEEDBACK,
     ECHO_BUNNYMEN_ARTIST_ONLY,
     ETERNAL_HALLUCINATION,
     FLOW_COMA_808_STATE,
@@ -800,6 +801,48 @@ class TestParserIntegration:
             f"{case.id}: pre-pass did not populate album through the live path "
             f"for {case.raw_message!r}"
         )
+
+    @pytest.mark.asyncio
+    @skip_if_no_groq
+    async def test_quoted_album_ends_at_closing_quote_e2e(self):
+        """A quoted album is delimited exactly, and the aside after it still reaches Groq.
+
+        Bug (WXYC/request-o-matic#261): a closing quote is not one of the sentence
+        boundaries the trailing-feedback trim recognises, so the appended clause was
+        swallowed whole and 'noise"    thanks for your set, enjoying it!!' went to
+        LML as the album.
+
+        Two halves, and the live path is the only place they meet: the album is
+        forced by the deterministic pre-pass (exact assertion), while artist and
+        song have to come out of the *rejoined* remainder -- prefix plus the clause
+        that followed the closing quote -- which only real Groq exercises.
+        """
+        from groq import AsyncGroq
+
+        from services.parser import parse_request
+
+        client = AsyncGroq(api_key=GROQ_API_KEY)
+        s = BORIS_QUOTED_ALBUM_FEEDBACK
+        # SearchScenario types all three Optional; this one carries them all.
+        expected_album, expected_artist, expected_song = s.album, s.artist, s.song
+        assert expected_album and expected_artist and expected_song
+
+        result = await parse_request(s.raw_message, client)
+
+        print(f"\n  album={result.album!r} artist={result.artist!r} song={result.song!r}")
+
+        assert result.album == expected_album, (
+            f"Expected the quoted album {expected_album!r} verbatim, got {result.album!r}"
+        )
+        assert result.artist is not None and expected_artist.lower() in result.artist.lower(), (
+            f"Expected artist containing {expected_artist!r} from the rejoined remainder, "
+            f"got {result.artist!r}"
+        )
+        assert result.song is not None and expected_song.lower() in result.song.lower(), (
+            f"Expected song containing {expected_song!r} from the rejoined remainder, "
+            f"got {result.song!r}"
+        )
+        assert result.is_request is True
 
 
 class TestFullRequestIntegration:
