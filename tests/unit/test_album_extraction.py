@@ -30,6 +30,7 @@ import pytest
 from services.parser import (
     _ALBUM_PREPOSITION_RE,
     SUPPORTED_ALBUM_PREPOSITIONS,
+    _split_quoted_album,
     extract_album_prefix,
 )
 from tests.scenarios import (
@@ -153,6 +154,117 @@ def test_leading_descriptor_strip_fires_on_determiner_led_forms() -> None:
     assert r1 is not None and r1[0].strip().lower() == "moon pix"
     r2 = extract_album_prefix("some song by stereolab off the record collection")
     assert r2 is not None and r2[0].strip().lower() == "collection"
+
+
+def test_quoted_title_ends_at_the_closing_quote() -> None:
+    """Quotation marks delimit the album; text after the closing quote is remainder.
+
+    The listener's own quotes are an explicit end-of-title marker, which the
+    heuristic trims cannot be: a closing quote followed by a run of spaces is not
+    a sentence boundary, so an appended clause used to be swallowed whole into the
+    album (WXYC/request-o-matic#261).
+    """
+    result = extract_album_prefix(
+        'heavy rain by boris! off the album "noise"    thanks for your set, enjoying it!!'
+    )
+    assert result is not None
+    album, remainder = result
+    assert album == "noise"
+    # The remainder is the whole message minus the album clause -- the tail is
+    # rejoined to the prefix rather than dropped, so Groq still sees the aside.
+    assert remainder == "heavy rain by boris! thanks for your set, enjoying it!!"
+
+
+@pytest.mark.parametrize(
+    ("raw_message", "expected_album"),
+    [
+        ('moon pix by cat power off the album "moon pix"', "moon pix"),
+        ("moon pix by cat power off the album “moon pix”", "moon pix"),
+        ("moon pix by cat power off the album 'moon pix'", "moon pix"),
+        ("moon pix by cat power off the album ‘moon pix’", "moon pix"),
+        # Mixed straight/curly pairing: Slack composers substitute one side only
+        # often enough that requiring a matched pair would miss real requests.
+        ('moon pix by cat power off the album “moon pix"', "moon pix"),
+    ],
+    ids=["straight-double", "curly-double", "straight-single", "curly-single", "mixed"],
+)
+def test_quoted_title_recognises_straight_and_curly_marks(
+    raw_message: str, expected_album: str
+) -> None:
+    """Both straight and curly quote marks delimit a title, in either pairing."""
+    result = extract_album_prefix(raw_message)
+    assert result is not None
+    assert result[0] == expected_album
+
+
+def test_quoted_title_keeps_a_by_clause_that_is_title_text() -> None:
+    """A "by" inside the quotes is title text, so the reverse-order guard stands down.
+
+    Unquoted, "conspiracy on death by chocolate" declines because the album group
+    cannot tell title text from an unclaimed "by <artist>" clause. Quotes settle
+    it: whatever is inside them is the title.
+    """
+    result = extract_album_prefix('conspiracy on "death by chocolate"')
+    assert result is not None
+    album, remainder = result
+    assert album == "death by chocolate"
+    assert remainder == "conspiracy"
+
+
+def test_quoted_title_hands_a_trailing_artist_clause_to_the_parser() -> None:
+    """A "by <artist>" tail after the closing quote is rejoined, not dropped.
+
+    The unquoted form of this shape declines outright so Groq can see the artist
+    (see ``test_declines_when_album_tail_carries_an_unclaimed_artist_clause``).
+    With quotes the album is unambiguous, so the pre-pass fires and passes the
+    authorship clause through in the remainder.
+    """
+    result = extract_album_prefix('conspiracy on "neptune" by prince jammy')
+    assert result is not None
+    album, remainder = result
+    assert album == "neptune"
+    assert remainder == "conspiracy by prince jammy"
+
+
+def test_quoted_title_overrides_the_idiom_denylist() -> None:
+    """A quoted idiom-head is a title the listener disambiguated on purpose.
+
+    "on vinyl" is an idiom and stays on the denylist unquoted; on "vinyl" quoted,
+    the quotes are the listener telling us it is the title.
+    """
+    result = extract_album_prefix('some song by cat power on "vinyl"')
+    assert result is not None
+    assert result[0] == "vinyl"
+
+
+def test_unbalanced_quote_falls_through_to_the_heuristic_path() -> None:
+    """An opening mark with no closing mark is not a delimiter -- keep the heuristics.
+
+    Titles that open with an apostrophe ("'Round Midnight", "'70s Music") would
+    otherwise be read as an unterminated quotation.
+    """
+    result = extract_album_prefix("some song by cat power off 'round midnight")
+    assert result is not None
+    assert result[0] == "'round midnight"
+
+
+def test_quoted_split_declines_a_whitespace_only_title() -> None:
+    """Marks wrapping only whitespace are not a delimited title.
+
+    ``extract_album_prefix`` rejects this shape earlier (see
+    ``test_empty_quotes_decline``), so the helper is tested directly to pin the
+    contract it is relied on for: a caller never gets an empty album back.
+    """
+    assert _split_quoted_album('"   "') is None
+
+
+def test_empty_quotes_decline() -> None:
+    """Quotes with nothing inside carry no album -- decline instead of forwarding "".
+
+    Returning the bare quote characters as an album would send them to the lookup
+    service as a real album filter and guarantee a miss.
+    """
+    assert extract_album_prefix('some song by cat power off ""') is None
 
 
 def test_returns_none_for_messages_without_album_marker() -> None:

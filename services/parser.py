@@ -24,9 +24,16 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 # is the floor of what the model exposes -- there's still nondeterminism.
 #
 # The fix is a deterministic regex pre-pass. When it matches, parse_request
-# strips the trailing "<preposition> <album>" suffix from the message before
-# sending to Groq, then overlays the extracted album onto the parsed result.
-# This guarantees the album slot is populated for the canonical shape.
+# strips the "<preposition> <album>" clause from the message before sending to
+# Groq, then overlays the extracted album onto the parsed result. This guarantees
+# the album slot is populated for the canonical shape.
+#
+# Where the album ends is decided one of two ways. When the listener quoted the
+# title ('off the album "noise"') the quotation marks say so exactly, and the
+# clause may be an infix -- whatever follows the closing mark is rejoined to the
+# prefix and handed to Groq. Otherwise the album runs to end-of-string and a pair
+# of trims claws back appended politeness ("... doga please") and feedback
+# clauses ("... doga.  thanks for the set!").
 #
 # False-positive surface: idioms like "on the radio", "on Friday", "on repeat".
 # We gate the match on a small denylist of trailing tokens that are commonly
@@ -138,6 +145,28 @@ _REQUEST_SIGNAL_RE = re.compile(r"\bby\b|,", re.IGNORECASE)
 _ARTIST_BY_TOKEN_RE = re.compile(r"\bby\b", re.IGNORECASE)
 
 
+# Quotation-mark families. A listener who quotes the title has marked exactly
+# where it ends -- something no heuristic trim can do, since the trims can only
+# guess at boundaries. Slack's iOS composer substitutes curly marks for straight
+# ones and does it per side, so an opening mark pairs with any member of its own
+# family rather than with its exact twin. The two families are kept apart so an
+# apostrophe inside a double-quoted title ("live '93") is plain text.
+_QUOTE_FAMILIES: tuple[str, ...] = ('"“”', "'‘’")
+
+# Every quote character, for the "quotes with nothing inside them" check.
+_QUOTE_CHARS = "".join(_QUOTE_FAMILIES)
+
+# `"<title>" <remainder>` -- one pattern per family. The title is non-greedy and
+# the closing mark must not be followed by a word character, so a possessive
+# inside a single-quoted title ("'the queen's gambit'") does not close it early.
+# An unterminated mark simply does not match: a title that opens with an
+# apostrophe ("'Round Midnight", "'70s Music") is not a quotation.
+_QUOTED_ALBUM_RES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(rf"^[{family}](?P<title>.+?)[{family}](?!\w)(?P<rest>.*)$", re.DOTALL)
+    for family in _QUOTE_FAMILIES
+)
+
+
 # Trailing words that look like an album in surface form but are idioms.
 # Compare against the *first* significant token after the preposition.
 _ALBUM_IDIOM_HEADS: frozenset[str] = frozenset(
@@ -191,6 +220,25 @@ _ALBUM_PREPOSITION_RE = re.compile(
 )
 
 
+def _split_quoted_album(album_text: str) -> tuple[str, str] | None:
+    """Split ``"<title>" <remainder>`` on the listener's own quotation marks.
+
+    Returns ``(title, remainder)`` when ``album_text`` opens with a quotation mark
+    that is closed later in the string, and ``None`` otherwise -- including for an
+    unterminated mark, which is an apostrophe-led title rather than a quotation.
+    ``remainder`` is whatever followed the closing mark (often empty).
+    """
+    for pattern in _QUOTED_ALBUM_RES:
+        match = pattern.match(album_text)
+        if match is None:
+            continue
+        title = match.group("title").strip()
+        if not title:
+            return None
+        return title, match.group("rest").strip()
+    return None
+
+
 def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     """Deterministic album extraction for canonical request phrasings.
 
@@ -217,6 +265,51 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
         return None
 
     album_raw = match.group("album").strip()
+    prefix = match.group("prefix").strip()
+    prep = match.group("prep").lower()
+
+    # `from` has a different false-positive surface than `on`/`off`/`off of`:
+    # the album side after `from` is typically a proper noun (boston, new york),
+    # so a finite first-token denylist can't gate it. Instead, require the
+    # prefix to look request-shaped (contains "by" or a comma). Checked ahead of
+    # both extraction paths below because it holds regardless of how the title is
+    # delimited -- quotation marks say where a title ends, not that a greeting is
+    # a request ('hello from "boston"').
+    if prep == "from" and _REQUEST_SIGNAL_RE.search(prefix) is None:
+        return None
+
+    # Drop a leading album-descriptor noun ("from album <title>" -> "<title>").
+    # The noun introduces the title rather than being part of it. The regex is
+    # anchored so it only fires when title text follows (see its definition).
+    # Runs before the quoted-title split so a descriptor-led quoted title
+    # ('off the album "noise"') is left opening with its quotation mark.
+    album_raw = _LEADING_ALBUM_DESCRIPTOR_RE.sub("", album_raw).strip()
+    if not album_raw:
+        return None
+
+    # Quotation marks with nothing inside them carry no album. Forwarding the
+    # bare marks would send them to the lookup service as a real album filter.
+    if not album_raw.strip(_QUOTE_CHARS).strip():
+        return None
+
+    # Quoted title: the listener's own marks delimit the album exactly, so the
+    # album ends at the closing mark and everything after it is message
+    # remainder. That settles the ambiguities the heuristics below exist for --
+    # the idiom denylist ('on "vinyl"' is a title, not the "on vinyl" idiom) and
+    # the unclaimed "by <artist>" guard ('"death by chocolate"' is title text) --
+    # so this path returns directly rather than falling through them.
+    #
+    # The remainder is rejoined to the prefix instead of being dropped: the
+    # pre-pass's contract is to strip the album clause and hand Groq the rest of
+    # the message, and with a quoted title that clause is an infix rather than a
+    # suffix. So an appended aside still reaches Groq ("...  thanks for your
+    # set!"), and so does a reverse-order authorship clause ('"neptune" by prince
+    # jammy'), which the unquoted shape has to decline over. WXYC/request-o-matic#261.
+    quoted = _split_quoted_album(album_raw)
+    if quoted is not None:
+        album_quoted, remainder = quoted
+        return album_quoted, f"{prefix} {remainder}".strip() if remainder else prefix
+
     # Trim a trailing feedback clause ("...doga.  thanks for the set!") first,
     # then any bare trailing politeness token ("...doga please"). The feedback
     # trim requires a sentence boundary before the politeness word, so a title
@@ -226,16 +319,8 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     if not album_raw:
         return None
 
-    # Drop a leading album-descriptor noun ("from album <title>" -> "<title>").
-    # The noun introduces the title rather than being part of it. The regex is
-    # anchored so it only fires when title text follows (see its definition).
-    album_raw = _LEADING_ALBUM_DESCRIPTOR_RE.sub("", album_raw).strip()
-    if not album_raw:
-        return None
-
     # Reject the bare "of" tail: the regex eagerly parses "moon pix off of"
     # as preposition="off", album="of" -- there's no real album text there.
-    prep = match.group("prep").lower()
     if prep == "off" and album_raw.lower() == "of":
         return None
 
@@ -244,8 +329,6 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     first_token = re.split(r"\s+", album_raw, maxsplit=1)[0].lower().rstrip(",.!?")
     if first_token in _ALBUM_IDIOM_HEADS:
         return None
-
-    prefix = match.group("prefix").strip()
 
     # Reverse-order shape "<song> {prep} <album> by <artist>": the album group is
     # anchored to end-of-string, so a trailing "by <artist>" authorship clause is
@@ -258,13 +341,6 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     # "moon pix by cat power off death by chocolate" -- the album's "by" is title
     # text, so keep firing. WXYC/request-o-matic#193 (sibling of #188).
     if _ARTIST_BY_TOKEN_RE.search(album_raw) and _REQUEST_SIGNAL_RE.search(prefix) is None:
-        return None
-
-    # `from` has a different false-positive surface than `on`/`off`/`off of`:
-    # the album side after `from` is typically a proper noun (boston, new york),
-    # so a finite first-token denylist can't gate it. Instead, require the
-    # prefix to look request-shaped (contains "by" or a comma).
-    if prep == "from" and _REQUEST_SIGNAL_RE.search(prefix) is None:
         return None
 
     return album_raw, prefix

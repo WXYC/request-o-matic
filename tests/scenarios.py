@@ -410,6 +410,25 @@ ORB_ON_ALBUM = _register(
     tags=frozenset({"parser", "album_preposition"}),
 )
 
+BORIS_QUOTED_ALBUM_FEEDBACK = _register(
+    id="boris_quoted_album_feedback",
+    description=(
+        "'heavy rain by boris! off the album \"noise\"   <feedback>' - a quoted album ends at "
+        "the closing quote, and the aside after it still reaches the parser"
+    ),
+    raw_message='heavy rain by boris! off the album "noise"    thanks for your set, enjoying it!!',
+    artist="Boris",
+    song="Heavy Rain",
+    album="noise",
+    bug=(
+        "The album pre-pass swallowed the whole appended feedback clause: a closing quote is not "
+        "one of the sentence boundaries the trailing-feedback trim recognises, so the album "
+        "reached LML as 'noise\"    thanks for your set, enjoying it!!' and the request found "
+        "nothing"
+    ),
+    tags=frozenset({"parser", "album_preposition", "quoted_title"}),
+)
+
 TODAY_JEFFERSON_AIRPLANE = _register(
     id="today_jefferson_airplane",
     description="'Today, Jefferson Airplane' comma shape: short common word on the left is the song, not a temporal preamble",
@@ -587,6 +606,47 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
         preposition="from",
         expected_album="my love is",
         expected_stripped="anvil will fall by harvey milk",
+    ),
+    # Quoted titles: the listener's own quotation marks delimit the album exactly,
+    # so everything after the closing quote is message remainder, not album text.
+    # Regression repro of the production miss (WXYC/request-o-matic#261): a closing
+    # quote is not one of the sentence boundaries the trailing-feedback trim
+    # recognises, so the appended clause was swallowed whole into the album.
+    AlbumPrepassCase(
+        id="boris_off_quoted_album_with_feedback",
+        raw_message=(
+            'heavy rain by boris! off the album "noise"    thanks for your set, enjoying it!!'
+        ),
+        preposition="off",
+        expected_album="noise",
+        expected_stripped="heavy rain by boris! thanks for your set, enjoying it!!",
+    ),
+    AlbumPrepassCase(
+        id="orb_on_quoted_album",
+        raw_message='tower of dub by the orb on "live \'93"',
+        preposition="on",
+        expected_album="live '93",
+        expected_stripped="tower of dub by the orb",
+    ),
+    # Curly quotes: Slack's iOS composer substitutes them for straight quotes, so
+    # the production shape of a quoted title is as often "..." as "...".
+    AlbumPrepassCase(
+        id="jessica_off_curly_quoted_album",
+        raw_message="back, baby by jessica pratt off the album “on your own love again”",
+        preposition="off",
+        expected_album="on your own love again",
+        expected_stripped="back, baby by jessica pratt",
+    ),
+    # The remainder after the closing quote is handed to Groq rather than dropped,
+    # so a reverse-order "by <artist>" tail still reaches the parser. Unquoted this
+    # shape declines outright (see prince_jammy_on_neptune_by_artist) because the
+    # album group swallows the artist; the quotes resolve exactly that ambiguity.
+    AlbumPrepassCase(
+        id="prince_jammy_on_quoted_album_by_artist",
+        raw_message='conspiracy on "neptune" by prince jammy',
+        preposition="on",
+        expected_album="neptune",
+        expected_stripped="conspiracy by prince jammy",
     ),
     # -- Negatives: pre-pass must decline (idioms, greetings, bare short-forms).
     # The id documents the tail that a false-fire would wrongly capture as album.
