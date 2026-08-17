@@ -3,12 +3,15 @@ handling of the server's degraded `parsing_unavailable` mode."""
 
 import pytest
 
+from routers.request import DEGRADED_PARSING, DEGRADED_SEARCH
+from scripts._common import describe_degraded_mode
 from scripts.lookup import (
     print_parsed_request,
     print_search_summary,
     print_server_timing,
     run_lookup,
 )
+from tests.factories import make_degraded_response
 
 # A realistic merged header as ROM emits it: rom stages (parse, lookup_service,
 # slack_post) + forwarded LML sub-stages (library_search, metadata_enrichment,
@@ -162,15 +165,29 @@ class TestDegradedParsingOutput:
 
     def test_parsed_none_reports_unavailable_instead_of_raising(self, capsys):
         """A null `parsed` renders an explanatory notice, not an AttributeError."""
-        print_parsed_request(None)
+        print_parsed_request(None, describe_degraded_mode({"degraded_mode": DEGRADED_PARSING}))
         out = capsys.readouterr().out
         assert "unavailable" in out.lower()
+
+    def test_parsed_none_without_a_mode_still_does_not_raise(self, capsys):
+        """Defensive: a null `parsed` with no `degraded_mode` must still render."""
+        print_parsed_request(None)
+        out = capsys.readouterr().out
+        assert "no parse" in out.lower()
 
     def test_search_summary_tolerates_null_parsed(self, capsys):
         """The search section survives a null `parsed` and reports no search ran."""
         print_search_summary({"parsed": None, "library_results": [], "search_type": "none"})
         out = capsys.readouterr().out
-        assert "no library search" in out.lower() or "not performed" in out.lower()
+        assert "no library search" in out.lower() or "no parse" in out.lower()
+
+    def test_search_unavailable_is_not_reported_as_no_results(self, capsys):
+        """An LML outage must read as degraded, not as "not in the library"."""
+        data = make_degraded_response(DEGRADED_SEARCH)
+        print_search_summary(data, describe_degraded_mode(data))
+        out = capsys.readouterr().out.lower()
+        assert "unavailable" in out
+        assert "no results" not in out
 
     @pytest.mark.asyncio
     async def test_run_lookup_completes_on_degraded_response(self, httpx_mock, capsys):
@@ -180,19 +197,7 @@ class TestDegradedParsingOutput:
         `lookup "vi scose poise, autechre"` against production while the service
         was in `parsing_unavailable`.
         """
-        httpx_mock.add_response(
-            json={
-                "parsed": None,
-                "artwork": None,
-                "library_results": [],
-                "result_artworks": [],
-                "search_type": "none",
-                "song_not_found": False,
-                "found_on_compilation": False,
-                "context_message": None,
-                "cache_stats": {},
-            },
-        )
+        httpx_mock.add_response(json=make_degraded_response())
 
         data = await run_lookup("vi scose poise, autechre")
 

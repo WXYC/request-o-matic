@@ -20,7 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from scripts._common import LOCAL_URL, PROD_URL, set_up_logging
+from scripts._common import (
+    LOCAL_URL,
+    PROD_URL,
+    describe_degraded_mode,
+    indent,
+    set_up_logging,
+)
 
 # History file location
 HISTORY_FILE = Path.home() / ".request_repl_history"
@@ -59,13 +65,12 @@ def print_result(data: dict) -> None:
     parsed = data.get("parsed")
     results = data.get("library_results", [])
     artwork = data.get("artwork")
+    degraded = describe_degraded_mode(data)
 
     # Parsed info
     print(f"\n  {'Parsed':-^50}")
     if parsed is None:
-        print("  Parsing unavailable -- the server could not parse this message.")
-        print("  Groq is failing, so the raw message is posted to Slack unenriched")
-        print("  and no library search runs. Check the service logs for the error.")
+        print(indent(degraded or "No parse returned by the server."))
         return
     print(f"  Is Request:  {parsed.get('is_request')}")
     print(f"  Type:        {parsed.get('message_type')}")
@@ -83,7 +88,9 @@ def print_result(data: dict) -> None:
     # Library results
     print(f"\n  {'Library Results':-^50}")
     if not results:
-        print("  No results found.")
+        # Distinguish "searched, found nothing" from "never searched" -- an LML
+        # outage reported as "no results" reads as "not in the library".
+        print(indent(degraded) if degraded else "  No results found.")
     else:
         for i, item in enumerate(results, 1):
             title = item.get("title", "")

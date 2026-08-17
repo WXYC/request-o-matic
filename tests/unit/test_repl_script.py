@@ -5,24 +5,9 @@ operator tools (docs/scripts.md) and both read the same `/request` response, so
 both have to survive the server's degraded `parsing_unavailable` shape.
 """
 
-from typing import Any
-
+from routers.request import DEGRADED_SEARCH
 from scripts.repl import print_result
-
-# The exact production payload shape when Groq is failing: `parsed` is present
-# and null, not absent. See tests/unit/test_lookup_script.py for the sibling
-# case and the 2026-08-17 incident that produced it.
-DEGRADED_RESPONSE: dict[str, Any] = {
-    "parsed": None,
-    "artwork": None,
-    "library_results": [],
-    "result_artworks": [],
-    "search_type": "none",
-    "song_not_found": False,
-    "found_on_compilation": False,
-    "context_message": None,
-    "cache_stats": {},
-}
+from tests.factories import make_degraded_response
 
 
 class TestDegradedParsingOutput:
@@ -35,7 +20,7 @@ class TestDegradedParsingOutput:
         when parsing goes degraded, so this is exactly where a clear message
         matters most.
         """
-        print_result(DEGRADED_RESPONSE)
+        print_result(make_degraded_response())
         out = capsys.readouterr().out
         assert "unavailable" in out.lower()
 
@@ -45,7 +30,7 @@ class TestDegradedParsingOutput:
         `Is Request: None` / `Type: None` reads as "parsed, found nothing",
         which is a different and misleading diagnosis.
         """
-        print_result(DEGRADED_RESPONSE)
+        print_result(make_degraded_response())
         out = capsys.readouterr().out
         assert "Is Request:" not in out
 
@@ -67,3 +52,15 @@ class TestDegradedParsingOutput:
         out = capsys.readouterr().out
         assert "Juana Molina" in out
         assert "la paradoja" in out
+
+    def test_search_unavailable_is_not_reported_as_no_results(self, capsys):
+        """An LML outage must not render as "not in the library".
+
+        `search_unavailable` leaves `parsed` populated and `library_results`
+        empty, so inferring degradation from a null `parsed` misses it entirely
+        and the operator is told the record isn't in the catalog.
+        """
+        print_result(make_degraded_response(DEGRADED_SEARCH))
+        out = capsys.readouterr().out.lower()
+        assert "unavailable" in out
+        assert "no results found." not in out

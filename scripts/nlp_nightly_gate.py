@@ -112,7 +112,11 @@ class Decision:
     # liveness contract) want the once-a-night selection without also requiring
     # that *we* changed something. An upstream model decommissioning moves none
     # of our watched paths.
-    is_tonight: bool = False
+    #
+    # Intentionally has NO default. A default would let a return site added
+    # later omit it, silently yielding False -- which skips the liveness job,
+    # and a skipped job is green. Required means that mistake is a TypeError.
+    is_tonight: bool
 
 
 def expected_cron(now_et: datetime) -> str:
