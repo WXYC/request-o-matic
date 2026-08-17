@@ -1,6 +1,14 @@
-"""Unit tests for scripts/lookup.py Server-Timing rendering (PR 3b)."""
+"""Unit tests for scripts/lookup.py Server-Timing rendering (PR 3b) and its
+handling of the server's degraded `parsing_unavailable` mode."""
 
-from scripts.lookup import print_server_timing
+import pytest
+
+from scripts.lookup import (
+    print_parsed_request,
+    print_search_summary,
+    print_server_timing,
+    run_lookup,
+)
 
 # A realistic merged header as ROM emits it: rom stages (parse, lookup_service,
 # slack_post) + forwarded LML sub-stages (library_search, metadata_enrichment,
@@ -138,3 +146,56 @@ class TestPrintServerTiming:
         assert idx_leaf < idx_lookup_service_rollup
         # Roll-ups follow _ROLLUP_STAGES order, NOT header order.
         assert idx_lookup_service_rollup < idx_lml_wall < idx_lml_total < idx_total
+
+
+class TestDegradedParsingOutput:
+    """`parsed: null` is a documented server response, not a client error.
+
+    When Groq is unavailable the service degrades to `parsing_unavailable` and
+    returns `{"parsed": null, ...}` (see docs/architecture.md). The CLI used to
+    do `data.get("parsed", {})`, which returns None when the key is *present and
+    null* rather than absent -- so it died with a bare
+    `'NoneType' object has no attribute 'get'` and told the operator nothing.
+    That masked a real production incident on 2026-08-17, when Groq
+    decommissioned the pinned model and every parse 404'd.
+    """
+
+    def test_parsed_none_reports_unavailable_instead_of_raising(self, capsys):
+        """A null `parsed` renders an explanatory notice, not an AttributeError."""
+        print_parsed_request(None)
+        out = capsys.readouterr().out
+        assert "unavailable" in out.lower()
+
+    def test_search_summary_tolerates_null_parsed(self, capsys):
+        """The search section survives a null `parsed` and reports no search ran."""
+        print_search_summary({"parsed": None, "library_results": [], "search_type": "none"})
+        out = capsys.readouterr().out
+        assert "no library search" in out.lower() or "not performed" in out.lower()
+
+    @pytest.mark.asyncio
+    async def test_run_lookup_completes_on_degraded_response(self, httpx_mock, capsys):
+        """End-to-end repro: the exact prod payload must not crash the CLI.
+
+        Regression guard for the crash an operator hit running
+        `lookup "vi scose poise, autechre"` against production while the service
+        was in `parsing_unavailable`.
+        """
+        httpx_mock.add_response(
+            json={
+                "parsed": None,
+                "artwork": None,
+                "library_results": [],
+                "result_artworks": [],
+                "search_type": "none",
+                "song_not_found": False,
+                "found_on_compilation": False,
+                "context_message": None,
+                "cache_stats": {},
+            },
+        )
+
+        data = await run_lookup("vi scose poise, autechre")
+
+        assert data["parsed"] is None
+        out = capsys.readouterr().out
+        assert "unavailable" in out.lower()
