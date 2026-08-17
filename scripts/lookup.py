@@ -33,9 +33,25 @@ def print_section(title: str) -> None:
     print(f"{'=' * 60}")
 
 
-def print_parsed_request(parsed: dict) -> None:
-    """Print parsed request details."""
+_DEGRADED_NOTICE = (
+    "Parsing unavailable -- the server could not parse this message.\n"
+    "  This is the `parsing_unavailable` degraded mode: Groq is failing, so the\n"
+    "  raw message is posted to Slack unenriched and no library search runs.\n"
+    "  Check the service logs for the underlying Groq error."
+)
+
+
+def print_parsed_request(parsed: dict | None) -> None:
+    """Print parsed request details.
+
+    ``parsed`` is ``None`` when the server is in its `parsing_unavailable`
+    degraded mode -- a documented response shape, not a client error -- so it is
+    reported as a diagnosis rather than allowed to blow up the CLI.
+    """
     print_section("Parsed Request")
+    if parsed is None:
+        print(f"  {_DEGRADED_NOTICE}")
+        return
     print(f"  Is Request:    {parsed.get('is_request')}")
     print(f"  Message Type:  {parsed.get('message_type')}")
     print(f"  Artist:        {parsed.get('artist') or '(none)'}")
@@ -46,7 +62,13 @@ def print_parsed_request(parsed: dict) -> None:
 
 def print_search_summary(data: dict) -> None:
     """Print search summary showing what kind of results we got."""
-    parsed = data.get("parsed", {})
+    parsed = data.get("parsed")
+    if parsed is None:
+        # Degraded mode: the server never parsed, so it never searched either.
+        print_section("Search")
+        print("  Parsing unavailable, so no library search was performed.")
+        return
+
     is_request = parsed.get("is_request", False)
 
     if not is_request:
@@ -240,15 +262,18 @@ async def run_lookup(
             server_timing = response.headers.get("Server-Timing")
             data = response.json()
 
-            # Display parsed request
-            parsed = data.get("parsed", {})
+            # Display parsed request. `parsed` is null in the server's
+            # `parsing_unavailable` degraded mode, so read it without a `{}`
+            # default -- dict.get returns None for a present-but-null key, and
+            # treating that as a dict is what used to crash the CLI.
+            parsed = data.get("parsed")
             print_parsed_request(parsed)
 
             # Display search summary
             print_search_summary(data)
 
-            # Skip library results for non-requests
-            if not parsed.get("is_request", False):
+            # Skip library results when parsing degraded or this isn't a request
+            if parsed is None or not parsed.get("is_request", False):
                 print_server_timing(server_timing, round_trip_ms)
                 return cast(dict[str, Any], data)
 
