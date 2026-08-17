@@ -491,9 +491,17 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
 
             return parsed_request
 
+        # Both handlers log at WARNING and re-raise: whether a failure is worth
+        # alerting on is the caller's policy, not the parser's. Sentry's
+        # LoggingIntegration promotes ERROR to an event, so logging it here
+        # minted one for every failure alike -- a routine free-tier 429 became
+        # indistinguishable from the decommissioned model pin that degraded the
+        # service for hours on 2026-08-17. `/request` now grades the exception
+        # (routers/request.py `_GROQ_TRANSIENT_ERRORS`) and `/parse` maps it to a
+        # status code; both raise the severity themselves when it is warranted.
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
+            logger.warning(f"Failed to parse JSON response: {e}")
             raise ValueError(f"Invalid JSON response from Groq: {e}") from e
         except Exception as e:
-            logger.error(f"Error parsing request: {e}")
+            logger.warning(f"Error parsing request: {e}")
             raise
