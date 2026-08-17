@@ -23,8 +23,11 @@ Usage:
         --event-name schedule --event-schedule "0 7 * * *" \\
         --base <sha> --head <sha>
 
-Writes `should_run` and `reason` to $GITHUB_OUTPUT when it is set, and prints
-the decision either way.
+Writes `should_run`, `reason`, and `is_tonight` to $GITHUB_OUTPUT when it is
+set, and prints the decision either way. All three are load-bearing: the
+workflow reads `should_run` as the parser suite's `if:` and `is_tonight` as the
+model-liveness job's, and a job skipped for want of an output is green, so
+dropping one fails silently.
 """
 
 from __future__ import annotations

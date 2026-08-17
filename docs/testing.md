@@ -5,7 +5,7 @@
 | Type | Location | Marker(s) | External Services | Purpose |
 |------|----------|-----------|-------------------|---------|
 | Unit | `tests/unit/` | (none) | Mocked | Fast, isolated component tests |
-| Integration | `tests/integration/` | `external_api` | Real Groq API | End-to-end verification |
+| Integration | `tests/integration/` | `external_api`, `contract` | Real Groq API | End-to-end verification; `contract` for external-API shape checks |
 | Performance | `tests/performance/` | `external_api`, `slow` | Real Groq API | Response time benchmarks |
 
 ## Marker scheme
@@ -14,7 +14,7 @@ Markers follow the canonical "architecture A" vocabulary defined in [the WXYC wi
 
 - **`external_api`** — needs network egress and real third-party API keys (Groq, Slack). Default `pytest` deselects them; opt in with `-m "external_api"`.
 - **`slow`** — orthogonal cost dimension, takes more than ~10s. Used together with `external_api` on the performance suite. Opted out from the marker-sync check (`# ci-sync-skip: slow ...` in `pyproject.toml`) because the performance suite is run manually against staging/production with `TEST_ENV` set.
-- **`contract`** — per-repo addition (legitimate per Section 3, "What is NOT in the marker namespace"). Reserved for tests that verify the *shape* of an external API contract (Slack, Groq) rather than just calling it. Currently no tests use it; the marker is declared so that future contract tests have a stable name. Opted out from the marker-sync check because, by design, it is manual-only.
+- **`contract`** — per-repo addition (legitimate per Section 3, "What is NOT in the marker namespace"). For tests that verify the *shape* of an external API contract (Slack, Groq) rather than just calling it. Used by `tests/integration/test_groq_model_contract.py`, which asserts the pinned Groq model is still served. It carries **no** `ci-sync-skip` opt-out: the nightly model-liveness job in `nlp-nightly.yml` runs `-m "external_api and contract"`, so the marker is genuinely reachable from CI and is held to that.
 
 The reusable check at `WXYC/wxyc-etl/.github/workflows/check-ci-marker-sync.yml` is wired into `ci.yml` as the `marker-sync` job. It guards the invariant that every marker actually used by a test is either selected by some CI invocation or explicitly opted out.
 
