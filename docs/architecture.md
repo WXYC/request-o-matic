@@ -43,6 +43,27 @@ Slack is the only hard dependency. When Groq or LML are unavailable the listener
 
 If Slack itself fails the endpoint returns `502` — there is no further fallback. PostHog events for degraded requests carry `degraded_mode` and `degraded_reason` (the exception class name) so outages are visible in telemetry.
 
+### Grading a Groq failure
+
+`parsing_unavailable` covers two populations that need different operator responses, so `/request` grades the exception before logging it (`routers/request.py` `_GROQ_TRANSIENT_ERRORS`):
+
+| | Examples | Log level | Sentry |
+|---|---|---|---|
+| **Transient** | `RateLimitError` (the free tier's 8000 TPM / 200k TPD buckets), `APITimeoutError`, `APIConnectionError`, `InternalServerError` | `WARNING` | breadcrumb only |
+| **Permanent** | `NotFoundError` (decommissioned pin), `AuthenticationError`, `PermissionDeniedError`, `BadRequestError`, and **anything unrecognized** | `ERROR` + `exc_info` | one stack-traced event naming `GROQ_MODEL` |
+
+The allowlist enumerates the *transient* errors so an unanticipated exception type grades as permanent and fails loud. `services/parser.py` logs at `WARNING` and re-raises rather than deciding severity itself; both callers (`/request` here, `/parse` via its status-code mapping) set it explicitly.
+
+This matters because Sentry's `LoggingIntegration` is auto-enabled with `event_level=ERROR` — `ERROR` is what becomes an alertable event, and before the split a routine 429 produced the same signal as a pin that will never work again.
+
+### Detecting a dead model pin
+
+Three independent detectors, deliberately at different latencies, because the incident that motivated them ran for hours with all of its signals firing and none of them distinguishable:
+
+1. **`/health/ready`** — `probe_groq` asserts `GROQ_MODEL` appears in Groq's live `/models` list. The only detector that needs no listener traffic; at this service's request volume that is the difference between minutes and hours. `groq` stays `required=False`, so a dead pin reports `degraded`, never 503.
+2. **`/request`** — the permanent/transient grading above, on the live parse path.
+3. **CI** — `tests/integration/test_groq_model_contract.py`, run by the nightly `model-contract` job. Up to 24h latency; it is the backstop, not the primary.
+
 ## Server-Timing (observability, [Backend-Service#881](https://github.com/WXYC/Backend-Service/issues/881))
 `POST /request` attaches a `Server-Timing` response header (flag `ENABLE_SERVER_TIMING`, default on) that combines ROM's own per-stage timings (`parse`, `lookup_service`, `slack_post`) with the sub-stages LML forwards in its own `Server-Timing` header (`library_search`, `metadata_enrichment`, `discogs`, and others). LML's own self-measured `total` is renamed to `lml_total` (not dropped) so the merged header keeps exactly one ROM-owned `total` while still surfacing `lookup_service - lml_total` = ROM<->LML transport + LML framework overhead. It re-surfaces the `RequestTelemetry.track_step` durations already shipped to PostHog — no new capture layer — so a caller can localize latency (e.g. an ~8.5s `metadata_enrichment` Apple-probe stall) the JSON body doesn't reveal. The merge (`routers/request._emit_server_timing_header` + `core/server_timing.parse_server_timing`) is out-of-band and can never raise into the request path. Flag reference + wire-format example: [`docs/env-vars.md`](env-vars.md).
 
