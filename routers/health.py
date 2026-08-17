@@ -17,7 +17,12 @@ Required vs optional:
   failure here makes the readiness response ``unhealthy`` (HTTP 503) so the
   orchestrator can route traffic away.
 * ``groq`` — ``required=False``. Groq parsing has a ``parsing_unavailable``
-  degraded mode; the listener's message still reaches Slack without it.
+  degraded mode; the listener's message still reaches Slack without it. The
+  probe asserts the pinned ``GROQ_MODEL`` is still listed, not merely that the
+  API answers, so a decommissioned pin surfaces here without waiting for a
+  listener request to fail. Staying optional is load-bearing now that the probe
+  can fail on a live outage: a dead pin must degrade the readiness response,
+  never 503 it.
 * ``slack`` — ``required=False``. ``/request`` returns 502 if Slack itself
   is down, but readiness reports ``degraded`` so the dashboard surfaces the
   impairment without removing the container from rotation.
@@ -35,10 +40,29 @@ from core.dependencies import (
     get_http_client,
     get_slack_bot_config,
 )
+from services.parser import GROQ_MODEL
 
 
 async def probe_groq(settings: Settings, http_client: httpx.AsyncClient) -> str:
-    """Verify the Groq API key is valid and the service is reachable."""
+    """Verify Groq is reachable, the key is valid, and the pinned model still exists.
+
+    The model assertion is the point. A reachable Groq with a valid key still
+    parses nothing if ``GROQ_MODEL`` has been decommissioned, which is what
+    happened on 2026-08-17: every parse 404'd with ``model_not_found`` while
+    this probe reported ``ok`` because ``/models`` answered 200.
+
+    It also makes the failure detectable without listener traffic. ``/request``
+    can only report a dead pin after someone sends a message the parser then
+    fails to parse, and at this service's request volume the first such message
+    arrived hours later; readiness is polled on a schedule.
+
+    Kept deliberately cheap and side-effect free -- listing models costs no
+    tokens, so this stays safe to run on every readiness check, unlike a live
+    completion. It cannot catch a pin that is listed but broken for our
+    parameters; ``tests/integration/test_groq_model_contract.py`` covers the
+    same pin from CI, and the parse path itself grades a live failure
+    (``routers/request.py`` ``_GROQ_TRANSIENT_ERRORS``).
+    """
     if not settings.groq_api_key:
         return "unavailable"
     try:
@@ -48,7 +72,16 @@ async def probe_groq(settings: Settings, http_client: httpx.AsyncClient) -> str:
         )
     except Exception:
         return "unavailable"
-    return "ok" if resp.status_code == 200 else "unavailable"
+    if resp.status_code != 200:
+        return "unavailable"
+    try:
+        listed = {entry["id"] for entry in resp.json()["data"]}
+    except Exception:
+        # A 200 we cannot read proves nothing about the pin, and reporting `ok`
+        # on an unparseable body is the same false negative this probe exists
+        # to close.
+        return "unavailable"
+    return "ok" if GROQ_MODEL in listed else "unavailable"
 
 
 async def probe_lookup(settings: Settings, http_client: httpx.AsyncClient) -> str:
