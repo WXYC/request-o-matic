@@ -21,6 +21,11 @@ name: Nightly NLP Check
 # /request -- which would post test results into Slack from the deployed
 # container. The rest of the external_api suite stays manual, in
 # external-api.yml.
+#
+# Two jobs, two cadences. `nlp` (the suite) is diff-gated as described above.
+# `model-contract` runs every night regardless, because the risk it covers --
+# Groq retiring the pinned model -- is upstream of our diff and costs no
+# completion tokens to check. See the comment on that job.
 
 on:
   schedule:
@@ -49,6 +54,7 @@ jobs:
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
       reason: ${{ steps.gate.outputs.reason }}
+      is_tonight: ${{ steps.gate.outputs.is_tonight }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -114,6 +120,54 @@ jobs:
             --event-schedule "$EVENT_SCHEDULE" \
             --base "$BASE_SHA" \
             --head "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Runs every night, unlike the suite below, because what it guards is not our
+  # code. On 2026-08-17 Groq retired llama-3.1-8b-instant; the parser 404'd into
+  # `parsing_unavailable` and posted raw unparsed messages to Slack for ~14h
+  # before an operator noticed by hand. No watched path had moved, so the
+  # diff-gated suite would have skipped every one of those nights.
+  #
+  # It is exempt from the #118 TPM argument that makes the suite conditional:
+  # this is a single GET to /models and spends no completion tokens.
+  model-contract:
+    name: Groq Model Liveness
+    needs: gate
+    if: needs.gate.outputs.is_tonight == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Same false-green guard as the suite job: without a key the test skips
+      # itself and the job goes green having checked nothing.
+      - name: Require a Groq key
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "${GROQ_API_KEY:-}" ]; then
+            echo "::error::GROQ_API_KEY is unset; the model liveness check would skip itself into a false green."
+            exit 1
+          fi
+
+      - name: Check the pinned model is still served
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TEST_ENV: staging
+        # Keep the `-m` on the same line as `pytest`: the marker-sync check
+        # (WXYC/wxyc-etl check_marker_ci_sync.py) scans workflow run-scripts
+        # line by line, and a backslash continuation would read as "a pytest
+        # step with no -m", which weakens the gate for every marker.
+        run: pytest tests/integration/test_groq_model_contract.py -v -m "external_api and contract"
 
   nlp:
     name: Groq Parser Suite
@@ -192,7 +246,7 @@ jobs:
     # Nobody is watching Actions at 03:00, so a red nightly has to come find
     # someone. Mirrors the notify-failure job in ci.yml.
     name: Notify on failure
-    needs: [gate, nlp]
+    needs: [gate, nlp, model-contract]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -203,13 +257,25 @@ jobs:
           COMMIT_URL: "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
           COMMIT_SHA: ${{ github.sha }}
           REASON: ${{ needs.gate.outputs.reason }}
+          MODEL_RESULT: ${{ needs.model-contract.result }}
+          NLP_RESULT: ${{ needs.nlp.result }}
         run: |
           if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
             echo "SLACK_MONITORING_WEBHOOK unset; skipping Slack post."
             exit 0
           fi
           SHORT_SHA="${COMMIT_SHA:0:7}"
+          # Name the job that actually failed. A dead model pin and a parser
+          # regression need completely different responses, and at 03:00 the
+          # reader wants that distinction in the notification, not in the logs.
+          if [ "$MODEL_RESULT" = "failure" ]; then
+            DETAIL=":rotating_light: The pinned Groq model is no longer served. The parser is degraded to \`parsing_unavailable\` and is posting raw, unparsed messages to Slack. Re-point GROQ_MODEL in services/parser.py."
+          elif [ "$NLP_RESULT" = "failure" ]; then
+            DETAIL="The Groq parser suite is red against the live model."
+          else
+            DETAIL="The nightly check failed before reaching either suite."
+          fi
           curl -s -X POST "$SLACK_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "{\"text\":\":x: *request-o-matic nightly NLP check failed*\nThe Groq parser suite is red against the live model.\nTrigger: ${REASON}\nCommit: <$COMMIT_URL|$SHORT_SHA>\nRun: $RUN_URL\"}" \
+            -d "{\"text\":\":x: *request-o-matic nightly NLP check failed*\n${DETAIL}\nTrigger: ${REASON}\nCommit: <$COMMIT_URL|$SHORT_SHA>\nRun: $RUN_URL\"}" \
             || true

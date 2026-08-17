@@ -55,3 +55,25 @@ def test_prompt_documents_unspecified_artist_as_null() -> None:
         "unspecified performer nulls the artist slot (song search across all "
         "artists)"
     )
+
+
+def test_prompt_exempts_determiner_prefixed_band_names_from_nulling() -> None:
+    """A proper band name starting with a determiner must survive the rule above.
+
+    The unspecified-performer rule has an over-trigger: "Second Choice by Any
+    Trouble" names a real band whose name begins with "Any", and a model reading
+    the rule too eagerly nulls it -- turning a findable request into a song-only
+    search. This surfaced on the 2026-08-17 swap to `openai/gpt-oss-20b`, which
+    nulled it on roughly 1 run in 5 against the un-patched prompt while the
+    retired llama-3.1-8b-instant had not.
+
+    The fix is prompt-only, so (per docs/testing.md "Prompt-only parser fixes")
+    this asserts the *contract* -- that the carve-out is still encoded -- while
+    TestParserIntegration::test_determiner_prefixed_band_name_not_nulled asserts
+    the live behavior. Asserted at concept level so a benign reword still passes.
+    """
+    assert "plausible proper name" in _PROMPT, (
+        "SYSTEM_PROMPT no longer carves determiner-prefixed proper band names "
+        "out of the unspecified-performer nulling rule; 'Any Trouble' and "
+        "friends will regress to artist=null"
+    )

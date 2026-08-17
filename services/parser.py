@@ -11,7 +11,17 @@ from core.groq_tracing import groq_parse_span
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+# Groq retired the entire Llama 3.x family on 2026-08-17, including the previous
+# pin `llama-3.1-8b-instant`. Every parse then 404'd with `model_not_found` and
+# the service degraded to `parsing_unavailable` for ~14h before anyone noticed --
+# see tests/integration/test_groq_model_contract.py, which now guards this pin
+# against the live model list.
+#
+# gpt-oss-20b was chosen over gpt-oss-120b (identical accuracy on the parser
+# suite, roughly half the latency and cost), qwen3.6-27b (emits <think> blocks,
+# ~10x slower), and compound-mini (an agentic tool-using model that internally
+# routes to a separate, smaller TPM bucket).
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 # ---------------------------------------------------------------------------
@@ -20,8 +30,10 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 # The Groq parser intermittently fails to extract the album from canonical
 # "<song> by <artist> {on|from|off|off of} <album>" phrasing (1-in-3 failure
 # rate observed in production logs). The same input parses inconsistently
-# across runs because we run llama-3.1-8b-instant at temperature 0.1 and that
-# is the floor of what the model exposes -- there's still nondeterminism.
+# across runs because we run the model at temperature 0.1 and that is the floor
+# of what it exposes -- there's still nondeterminism. (Originally observed on
+# llama-3.1-8b-instant; the pre-pass is model-independent and stays in place as
+# a determinism guarantee rather than a workaround for one model's flakiness.)
 #
 # The fix is a deterministic regex pre-pass. When it matches, parse_request
 # strips the "<preposition> <album>" clause from the message before sending to
@@ -390,6 +402,7 @@ Guidelines:
 - Words like "lp", "cd", "vinyl", "7\"", "12\"", "45" at the end of a message are physical format descriptors, not album names. Ignore them. For example, in "Spoonful-Cream-Wheels of Fire lp", "lp" is a format descriptor and "Wheels of Fire" is the album.
 - Words like "some", "something", "anything", "any", "a little", "a bit of", "more" before "by"/"from" + artist name are filler/determiners meaning "play [some quantity of] artist", NOT song titles. For example, "Some phil collins please" means play some Phil Collins -- "some" is not a song title. "Something by Helden" means play anything by Helden -- "something" is not a song title. Set song to null in these cases.
 - The mirror of that rule applies to the artist slot: when the listener names a specific song or album but leaves the performer **unspecified** -- describing it generically rather than naming a real act -- set artist to null and keep the song/album. Phrases like "any Hindustani classical musician", "some jazz trio", "any artist", "any band", "whoever", "anybody", or "someone" in the artist position are a request for that title by an unspecified performer, not a literal artist name. For example, "Raga Bharavi by any Hindustani classical musician" means song="Raga Bharavi", artist=null (play that raga by any performer) -- do NOT capture "any Hindustani classical musician" as the artist, and do NOT invent a specific artist to fill the slot. This lets the search run song-only across all artists instead of failing on a nonexistent literal artist.
+- Critically, that nulling rule applies only when the performer is described generically. A proper band name that happens to BEGIN with a determiner word is still a real act and must be kept verbatim. For example, "Second Choice by Any Trouble" means song="Second Choice", artist="Any Trouble" -- "Any Trouble" is a real band, not the "any <descriptor>" shape. Likewise "The The", "A Certain Ratio", "Some Velvet Sidewalk", and "Anything Box" are band names, not generic descriptors. Null the artist only when what follows the determiner is a role, genre, or instrument ("any jazz trio"), never when it forms a plausible proper name.
 - When the message is just a name like "MJ Lenderman" or "Radiohead" with no song or album context, it's an artist request. Set artist to the name and song to null.
 - Editorial phrases like "[Artist]'s best/favorite/greatest album/song" are opinions, NOT actual titles. When followed by a colon or dash and a name, the name after the punctuation is the real title. For example, "Beck's best album: Stereopathic Soulmanure" means artist="Beck", album="Stereopathic Soulmanure", is_request=true -- "Beck's best album" is commentary. Similarly, "my favorite Bjork song: Hyperballad" means artist="Bjork", song="Hyperballad". Ignore surrounding enthusiasm like "It's AMAZING" or "so good". These messages are implicit requests -- the listener is naming what they want played.
 - When in doubt about whether something is a song title or album, prefer treating it as a song title

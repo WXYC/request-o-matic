@@ -120,10 +120,13 @@ warn_required_dynamic_aliases = true
 # marker we need is `external_api` (real Groq, real Slack). `slow` is the
 # orthogonal cost dimension. `contract` is preserved as a per-repo addition
 # that the spec explicitly allows (Section 3, "What is NOT in the marker
-# namespace"): contract tests verify the *shape* of an external API contract
-# and are run manually against staging/production.
+# namespace"): contract tests verify the *shape* of an external API contract.
 #
-# ci-sync-skip: contract reason: manual-only; verifies external Slack/Groq API contract shape against deployed staging/production
+# `contract` no longer carries a ci-sync-skip opt-out. It used to be manual-only,
+# but the Groq model-liveness check in nlp-nightly.yml now runs
+# `-m "external_api and contract"` every night, so the marker is genuinely
+# reachable from CI and should be held to that.
+#
 # ci-sync-skip: slow reason: slow tests build a real venv (install-lookup.sh e2e) or hit staging/production perf endpoints; both are run manually, never in the fast CI lane
 [tool.pytest.ini_options]
 markers = [

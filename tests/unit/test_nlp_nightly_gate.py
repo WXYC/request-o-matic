@@ -424,3 +424,72 @@ class TestMain:
         monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
         assert main(["--event-name", "workflow_dispatch"]) == 0
         assert "run" in capsys.readouterr().out.lower()
+
+
+class TestIsTonightIsIndependentOfTheDiff:
+    """`is_tonight` separates "this is the live DST twin" from "our code moved".
+
+    The path-diff gate exists to keep Groq *token* spend proportional to our own
+    churn. But a model being decommissioned upstream is not our churn -- on
+    2026-08-17 Groq retired `llama-3.1-8b-instant` and the parser was hard-down
+    in `parsing_unavailable` for ~14h with every watched path untouched, so a
+    diff-gated check could never have caught it. The model-liveness contract
+    test costs no completion tokens, so it wants the DST-twin selection without
+    the diff gate. `is_tonight` is that signal.
+    """
+
+    def test_true_on_tonights_cron_even_with_no_changes(self):
+        decision = decide(
+            event_name="schedule",
+            event_schedule=CRON_EST,
+            changed_files=["README.md"],
+            now_et=WINTER_3AM_ET,
+        )
+        # The suite itself correctly skips: nothing on the NLP surface moved.
+        assert decision.should_run is False
+        # But tonight's twin is still tonight's twin.
+        assert decision.is_tonight is True
+
+    def test_false_on_the_decoy_twin(self):
+        """The off-regime cron must stay a no-op, or the check runs twice a night."""
+        decision = decide(
+            event_name="schedule",
+            event_schedule=CRON_EDT,
+            changed_files=["services/parser.py"],
+            now_et=WINTER_3AM_ET,
+        )
+        assert decision.is_tonight is False
+
+    def test_manual_dispatch_counts_as_tonight(self):
+        """A human pressing Run should get the liveness check too."""
+        decision = decide(
+            event_name="workflow_dispatch",
+            event_schedule="",
+            changed_files=[],
+            now_et=WINTER_3AM_ET,
+        )
+        assert decision.is_tonight is True
+
+    def test_is_tonight_is_written_to_github_output(self, tmp_path, monkeypatch):
+        """The workflow reads this as a job-level `if:`, so it must be emitted."""
+        output = tmp_path / "gh-output"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        monkeypatch.setattr(
+            "scripts.nlp_nightly_gate.resolve_changed_files", lambda *a, **k: ["README.md"]
+        )
+        monkeypatch.setattr("scripts.nlp_nightly_gate.resolve_keyword_hits", lambda *a, **k: [])
+
+        main(
+            [
+                "--event-name",
+                "workflow_dispatch",
+                "--event-schedule",
+                "",
+                "--base",
+                "abc123",
+                "--head",
+                "def456",
+            ]
+        )
+
+        assert "is_tonight=true" in output.read_text()

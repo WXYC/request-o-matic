@@ -103,6 +103,13 @@ class Decision:
 
     should_run: bool
     reason: str
+    # True when this invocation is the one that stands for tonight -- tonight's
+    # DST twin, or any manual dispatch. Deliberately independent of the
+    # path-diff gate: checks that cost no Groq completion tokens (the model
+    # liveness contract) want the once-a-night selection without also requiring
+    # that *we* changed something. An upstream model decommissioning moves none
+    # of our watched paths.
+    is_tonight: bool = False
 
 
 def expected_cron(now_et: datetime) -> str:
@@ -158,17 +165,22 @@ def decide(
             Disjoint from WATCHED_PATHS, so they simply extend the match list.
     """
     if event_name != "schedule":
-        return Decision(True, f"{event_name}: running unconditionally")
+        return Decision(True, f"{event_name}: running unconditionally", is_tonight=True)
 
     if not is_tonights_cron(event_schedule, now_et):
         return Decision(
             False,
             f"cron '{event_schedule}' is not 03:00 ET right now "
             f"(tonight's entry is '{expected_cron(now_et)}')",
+            is_tonight=False,
         )
 
     if changed_files is None:
-        return Decision(True, "no usable baseline from a previously validated run; running")
+        return Decision(
+            True,
+            "no usable baseline from a previously validated run; running",
+            is_tonight=True,
+        )
 
     matched = watched_changes(changed_files) + list(keyword_hits)
     if not matched:
@@ -176,8 +188,9 @@ def decide(
             False,
             f"no changes to the NLP surface since the last validated run "
             f"({len(changed_files)} other file(s) changed)",
+            is_tonight=True,
         )
-    return Decision(True, f"NLP surface changed: {_summarize(matched)}")
+    return Decision(True, f"NLP surface changed: {_summarize(matched)}", is_tonight=True)
 
 
 def resolve_changed_files(
@@ -256,6 +269,7 @@ def _write_github_output(decision: Decision) -> None:
     with open(output_path, "a", encoding="utf-8") as handle:
         handle.write(f"should_run={'true' if decision.should_run else 'false'}\n")
         handle.write(f"reason={decision.reason}\n")
+        handle.write(f"is_tonight={'true' if decision.is_tonight else 'false'}\n")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
