@@ -21,7 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx
 
 from core.server_timing import parse_server_timing
-from scripts._common import LOCAL_URL, PROD_URL, STAGING_URL, set_up_logging
+from scripts._common import (
+    LOCAL_URL,
+    PROD_URL,
+    STAGING_URL,
+    describe_degraded_mode,
+    indent,
+    set_up_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,24 +40,18 @@ def print_section(title: str) -> None:
     print(f"{'=' * 60}")
 
 
-_DEGRADED_NOTICE = (
-    "Parsing unavailable -- the server could not parse this message.\n"
-    "  This is the `parsing_unavailable` degraded mode: Groq is failing, so the\n"
-    "  raw message is posted to Slack unenriched and no library search runs.\n"
-    "  Check the service logs for the underlying Groq error."
-)
-
-
-def print_parsed_request(parsed: dict | None) -> None:
+def print_parsed_request(parsed: dict | None, degraded: str | None = None) -> None:
     """Print parsed request details.
 
-    ``parsed`` is ``None`` when the server is in its `parsing_unavailable`
-    degraded mode -- a documented response shape, not a client error -- so it is
-    reported as a diagnosis rather than allowed to blow up the CLI.
+    Args:
+        parsed: The response's `parsed` object, or None when the server did not
+            parse. That is a documented response shape, not a client error, so
+            it is reported as a diagnosis rather than allowed to blow up the CLI.
+        degraded: Explanation from `describe_degraded_mode`, when degraded.
     """
     print_section("Parsed Request")
     if parsed is None:
-        print(f"  {_DEGRADED_NOTICE}")
+        print(indent(degraded or "No parse returned by the server."))
         return
     print(f"  Is Request:    {parsed.get('is_request')}")
     print(f"  Message Type:  {parsed.get('message_type')}")
@@ -60,13 +61,21 @@ def print_parsed_request(parsed: dict | None) -> None:
     print(f"  Raw Message:   {parsed.get('raw_message')}")
 
 
-def print_search_summary(data: dict) -> None:
-    """Print search summary showing what kind of results we got."""
+def print_search_summary(data: dict, degraded: str | None = None) -> None:
+    """Print search summary showing what kind of results we got.
+
+    A degraded response is reported as such rather than as an ordinary empty
+    result: "no results" means "not in the library", which is the wrong thing to
+    tell an operator when the search never ran.
+    """
     parsed = data.get("parsed")
-    if parsed is None:
-        # Degraded mode: the server never parsed, so it never searched either.
+    if degraded is not None:
         print_section("Search")
-        print("  Parsing unavailable, so no library search was performed.")
+        print(indent(degraded))
+        return
+    if parsed is None:
+        print_section("Search")
+        print("  No parse returned, so no library search was performed.")
         return
 
     is_request = parsed.get("is_request", False)
@@ -262,17 +271,18 @@ async def run_lookup(
             server_timing = response.headers.get("Server-Timing")
             data = response.json()
 
-            # Display parsed request. `parsed` is null in the server's
-            # `parsing_unavailable` degraded mode, so read it without a `{}`
-            # default -- dict.get returns None for a present-but-null key, and
-            # treating that as a dict is what used to crash the CLI.
+            # `parsed` is null in the server's `parsing_unavailable` degraded
+            # mode, so read it without a `{}` default -- dict.get returns None
+            # for a present-but-null key, and treating that as a dict is what
+            # used to crash the CLI.
+            degraded = describe_degraded_mode(data)
             parsed = data.get("parsed")
-            print_parsed_request(parsed)
+            print_parsed_request(parsed, degraded)
 
             # Display search summary
-            print_search_summary(data)
+            print_search_summary(data, degraded)
 
-            # Skip library results when parsing degraded or this isn't a request
+            # Skip library results when degraded or this isn't a request
             if parsed is None or not parsed.get("is_request", False):
                 print_server_timing(server_timing, round_trip_ms)
                 return cast(dict[str, Any], data)

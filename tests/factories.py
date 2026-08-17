@@ -6,7 +6,10 @@ These factories supply sensible WXYC-style defaults so unit tests don't have
 to spell out the full constructor each time.
 """
 
+from typing import Any
+
 from generated.api_models import DiscogsMatchResult, LibraryCatalogItem
+from routers.request import DEGRADED_PARSING, UnifiedResponse
 
 
 def _compute_call_number(
@@ -72,3 +75,41 @@ def make_release_metadata(
     """Build a DiscogsMatchResult with a default release_url."""
     kwargs.setdefault("release_url", f"https://www.discogs.com/release/{release_id}")
     return DiscogsMatchResult(release_id=release_id, artist=artist, album=album, **kwargs)
+
+
+def make_degraded_response(mode: str = DEGRADED_PARSING, **kwargs) -> dict[str, Any]:
+    """Build the JSON body the service returns in a degraded mode.
+
+    Derived from ``UnifiedResponse`` rather than hand-written, so a field added
+    to the model shows up here automatically. Hand-rolled copies of this payload
+    had already drifted -- they omitted ``degraded_mode`` while their comments
+    claimed to be the exact production shape.
+
+    Args:
+        mode: The ``degraded_mode`` value; ``parsing_unavailable`` sends
+            ``parsed=None``, matching what routers/request.py actually returns.
+        **kwargs: Overrides applied to the UnifiedResponse constructor.
+
+    Returns:
+        A JSON-serializable dict, as a CLI would receive from ``/request``.
+    """
+    if mode == DEGRADED_PARSING:
+        kwargs.setdefault("parsed", None)
+    else:
+        # Imported here, not at module scope: tests/conftest.py imports this
+        # module, so pulling the parser in at import time would be a cycle.
+        from services.parser import MessageType, ParsedRequest
+
+        kwargs.setdefault(
+            "parsed",
+            ParsedRequest(
+                song="la paradoja",
+                artist="Juana Molina",
+                is_request=True,
+                message_type=MessageType.REQUEST,
+                raw_message="play la paradoja by juana molina",
+            ),
+        )
+    kwargs.setdefault("cache_stats", {})
+    response = UnifiedResponse(degraded_mode=mode, **kwargs)
+    return response.model_dump(mode="json")

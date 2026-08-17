@@ -429,13 +429,8 @@ class TestMain:
 class TestIsTonightIsIndependentOfTheDiff:
     """`is_tonight` separates "this is the live DST twin" from "our code moved".
 
-    The path-diff gate exists to keep Groq *token* spend proportional to our own
-    churn. But a model being decommissioned upstream is not our churn -- on
-    2026-08-17 Groq retired `llama-3.1-8b-instant` and the parser was hard-down
-    in `parsing_unavailable` for ~14h with every watched path untouched, so a
-    diff-gated check could never have caught it. The model-liveness contract
-    test costs no completion tokens, so it wants the DST-twin selection without
-    the diff gate. `is_tonight` is that signal.
+    Rationale for the split is on the `Decision.is_tonight` field itself; these
+    tests pin the behavior it depends on.
     """
 
     def test_true_on_tonights_cron_even_with_no_changes(self):
