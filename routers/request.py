@@ -30,7 +30,13 @@ from typing import TYPE_CHECKING
 import httpx
 import sentry_sdk
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-from groq import AsyncGroq
+from groq import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncGroq,
+    InternalServerError,
+    RateLimitError,
+)
 from pydantic import BaseModel
 from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
 
@@ -51,7 +57,7 @@ from models import LibraryItem, ReleaseMetadata
 from services.ban_check_client import BanCheckClient, BanCheckUnavailableError
 from services.fingerprint import normalize_fingerprint
 from services.lookup_client import LookupRequest, LookupServiceClient
-from services.parser import MessageType, ParsedRequest, parse_request
+from services.parser import GROQ_MODEL, MessageType, ParsedRequest, parse_request
 from services.slack import (
     build_simple_slack_blocks,
     build_slack_blocks,
@@ -84,6 +90,25 @@ _LML_TRANSIENT_ERRORS = (
     httpx.HTTPStatusError,
     httpx.ConnectError,
     httpx.TimeoutException,
+)
+
+# Groq failures that resolve themselves. Rate limits are routine on the free
+# tier's 8000 TPM / 200k TPD buckets, and timeouts, connection errors, and 5xx
+# are Groq-side weather. These stay at WARNING, which Sentry's
+# LoggingIntegration keeps as a breadcrumb.
+#
+# Everything *not* in this tuple is treated as permanent and escalated to a
+# Sentry event. The allowlist runs this way round on purpose: on 2026-08-17 a
+# decommissioned model pin 404'd every parse for hours while the failure logged
+# at the same WARNING as a 429, and the exception type nobody had thought to
+# enumerate is precisely the one that needs to be loud. Listing the transient
+# errors fails loud on the next unknown; listing the permanent ones would have
+# failed silent exactly as that incident did.
+_GROQ_TRANSIENT_ERRORS = (
+    RateLimitError,
+    APITimeoutError,
+    APIConnectionError,
+    InternalServerError,
 )
 
 router = APIRouter(tags=["request"])
@@ -480,11 +505,30 @@ async def handle_request(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(
-            "Parsing unavailable (%s: %s); posting raw message to Slack",
-            type(e).__name__,
-            e,
-        )
+        if isinstance(e, _GROQ_TRANSIENT_ERRORS):
+            logger.warning(
+                "Parsing unavailable (%s: %s); posting raw message to Slack",
+                type(e).__name__,
+                e,
+            )
+        else:
+            # ERROR is the entire alerting mechanism here: Sentry's
+            # LoggingIntegration is auto-enabled with event_level=ERROR, so this
+            # level -- and only this level -- becomes an event rather than a
+            # breadcrumb. `exc_info` attaches the stack trace, which also makes
+            # Sentry group on the exception type instead of the formatted
+            # message; the 404 embeds the rejected model name, so message-based
+            # grouping would split one outage across an issue per pin.
+            logger.error(
+                "Parsing is permanently unavailable (%s: %s). Every request will "
+                "degrade until this is fixed -- check that GROQ_MODEL=%s is still "
+                "listed by https://api.groq.com/openai/v1/models and that "
+                "GROQ_API_KEY is valid for it.",
+                type(e).__name__,
+                e,
+                GROQ_MODEL,
+                exc_info=e,
+            )
         if not request.skip_slack:
             telemetry.record_api_call("slack")
             await _post_degraded_to_slack(
