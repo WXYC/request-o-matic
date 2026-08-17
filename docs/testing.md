@@ -36,7 +36,7 @@ venv/bin/python -m pytest tests/integration/ -v -m external_api
 
 External-API tests are skipped if required env vars (`GROQ_API_KEY`) are missing.
 
-These tests are **not** part of the auto-CI run on `main`. The suite shares a per-org Groq TPM bucket with the staging container and saturates the 6000 TPM cap on `llama-3.1-8b-instant`, so running it on every push cascades into 429s + timeouts (see [#118](https://github.com/WXYC/request-o-matic/issues/118) for the diagnosis). Trigger it manually from the GitHub Actions UI via the **External API Tests** workflow (`.github/workflows/external-api.yml`); it always targets staging. The `deploy-staging` smoke test in `ci.yml` remains the actual deploy gate. The parser half of the suite is also covered automatically — see [Nightly NLP Check](#nightly-nlp-check-conditional) below.
+These tests are **not** part of the auto-CI run on `main`. The suite shares a per-org Groq TPM bucket with the staging container and saturates the free-tier TPM cap on `openai/gpt-oss-20b` (8000 TPM; it was 6000 on the retired `llama-3.1-8b-instant` when [#118](https://github.com/WXYC/request-o-matic/issues/118) diagnosed this), so running it on every push cascades into 429s + timeouts. Trigger it manually from the GitHub Actions UI via the **External API Tests** workflow (`.github/workflows/external-api.yml`); it always targets staging. The `deploy-staging` smoke test in `ci.yml` remains the actual deploy gate. The parser half of the suite is also covered automatically — see [Nightly NLP Check](#nightly-nlp-check-conditional) below.
 
 Two caveats when running the manual workflow: (1) trigger it *after* the `deploy-staging` job finishes if you want the test code and the deployed code to match — the suite hits a fixed staging URL, so it sees whatever was last deployed there, regardless of when you trigger. (2) Pick the same git ref in the workflow-dispatch UI as is currently deployed; the test source comes from the chosen ref while the deployed service comes from `main`. Production is deliberately not an option: `TestFullRequestIntegration` POSTs to `/request`, which posts to Slack from the deployed container, so a prod run would spam the live WXYC channel. To test prod, run pytest locally with `TEST_ENV=production` after disabling Slack posting.
 
@@ -68,6 +68,14 @@ Two files are watched by keyword rather than wholesale (`KEYWORD_WATCHED`). `cor
 Because only a passing suite writes the marker, a red night is sticky: the baseline does not advance past a failure, so the suite keeps re-running nightly until it passes. A gated-off night writes nothing either, which keeps the diff anchored to the last commit whose parser behaviour was actually observed. Dependency pins (`requirements*.txt`, `uv.lock`) are deliberately **not** watched — every unrelated dependency bump moves them. After a `groq` SDK bump, trigger the workflow by hand.
 
 Scope is `TestParserIntegration` only. It exercises the prompt and model in-process; `TestFullRequestIntegration` POSTs to a deployed container, which posts to Slack, and stays manual in `external-api.yml`. A missing `GROQ_API_KEY` fails the job rather than skipping into a false green, and a failed run posts to `SLACK_MONITORING_WEBHOOK` the same way `ci.yml` does.
+
+### Model liveness (unconditional)
+
+The same workflow carries a second job, **Groq Model Liveness**, which runs `tests/integration/test_groq_model_contract.py` on *every* night's real cron entry — no diff gate. It asserts that `services/parser.GROQ_MODEL` still appears in Groq's live `/models` list.
+
+It is ungated on purpose. The diff gate exists to keep Groq token spend proportional to our own churn, but a model being retired upstream moves none of our watched paths. That is not hypothetical: on 2026-08-17 Groq decommissioned the entire Llama 3.x family including the then-pinned `llama-3.1-8b-instant`, every `/request` 404'd into `parsing_unavailable`, and the service posted raw unparsed listener messages to Slack for roughly 14 hours before someone noticed by hand. The check costs one GET and zero completion tokens, so the [#118](https://github.com/WXYC/request-o-matic/issues/118) TPM-contention argument does not apply to it.
+
+The gate exposes `is_tonight` (tonight's DST twin, or any manual dispatch) separately from `should_run` for exactly this purpose, so the liveness job still runs once a night rather than twice. When it fails, the Slack notification names the dead pin and the remedy rather than reporting a generic parser-suite failure.
 
 To force a run regardless of the diff, dispatch it manually (**Actions → Nightly NLP Check → Run workflow**, or `gh workflow run nlp-nightly.yml`). To preview the decision locally:
 

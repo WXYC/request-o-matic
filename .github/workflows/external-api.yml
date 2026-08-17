@@ -6,8 +6,9 @@ name: External API Tests
 #
 # Why this is not on auto-CI: the suite shares a per-org Groq TPM bucket with
 # the staging container itself, so running on every push to main saturates the
-# 6000 TPM cap on llama-3.1-8b-instant and cascades into 429s + timeouts. See
-# https://github.com/WXYC/request-o-matic/issues/118 for the full diagnosis.
+# free-tier TPM cap on openai/gpt-oss-20b (8000 TPM) and cascades into 429s +
+# timeouts. See https://github.com/WXYC/request-o-matic/issues/118 for the full
+# diagnosis (which predates the model swap, when the cap was 6000 TPM).
 #
 # The deploy-staging smoke test in ci.yml is the actual deploy gate; this
 # workflow exists as a deeper on-demand check.

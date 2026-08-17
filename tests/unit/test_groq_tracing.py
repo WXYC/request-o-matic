@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from services.parser import parse_request
+from services.parser import GROQ_MODEL, parse_request
 
 
 def _groq_response(
@@ -71,7 +71,10 @@ class TestAiParseSpan:
 
             await parse_request("hello world", client)
 
-            mock_span.set_data.assert_any_call("ai.model", "llama-3.1-8b-instant")
+            # Assert against the constant, not a literal: this test is about the
+            # span carrying the model tag, and a hardcoded name here just rots
+            # silently every time the pin moves.
+            mock_span.set_data.assert_any_call("ai.model", GROQ_MODEL)
             mock_span.set_data.assert_any_call("ai.input.message_length", len("hello world"))
 
     @pytest.mark.asyncio
