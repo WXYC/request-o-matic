@@ -440,6 +440,22 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
+                # gpt-oss is a reasoning model, unlike the llama-3.1-8b-instant
+                # it replaced. At the default effort it spent 135-413 hidden
+                # reasoning tokens per parse (measured across the scenario
+                # corpus) to emit ~38 tokens of JSON, and discarded them. On the
+                # free tier's 8000 TPM bucket that is a large fraction of the
+                # per-minute budget spent on chain-of-thought for a slot-filling
+                # task. "low" is the floor Groq accepts for this model ("none"
+                # is rejected); the parser suite is green on it.
+                reasoning_effort="low",
+                # The model card advertises a 65536-token completion ceiling. One
+                # message that sends it into a long reasoning loop could consume
+                # the entire minute-bucket eight times over and 429 every other
+                # parse. The old model had no reasoning phase, so the JSON shape
+                # bounded output naturally; that bound has to be explicit now.
+                # Worst completion observed is 533, so 1024 is ample headroom.
+                max_completion_tokens=1024,
             )
 
             content = response.choices[0].message.content
