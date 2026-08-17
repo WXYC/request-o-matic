@@ -132,7 +132,7 @@ warn_required_dynamic_aliases = true
 markers = [
     "external_api: needs network egress + a real third-party API key (Groq, Slack)",
     "slow: takes longer than ~10s (orthogonal to infra)",
-    "contract: per-repo marker; verifies external API contract shape (Slack, Groq) — manual only",
+    "contract: per-repo marker; verifies external API contract shape (Slack, Groq)",
 ]
 addopts = "-m 'not external_api and not slow and not contract'"
 console_output_style = "progress"

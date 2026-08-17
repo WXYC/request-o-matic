@@ -135,6 +135,9 @@ jobs:
     if: needs.gate.outputs.is_tonight == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      # Set only when the assertion itself tripped -- see the step that writes it.
+      pin_dead: ${{ steps.liveness.outputs.pin_dead }}
     steps:
       - uses: actions/checkout@v6
 
@@ -160,14 +163,30 @@ jobs:
           fi
 
       - name: Check the pinned model is still served
+        id: liveness
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TEST_ENV: staging
+        # Distinguish "the assertion tripped" from "the check broke". Only
+        # pytest exit code 1 means a test actually failed, i.e. the pin really is
+        # dead. Collection errors, usage errors, and internal errors (2-5) mean
+        # the check itself is broken, which must NOT page someone with a claim
+        # that production is degraded -- rotate GROQ_API_KEY without updating the
+        # repo secret and that is exactly the false alarm you would get.
+        #
         # Keep the `-m` on the same line as `pytest`: the marker-sync check
         # (WXYC/wxyc-etl check_marker_ci_sync.py) scans workflow run-scripts
         # line by line, and a backslash continuation would read as "a pytest
         # step with no -m", which weakens the gate for every marker.
-        run: pytest tests/integration/test_groq_model_contract.py -v -m "external_api and contract"
+        run: |
+          set +e
+          pytest tests/integration/test_groq_model_contract.py -v -m "external_api and contract"
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then
+            echo "pin_dead=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit $code
 
   nlp:
     name: Groq Parser Suite
@@ -258,6 +277,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           REASON: ${{ needs.gate.outputs.reason }}
           MODEL_RESULT: ${{ needs.model-contract.result }}
+          PIN_DEAD: ${{ needs.model-contract.outputs.pin_dead }}
           NLP_RESULT: ${{ needs.nlp.result }}
         run: |
           if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
@@ -265,11 +285,14 @@ jobs:
             exit 0
           fi
           SHORT_SHA="${COMMIT_SHA:0:7}"
-          # Name the job that actually failed. A dead model pin and a parser
-          # regression need completely different responses, and at 03:00 the
-          # reader wants that distinction in the notification, not in the logs.
-          if [ "$MODEL_RESULT" = "failure" ]; then
+          # Name what actually failed. A dead model pin, a broken check, and a
+          # parser regression need completely different responses, and at 03:00
+          # the reader wants that distinction in the notification, not in the
+          # logs. Only claim an outage when the assertion itself tripped.
+          if [ "$PIN_DEAD" = "true" ]; then
             DETAIL=":rotating_light: The pinned Groq model is no longer served. The parser is degraded to \`parsing_unavailable\` and is posting raw, unparsed messages to Slack. Re-point GROQ_MODEL in services/parser.py."
+          elif [ "$MODEL_RESULT" = "failure" ]; then
+            DETAIL="The model-liveness check failed *before its assertion* — the check itself broke (missing GROQ_API_KEY secret, dependency install, or Groq /models unreachable). This is not by itself evidence that the parser is degraded; confirm before acting."
           elif [ "$NLP_RESULT" = "failure" ]; then
             DETAIL="The Groq parser suite is red against the live model."
           else

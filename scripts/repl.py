@@ -49,13 +49,24 @@ logger = logging.getLogger(__name__)
 
 
 def print_result(data: dict) -> None:
-    """Print the lookup result."""
-    parsed = data.get("parsed", {})
+    """Print the lookup result.
+
+    `parsed` is null when the server is in its `parsing_unavailable` degraded
+    mode -- a documented response shape, not a client error. Read it without a
+    `{}` default: dict.get returns None for a present-but-null key, and treating
+    that as a dict is what used to crash the REPL mid-session.
+    """
+    parsed = data.get("parsed")
     results = data.get("library_results", [])
     artwork = data.get("artwork")
 
     # Parsed info
     print(f"\n  {'Parsed':-^50}")
+    if parsed is None:
+        print("  Parsing unavailable -- the server could not parse this message.")
+        print("  Groq is failing, so the raw message is posted to Slack unenriched")
+        print("  and no library search runs. Check the service logs for the error.")
+        return
     print(f"  Is Request:  {parsed.get('is_request')}")
     print(f"  Type:        {parsed.get('message_type')}")
     if parsed.get("artist"):
