@@ -17,6 +17,21 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from config.settings import Settings
+from services.parser import GROQ_MODEL
+
+
+def _client_listing_models(*model_ids: str) -> AsyncMock:
+    """An httpx client whose Groq ``/models`` call lists exactly ``model_ids``."""
+    client = AsyncMock()
+
+    async def _get(url, **kwargs):
+        resp = Mock()
+        resp.status_code = 200
+        resp.json = Mock(return_value={"data": [{"id": mid} for mid in model_ids]})
+        return resp
+
+    client.get = _get
+    return client
 
 
 def _make_settings(**overrides):
@@ -307,8 +322,36 @@ class TestRomProbeWiring:
         assert result != "ok"
 
     @pytest.mark.asyncio
-    async def test_groq_probe_ok_for_200_response(self):
-        """Groq returning 200 -> probe returns ok."""
+    async def test_groq_probe_ok_when_pinned_model_is_listed(self):
+        """Groq reachable *and* still serving the pinned model -> ok."""
+        import routers.health as health_module
+
+        result = await health_module.probe_groq(
+            _make_settings(), _client_listing_models(GROQ_MODEL, "llama-3.3-70b-versatile")
+        )
+
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_groq_probe_unavailable_when_pinned_model_is_missing(self):
+        """A reachable Groq that no longer lists the pin is the 2026-08-17 incident.
+
+        This is the only detector that fires without listener traffic. `/request`
+        can only report a dead pin once someone sends a message the parser then
+        fails to parse, and at this service's volume that took hours; readiness
+        is polled on a schedule, so the same failure surfaces in zero requests.
+        """
+        import routers.health as health_module
+
+        result = await health_module.probe_groq(
+            _make_settings(), _client_listing_models("llama-3.3-70b-versatile")
+        )
+
+        assert result != "ok"
+
+    @pytest.mark.asyncio
+    async def test_groq_probe_unavailable_when_model_list_is_unreadable(self):
+        """A 200 whose body is not the documented shape proves nothing about the pin."""
         import routers.health as health_module
 
         settings = _make_settings()
@@ -317,10 +360,41 @@ class TestRomProbeWiring:
         async def _get(url, **kwargs):
             resp = Mock()
             resp.status_code = 200
+            resp.json = Mock(side_effect=ValueError("not json"))
             return resp
 
         client.get = _get
 
         result = await health_module.probe_groq(settings, client)
 
-        assert result == "ok"
+        assert result != "ok"
+
+    @pytest.mark.asyncio
+    async def test_groq_probe_stays_optional_so_a_dead_pin_cannot_pull_the_container(self):
+        """`groq` is `required=False`, and this test is what keeps it that way.
+
+        Tightening the probe makes it fail during a real outage, so the blast
+        radius matters: parsing has a `parsing_unavailable` degraded mode and the
+        listener's message still reaches Slack without it. If this check were
+        required, a dead pin would turn `/health/ready` into a 503 and take a
+        service that is still doing useful work out of rotation.
+        """
+        import routers.health as health_module
+
+        app = FastAPI()
+        with (
+            patch.object(health_module, "get_http_client", AsyncMock(return_value=AsyncMock())),
+            patch.object(health_module, "probe_groq", AsyncMock(return_value="unavailable")),
+            patch.object(health_module, "probe_lookup", AsyncMock(return_value="ok")),
+            patch.object(health_module, "probe_slack", AsyncMock(return_value="ok")),
+        ):
+            app.include_router(health_module.build_readiness_router())
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/health/ready")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "degraded"
+        assert body["services"]["groq"] != "ok"
