@@ -210,27 +210,22 @@ _ALBUM_IDIOM_HEADS: frozenset[str] = frozenset(
     }
 )
 
-# Streaming platforms named after `on` -- "moon pix by cat power on spotify".
-# The listener is saying where they heard it, which is the same idiom as "on
-# vinyl" one medium later; the album slot must stay empty either way.
+# Streaming platforms named after an album preposition -- "moon pix by cat power
+# on spotify", "... from bandcamp". The listener is saying where they heard it,
+# which is the same idiom as "on vinyl" one medium later; the album slot must
+# stay empty either way.
 #
-# Deliberately NOT more entries in _ALBUM_IDIOM_HEADS, for two reasons that both
-# have real WXYC library rows behind them (WXYC/request-o-matic#272):
+# Deliberately NOT more entries in _ALBUM_IDIOM_HEADS: these are compared against
+# the WHOLE album text, not the first token. `apple music` is two words, so a
+# first-token head would have to be `apple` -- which would also decline XTC's
+# "Apple Venus (part 1)". The idiom heads can be single tokens because no real
+# title begins "radio ..." or "repeat ..."; platform names do not have that
+# property. See WXYC/request-o-matic#272.
 #
-#   1. Compared against the WHOLE album text, not the first token. `apple music`
-#      is two words, so a first-token head would have to be `apple` -- which
-#      would also decline XTC's "Apple Venus (part 1)". The idiom heads can be
-#      single tokens because no real title begins "radio ..." or "repeat ...";
-#      platform names do not have that property.
-#   2. Checked only when the preposition is `on`. "Tidal" is Fiona Apple's 1996
-#      album and it is on the shelf, so `off tidal` / `from tidal` must still
-#      extract. Nobody asks to hear something "off Spotify", so scoping to `on`
-#      costs no recall and keeps the record reachable.
-#
-# Entries are matched after casefolding and trailing-punctuation trim, so they
-# are written lowercase and unpunctuated here. Each one needs a negative case in
+# Entries are matched after _normalize_platform_text, so write them lowercase,
+# single-spaced and unsuffixed. Each one needs a negative case in
 # tests/scenarios.py::ALBUM_PREPASS_CASES -- a guard test enforces that.
-_STREAMING_PLATFORM_ALBUMS: frozenset[str] = frozenset(
+_STREAMING_PLATFORMS: frozenset[str] = frozenset(
     {
         "spotify",
         "apple music",
@@ -238,10 +233,34 @@ _STREAMING_PLATFORM_ALBUMS: frozenset[str] = frozenset(
         "youtube",
         "youtube music",
         "soundcloud",
-        "tidal",
         "deezer",
     }
 )
+
+# Platforms whose name is ALSO a real album title on the WXYC shelf. These are
+# declined only after `on`, where the platform reading is the only sensible one.
+# "Tidal" is Fiona Apple's 1996 album, so `off tidal` / `from tidal` must still
+# extract it; nobody asks to hear something "off Spotify", so the narrower scope
+# costs no recall. Kept as its own set rather than a special case for one string
+# so a future collision is a one-line addition -- and kept SEPARATE from
+# _STREAMING_PLATFORMS above rather than folding every platform into the
+# `on`-only scope, because "I heard this from Bandcamp" is ordinary listener
+# phrasing and poisons the album slot exactly as "on spotify" did.
+_STREAMING_PLATFORMS_TITLE_COLLISION: frozenset[str] = frozenset({"tidal"})
+
+
+def _normalize_platform_text(album_text: str) -> str:
+    """Normalize album text for comparison against the streaming-platform sets.
+
+    Casefolds, collapses internal whitespace runs (a double-space typo in "apple
+    music"), trims trailing punctuation, and strips a trailing host suffix --
+    listeners write "on youtube.com" at least as often as "on youtube". Only the
+    whole-text comparison uses this, so stripping ".com" cannot truncate a real
+    album title; it can only make a bare host match its platform's bare name.
+    """
+    normalized = re.sub(r"\s+", " ", album_text).strip().casefold().rstrip(",.!?").strip()
+    return re.sub(r"\.(?:com|co)$", "", normalized).strip()
+
 
 # Match the canonical templated shapes. Anchored at end of string.
 #   - <prefix> <on|from|off|off of> <album-text>
@@ -376,9 +395,13 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
         return None
 
     # Streaming-platform guard: same intent as the idiom denylist above, but
-    # whole-text and `on`-only. See _STREAMING_PLATFORM_ALBUMS for why those two
-    # differences are load-bearing rather than incidental.
-    if prep == "on" and album_raw.lower().rstrip(",.!?").strip() in _STREAMING_PLATFORM_ALBUMS:
+    # matched against the whole album text rather than its first token. See
+    # _STREAMING_PLATFORMS for why that difference is load-bearing, and
+    # _STREAMING_PLATFORMS_TITLE_COLLISION for why one set is `on`-only.
+    platform_text = _normalize_platform_text(album_raw)
+    if platform_text in _STREAMING_PLATFORMS:
+        return None
+    if prep == "on" and platform_text in _STREAMING_PLATFORMS_TITLE_COLLISION:
         return None
 
     # Reverse-order shape "<song> {prep} <album> by <artist>": the album group is
@@ -439,6 +462,7 @@ Guidelines:
 - Terse messages like "song title. artist name.", "song - artist", "song title, artist name", or "song by artist" should extract both song and artist. The word "by" in "X by Y" is a preposition indicating authorship -- Y is the artist, not an album. This applies even when the song title contains common words like "love", "hate", "like", etc., or when the song title is itself a short common word that resembles a temporal adverb (e.g., "today"): in the "<song>, <artist>" comma shape (and the dash and "by" shapes) the left side is the song, not a preamble to drop. For example, "I love acid, luke vibert" is a request for the song "I Love Acid" by Luke Vibert, not feedback; likewise "Today, Jefferson Airplane" is a request for the song "Today" by Jefferson Airplane (song="Today", artist="Jefferson Airplane"), not a temporal aside.
 - Dashes (with or without spaces) are delimiters separating song, artist, and album. "Song-Artist-Album" or "Song - Artist - Album" should be split into three fields. For example, "Spoonful-Cream-Wheels of Fire lp" means song="Spoonful", artist="Cream", album="Wheels of Fire".
 - Words like "lp", "cd", "vinyl", "7\"", "12\"", "45" at the end of a message are physical format descriptors, not album names. Ignore them. For example, in "Spoonful-Cream-Wheels of Fire lp", "lp" is a format descriptor and "Wheels of Fire" is the album.
+- Streaming services -- Spotify, Apple Music, Bandcamp, YouTube, SoundCloud, Tidal, Deezer -- named after "on"/"from"/"off" say where the listener heard the song, not what it is on. They are the streaming-era equivalent of the format descriptors above. Set album to null. For example, "Moon Pix by Cat Power on Spotify" means song="Moon Pix", artist="Cat Power", album=null. The exception is when the service name is also the album: "Criminal by Fiona Apple off Tidal" means album="Tidal", because that is the record's actual title.
 - Words like "some", "something", "anything", "any", "a little", "a bit of", "more" before "by"/"from" + artist name are filler/determiners meaning "play [some quantity of] artist", NOT song titles. For example, "Some phil collins please" means play some Phil Collins -- "some" is not a song title. "Something by Helden" means play anything by Helden -- "something" is not a song title. Set song to null in these cases.
 - The mirror of that rule applies to the artist slot: when the listener names a specific song or album but leaves the performer **unspecified** -- describing it generically rather than naming a real act -- set artist to null and keep the song/album. Phrases like "any Hindustani classical musician", "some jazz trio", "any artist", "any band", "whoever", "anybody", or "someone" in the artist position are a request for that title by an unspecified performer, not a literal artist name. For example, "Raga Bharavi by any Hindustani classical musician" means song="Raga Bharavi", artist=null (play that raga by any performer) -- do NOT capture "any Hindustani classical musician" as the artist, and do NOT invent a specific artist to fill the slot. This lets the search run song-only across all artists instead of failing on a nonexistent literal artist.
 - Critically, that nulling rule applies only when the performer is described generically. A proper band name that happens to BEGIN with a determiner word is still a real act and must be kept verbatim. For example, "Second Choice by Any Trouble" means song="Second Choice", artist="Any Trouble" -- "Any Trouble" is a real band, not the "any <descriptor>" shape. Likewise "The The", "A Certain Ratio", "Some Velvet Sidewalk", and "Anything Box" are band names, not generic descriptors. Null the artist only when what follows the determiner is a role, genre, or instrument ("any jazz trio"), never when it forms a plausible proper name.

@@ -29,7 +29,8 @@ import pytest
 
 from services.parser import (
     _ALBUM_PREPOSITION_RE,
-    _STREAMING_PLATFORM_ALBUMS,
+    _STREAMING_PLATFORMS,
+    _STREAMING_PLATFORMS_TITLE_COLLISION,
     SUPPORTED_ALBUM_PREPOSITIONS,
     _split_quoted_album,
     extract_album_prefix,
@@ -314,26 +315,69 @@ def test_returns_none_for_empty_input() -> None:
 # ---------------------------------------------------------------------------
 # Streaming-platform guard (WXYC/request-o-matic#272).
 # ---------------------------------------------------------------------------
-# The per-platform declines live in the shared corpus as negatives. The three
-# tests below pin the *boundaries* of that guard -- the cases that make it a
-# separate mechanism from _ALBUM_IDIOM_HEADS rather than more entries in it.
+# The per-platform declines live in the shared corpus as negatives. The tests
+# below pin the *boundaries* of that guard -- the cases that make it a separate
+# mechanism from _ALBUM_IDIOM_HEADS rather than more entries in it.
+
+
+@pytest.mark.parametrize("preposition", SUPPORTED_ALBUM_PREPOSITIONS)
+@pytest.mark.parametrize("platform", sorted(_STREAMING_PLATFORMS))
+def test_streaming_platform_declines_after_every_preposition(
+    platform: str, preposition: str
+) -> None:
+    """A platform that is not also an album title declines whichever preposition names it.
+
+    "I heard this from Bandcamp" / "off Spotify" are ordinary listener phrasings,
+    and they poison the album slot exactly as "on spotify" did. Only the
+    title-collision set below needs the narrower `on`-only scope, so these
+    decline everywhere rather than paying that restriction for no reason.
+    """
+    assert extract_album_prefix(f"moon pix by cat power {preposition} {platform}") is None
 
 
 @pytest.mark.parametrize("preposition", ["off", "off of", "from"])
-def test_streaming_guard_is_scoped_to_on(preposition: str) -> None:
+@pytest.mark.parametrize("platform", sorted(_STREAMING_PLATFORMS_TITLE_COLLISION))
+def test_title_collision_platform_declines_only_after_on(platform: str, preposition: str) -> None:
     """ "on Tidal" is the platform; "off Tidal" is Fiona Apple's 1996 album.
 
-    The library holds `Fiona Apple / Tidal`, so the guard cannot decline `tidal`
-    unconditionally the way the idiom heads decline `vinyl`. Nobody asks for a
-    song "off Spotify", so restricting the guard to `on` costs nothing and keeps
-    the real album reachable through the other three prepositions.
+    The library holds `Fiona Apple / Tidal`, so this set cannot decline the way
+    the idiom heads decline `vinyl`. Nobody asks for a song "off Spotify", so
+    restricting these names to `on` keeps the real record reachable through the
+    other three prepositions at no cost.
     """
-    result = extract_album_prefix(f"criminal by fiona apple {preposition} tidal")
+    result = extract_album_prefix(f"criminal by fiona apple {preposition} {platform}")
 
     assert result is not None, f"pre-pass should still fire for {preposition!r} + a real album"
     album, stripped = result
-    assert album.strip().lower() == "tidal"
+    assert album.strip().lower() == platform
     assert stripped.strip().lower() == "criminal by fiona apple"
+
+
+@pytest.mark.parametrize("platform", sorted(_STREAMING_PLATFORMS_TITLE_COLLISION))
+def test_title_collision_platform_still_declines_after_on(platform: str) -> None:
+    """The narrower scope is a carve-out for three prepositions, not an exemption."""
+    assert extract_album_prefix(f"moon pix by cat power on {platform}") is None
+
+
+@pytest.mark.parametrize(
+    "album_text",
+    [
+        "youtube.com",  # listeners write the host, not the brand
+        "bandcamp.com",
+        "soundcloud.com",
+        "apple  music",  # double-space typo
+        "Spotify",  # casing
+        "spotify!",  # trailing punctuation
+    ],
+)
+def test_streaming_guard_normalizes_before_matching(album_text: str) -> None:
+    """Host suffixes, internal whitespace, case and trailing punctuation all normalize away.
+
+    Each of these is the platform name as a listener actually types it; a guard
+    that only matched the bare lowercase brand would let every one of them
+    through into the album slot.
+    """
+    assert extract_album_prefix(f"moon pix by cat power on {album_text}") is None
 
 
 def test_streaming_guard_matches_the_whole_album_text_not_a_leading_token() -> None:
@@ -393,24 +437,36 @@ def test_every_supported_preposition_has_positive_corpus_case() -> None:
 
 
 def test_every_streaming_platform_has_a_negative_corpus_case() -> None:
-    """Every member of ``_STREAMING_PLATFORM_ALBUMS`` must have a corpus negative.
+    """Every platform the parser declines must have a corpus negative.
 
     Sibling of the preposition guard above, for the same reason: a platform added
-    to the parser's set without a case is an untested branch. Matching on the
-    ``raw_message`` tail rather than a label keeps this honest -- a case can't
-    claim coverage of a platform it doesn't actually end with.
+    to either set without a case is an untested branch. Matching on the
+    ``raw_message`` rather than a label keeps this honest -- a case can't claim
+    coverage of a platform it doesn't actually name. Containment rather than
+    ``endswith`` so a case may carry a trailing politeness token ("... on spotify
+    please") without tripping a guard that is about coverage, not phrasing.
     """
-    tails = {c.raw_message.strip().lower() for c in NEGATIVE_CASES}
+    messages = {c.raw_message.strip().lower() for c in NEGATIVE_CASES}
     missing = sorted(
         platform
-        for platform in _STREAMING_PLATFORM_ALBUMS
-        if not any(tail.endswith(f" on {platform}") for tail in tails)
+        for platform in _STREAMING_PLATFORMS | _STREAMING_PLATFORMS_TITLE_COLLISION
+        if not any(f" on {platform}" in message for message in messages)
     )
     assert not missing, (
-        "Platforms in services.parser._STREAMING_PLATFORM_ALBUMS with no negative case in "
+        "Platforms declined by services.parser with no negative case in "
         f"tests.scenarios.ALBUM_PREPASS_CASES (so no coverage): {missing}. "
-        'Add a negative AlbumPrepassCase ending in "on <platform>" for each.'
+        'Add a negative AlbumPrepassCase containing "on <platform>" for each.'
     )
+
+
+def test_streaming_platform_sets_are_disjoint() -> None:
+    """A platform in both sets would have its all-preposition scope silently narrowed.
+
+    The `on`-only check runs against the union, so an accidental duplicate would
+    read as covered while behaving as the narrower of the two.
+    """
+    overlap = sorted(_STREAMING_PLATFORMS & _STREAMING_PLATFORMS_TITLE_COLLISION)
+    assert not overlap, f"platforms in both streaming sets: {overlap}"
 
 
 @pytest.mark.parametrize("case", POSITIVE_CASES, ids=[c.id for c in POSITIVE_CASES])
