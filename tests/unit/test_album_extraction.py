@@ -29,6 +29,7 @@ import pytest
 
 from services.parser import (
     _ALBUM_PREPOSITION_RE,
+    _STREAMING_PLATFORM_ALBUMS,
     SUPPORTED_ALBUM_PREPOSITIONS,
     _split_quoted_album,
     extract_album_prefix,
@@ -311,6 +312,60 @@ def test_returns_none_for_empty_input() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Streaming-platform guard (WXYC/request-o-matic#272).
+# ---------------------------------------------------------------------------
+# The per-platform declines live in the shared corpus as negatives. The three
+# tests below pin the *boundaries* of that guard -- the cases that make it a
+# separate mechanism from _ALBUM_IDIOM_HEADS rather than more entries in it.
+
+
+@pytest.mark.parametrize("preposition", ["off", "off of", "from"])
+def test_streaming_guard_is_scoped_to_on(preposition: str) -> None:
+    """ "on Tidal" is the platform; "off Tidal" is Fiona Apple's 1996 album.
+
+    The library holds `Fiona Apple / Tidal`, so the guard cannot decline `tidal`
+    unconditionally the way the idiom heads decline `vinyl`. Nobody asks for a
+    song "off Spotify", so restricting the guard to `on` costs nothing and keeps
+    the real album reachable through the other three prepositions.
+    """
+    result = extract_album_prefix(f"criminal by fiona apple {preposition} tidal")
+
+    assert result is not None, f"pre-pass should still fire for {preposition!r} + a real album"
+    album, stripped = result
+    assert album.strip().lower() == "tidal"
+    assert stripped.strip().lower() == "criminal by fiona apple"
+
+
+def test_streaming_guard_matches_the_whole_album_text_not_a_leading_token() -> None:
+    """`apple` must not decline `Apple Venus` (XTC, in the library).
+
+    Covering the two-word `apple music` with a first-token head -- the mechanism
+    _ALBUM_IDIOM_HEADS uses -- would swallow every title that merely *starts*
+    with a platform's first word. The guard compares the whole album text
+    instead, so only the platform name itself declines.
+    """
+    result = extract_album_prefix("river of orchids by xtc on apple venus")
+
+    assert result is not None
+    album, stripped = result
+    assert album.strip().lower() == "apple venus"
+    assert stripped.strip().lower() == "river of orchids by xtc"
+
+
+def test_quoted_title_overrides_the_streaming_guard() -> None:
+    """A quoted platform name is the listener naming a title on purpose.
+
+    Same contract the idiom denylist already has (see
+    ``test_quoted_title_overrides_the_idiom_denylist``): quotation marks are the
+    listener disambiguating, and the quoted path returns before either guard.
+    """
+    result = extract_album_prefix('some song by cat power on "spotify"')
+
+    assert result is not None
+    assert result[0] == "spotify"
+
+
+# ---------------------------------------------------------------------------
 # Enforcement: keep the shared corpus and the parser's preposition set in sync.
 # ---------------------------------------------------------------------------
 # These are the tripwires that make "heuristic parity" structural rather than a
@@ -334,6 +389,27 @@ def test_every_supported_preposition_has_positive_corpus_case() -> None:
         "Prepositions supported by services.parser but with no positive case in "
         f"tests.scenarios.ALBUM_PREPASS_CASES (so no coverage): {sorted(missing)}. "
         "Add a positive AlbumPrepassCase for each."
+    )
+
+
+def test_every_streaming_platform_has_a_negative_corpus_case() -> None:
+    """Every member of ``_STREAMING_PLATFORM_ALBUMS`` must have a corpus negative.
+
+    Sibling of the preposition guard above, for the same reason: a platform added
+    to the parser's set without a case is an untested branch. Matching on the
+    ``raw_message`` tail rather than a label keeps this honest -- a case can't
+    claim coverage of a platform it doesn't actually end with.
+    """
+    tails = {c.raw_message.strip().lower() for c in NEGATIVE_CASES}
+    missing = sorted(
+        platform
+        for platform in _STREAMING_PLATFORM_ALBUMS
+        if not any(tail.endswith(f" on {platform}") for tail in tails)
+    )
+    assert not missing, (
+        "Platforms in services.parser._STREAMING_PLATFORM_ALBUMS with no negative case in "
+        f"tests.scenarios.ALBUM_PREPASS_CASES (so no coverage): {missing}. "
+        'Add a negative AlbumPrepassCase ending in "on <platform>" for each.'
     )
 
 
