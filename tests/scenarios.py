@@ -698,6 +698,52 @@ ALBUM_PREPASS_CASES: list[AlbumPrepassCase] = [
         raw_message="moon pix by cat power on cd",
         preposition="on",
     ),
+    # Streaming platforms (WXYC/request-o-matic#272). "on spotify" tells the DJ
+    # where the listener heard it, not what record it is on -- the same idiom
+    # shape as "on vinyl" above, one medium later. Kept in a separate parser
+    # mechanism from the idiom heads because two of these names are real library
+    # titles; see _STREAMING_PLATFORM_ALBUMS for why. One case per member, and
+    # a guard test below asserts that stays true.
+    AlbumPrepassCase(
+        id="catpower_on_spotify",
+        raw_message="moon pix by cat power on spotify",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_apple_music",
+        raw_message="moon pix by cat power on apple music",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_bandcamp",
+        raw_message="moon pix by cat power on bandcamp",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_youtube",
+        raw_message="moon pix by cat power on youtube",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_youtube_music",
+        raw_message="moon pix by cat power on youtube music",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_soundcloud",
+        raw_message="moon pix by cat power on soundcloud",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_tidal",
+        raw_message="moon pix by cat power on tidal",
+        preposition="on",
+    ),
+    AlbumPrepassCase(
+        id="catpower_on_deezer",
+        raw_message="moon pix by cat power on deezer",
+        preposition="on",
+    ),
     AlbumPrepassCase(
         id="catpower_off_top_of_head",
         raw_message="moon pix by cat power off the top of my head",

@@ -210,6 +210,39 @@ _ALBUM_IDIOM_HEADS: frozenset[str] = frozenset(
     }
 )
 
+# Streaming platforms named after `on` -- "moon pix by cat power on spotify".
+# The listener is saying where they heard it, which is the same idiom as "on
+# vinyl" one medium later; the album slot must stay empty either way.
+#
+# Deliberately NOT more entries in _ALBUM_IDIOM_HEADS, for two reasons that both
+# have real WXYC library rows behind them (WXYC/request-o-matic#272):
+#
+#   1. Compared against the WHOLE album text, not the first token. `apple music`
+#      is two words, so a first-token head would have to be `apple` -- which
+#      would also decline XTC's "Apple Venus (part 1)". The idiom heads can be
+#      single tokens because no real title begins "radio ..." or "repeat ...";
+#      platform names do not have that property.
+#   2. Checked only when the preposition is `on`. "Tidal" is Fiona Apple's 1996
+#      album and it is on the shelf, so `off tidal` / `from tidal` must still
+#      extract. Nobody asks to hear something "off Spotify", so scoping to `on`
+#      costs no recall and keeps the record reachable.
+#
+# Entries are matched after casefolding and trailing-punctuation trim, so they
+# are written lowercase and unpunctuated here. Each one needs a negative case in
+# tests/scenarios.py::ALBUM_PREPASS_CASES -- a guard test enforces that.
+_STREAMING_PLATFORM_ALBUMS: frozenset[str] = frozenset(
+    {
+        "spotify",
+        "apple music",
+        "bandcamp",
+        "youtube",
+        "youtube music",
+        "soundcloud",
+        "tidal",
+        "deezer",
+    }
+)
+
 # Match the canonical templated shapes. Anchored at end of string.
 #   - <prefix> <on|from|off|off of> <album-text>
 # `prefix` must be non-empty and is what we pass through to Groq after stripping.
@@ -340,6 +373,12 @@ def extract_album_prefix(raw_message: str) -> tuple[str, str] | None:
     # If it's an idiom-head we decline to fire and leave it to Groq.
     first_token = re.split(r"\s+", album_raw, maxsplit=1)[0].lower().rstrip(",.!?")
     if first_token in _ALBUM_IDIOM_HEADS:
+        return None
+
+    # Streaming-platform guard: same intent as the idiom denylist above, but
+    # whole-text and `on`-only. See _STREAMING_PLATFORM_ALBUMS for why those two
+    # differences are load-bearing rather than incidental.
+    if prep == "on" and album_raw.lower().rstrip(",.!?").strip() in _STREAMING_PLATFORM_ALBUMS:
         return None
 
     # Reverse-order shape "<song> {prep} <album> by <artist>": the album group is
