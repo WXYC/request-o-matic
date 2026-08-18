@@ -32,6 +32,7 @@ the codegen stages that follow, which are out of scope here.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,7 +48,7 @@ _URL = "https://raw.githubusercontent.com/WXYC/wxyc-shared/main/api.yaml"
 # The org-pinned curl idiom for this exact download (mirrors wxyc-shared's
 # generate-python-models.sh and LML's script): --retry also covers 429/5xx with
 # Retry-After, which directly serves this ticket's goal.
-_CURL_COMMON = ["-sSfL", "--max-time", "30", "--retry", "3"]
+_CURL_COMMON = ["-sSfL", "--max-time", "30", "--retry", "3", "--retry-max-time", "60"]
 
 
 def _install_curl_stub(tmp_path: Path) -> None:
@@ -105,6 +106,26 @@ def _install_env_recording_stub(tmp_path: Path, name: str) -> None:
     stub.chmod(0o755)
 
 
+def _hermetic_env() -> dict[str, str]:
+    """``os.environ`` minus everything that would let the ambient shell decide
+    which arm of the script runs.
+
+    ``GITHUB_TOKEN``/``GH_TOKEN`` because CI exports one and each test controls
+    exactly which the script sees. ``GIT_DIR``/``GIT_WORK_TREE`` because git
+    exports them into hooks and ``rebase --exec`` subprocesses, and either one
+    overrides the throwaway repo entirely -- ``git rev-parse --git-common-dir``
+    then resolves the sibling path against SOMEONE ELSE'S checkout, silently
+    routing every test down the no-download arm. On this machine that is not
+    hypothetical: ../wxyc-shared/api.yaml exists, so running this suite from a
+    pre-push hook took 7 of the 10 tests red for a reason unrelated to the
+    change under test.
+    """
+    env = dict(os.environ)
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "GIT_DIR", "GIT_WORK_TREE"):
+        env.pop(name, None)
+    return env
+
+
 def _copy_script(tmp_path: Path, *, with_sibling: bool) -> Path:
     """Lay out a throwaway repo around a copy of the script; return the copy.
 
@@ -115,7 +136,7 @@ def _copy_script(tmp_path: Path, *, with_sibling: bool) -> Path:
     """
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=_hermetic_env())
     script_copy = repo / "scripts" / "generate_api_models.sh"
     shutil.copy(_SCRIPT, script_copy)
     if with_sibling:
@@ -155,14 +176,14 @@ def _run(
     with_sibling: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run the real script with stubbed tooling and a deterministic token env."""
+    # Every stub this suite needs, installed here rather than at each call
+    # site: no test wants the real thing, and installing curl unconditionally
+    # is also the network guard that makes "no calls recorded" meaningful.
+    _install_curl_stub(tmp_path)
     _install_env_recording_stub(tmp_path, "datamodel-codegen")
     _install_env_recording_stub(tmp_path, "ruff")
     script = _copy_script(tmp_path, with_sibling=with_sibling)
-    env = dict(os.environ)
-    # CI itself exports GITHUB_TOKEN; strip both names so each test controls
-    # exactly which token variables the script sees.
-    env.pop("GITHUB_TOKEN", None)
-    env.pop("GH_TOKEN", None)
+    env = _hermetic_env()
     env["PATH"] = f"{tmp_path / 'bin'}{os.pathsep}{env['PATH']}"
     env.update(env_extra)
     return subprocess.run(
@@ -195,7 +216,6 @@ def test_token_attaches_authorization_header_without_leaking(tmp_path, token_var
     """With a token set, curl receives the Bearer header on stdin, the log gets
     a stderr advisory -- and the token value appears nowhere: not argv, not
     stdout, not stderr."""
-    _install_curl_stub(tmp_path)
 
     result = _run(tmp_path, {token_var: _TOKEN})
 
@@ -204,6 +224,7 @@ def test_token_attaches_authorization_header_without_leaking(tmp_path, token_var
     assert len(calls) == 1
     _assert_argv(calls[0]["argv"], authenticated=True)
     assert calls[0]["stdin"] == f"Authorization: Bearer {_TOKEN}\n"
+    assert calls[0]["env"] == "", "no child process may inherit the token"
     assert not any(_TOKEN in arg for arg in calls[0]["argv"])
     # Acceptance: the authenticated path is observable in the log...
     assert "Authenticated download" in result.stderr
@@ -215,7 +236,6 @@ def test_token_attaches_authorization_header_without_leaking(tmp_path, token_var
 def test_gh_token_takes_precedence_over_github_token(tmp_path):
     """When both variables are set, GH_TOKEN wins -- the same precedence gh
     itself documents (``gh help environment``)."""
-    _install_curl_stub(tmp_path)
     other = "gho_rom268_secondary_token"
 
     result = _run(tmp_path, {"GH_TOKEN": _TOKEN, "GITHUB_TOKEN": other})
@@ -237,7 +257,6 @@ def test_no_token_sends_no_authorization_header(tmp_path):
     unauthenticated path this fix exists to leave, presenting as the original
     intermittent 429 rather than as the configuration regression it is.
     """
-    _install_curl_stub(tmp_path)
 
     result = _run(tmp_path, {})
 
@@ -255,7 +274,6 @@ def test_failed_authenticated_download_falls_back_to_anonymous(tmp_path):
     """A stale ambient token must not break previously-working runs: GitHub
     404s (not 401s) raw requests with any invalid Authorization header, so the
     script retries once anonymously and says so on stderr."""
-    _install_curl_stub(tmp_path)
     (tmp_path / "curl_fail_remaining").write_text("1")
 
     result = _run(tmp_path, {"GH_TOKEN": _TOKEN})
@@ -274,7 +292,6 @@ def test_failure_of_both_attempts_still_fails(tmp_path):
     """The anonymous retry is a floor, not a mask: when the anonymous attempt
     fails too, the script fails -- after exactly one fallback, no retry loop --
     rather than regenerating models from a truncated spec."""
-    _install_curl_stub(tmp_path)
     (tmp_path / "curl_fail_remaining").write_text("2")
 
     result = _run(tmp_path, {"GH_TOKEN": _TOKEN})
@@ -283,22 +300,7 @@ def test_failure_of_both_attempts_still_fails(tmp_path):
     assert len(_calls(tmp_path)) == 2
 
 
-def test_token_is_dropped_from_child_process_environment(tmp_path):
-    """The token's scope is the download alone: the script captures it into a
-    shell variable and unsets both env names, so no child process -- curl here
-    -- inherits it."""
-    _install_curl_stub(tmp_path)
-
-    result = _run(tmp_path, {"GH_TOKEN": _TOKEN, "GITHUB_TOKEN": _TOKEN})
-
-    assert result.returncode == 0, result.stderr
-    calls = _calls(tmp_path)
-    assert len(calls) == 1
-    assert calls[0]["env"] == ""
-
-
-@pytest.mark.parametrize("tool", ["datamodel-codegen", "ruff"])
-def test_token_is_dropped_on_the_sibling_checkout_path_too(tmp_path, tool):
+def test_token_is_dropped_on_the_sibling_checkout_path_too(tmp_path):
     """The scrub is a property of the whole script, not of the download arm.
 
     The default local invocation -- an ambient GH_TOKEN plus a sibling
@@ -306,23 +308,50 @@ def test_token_is_dropped_on_the_sibling_checkout_path_too(tmp_path, tool):
     capture/unset lives inside the download branch, that arm hands the token to
     datamodel-codegen, ruff, and their whole dependency tree.
     """
-    _install_curl_stub(tmp_path)
 
     result = _run(tmp_path, {"GH_TOKEN": _TOKEN, "GITHUB_TOKEN": _TOKEN}, with_sibling=True)
 
     assert result.returncode == 0, result.stderr
     assert _calls(tmp_path) == [], "the sibling arm must not download at all"
-    assert (tmp_path / f"{tool}.env").read_text() == ""
+    for tool in ("datamodel-codegen", "ruff"):
+        assert (tmp_path / f"{tool}.env").read_text() == "", tool
 
 
 def test_ci_job_delivers_a_token_to_the_script():
-    """The script's authenticated arm is dead code unless CI actually exports a
-    token, and losing that line is a silent revert to the anonymous path."""
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
-    ).read_text()
-    executable = "\n".join(
-        line for line in workflow.splitlines() if not line.lstrip().startswith("#")
-    )
+    """The script's authenticated arm is dead code unless CI exports a token.
 
-    assert "GITHUB_TOKEN: ${{ github.token }}" in executable
+    Scoped to the step that runs the script, and accepting either name a
+    whole-file substring match is wrong in both directions: it stays green when
+    the ``env:`` block migrates to a neighbouring step -- the silent revert to
+    anonymous that #268 exists to prevent -- and it goes red on a rename to
+    ``GH_TOKEN``, which the script accepts and which this repo already uses in
+    nlp-nightly.yml.
+
+    Scraped rather than YAML-parsed because pyyaml reaches this repo only as a
+    transitive dependency of datamodel-code-generator; a parse here would rest
+    on someone else's dependency tree.
+    """
+    lines = (
+        (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml")
+        .read_text()
+        .splitlines()
+    )
+    runs = [
+        i
+        for i, line in enumerate(lines)
+        if "generate_api_models.sh" in line and line.lstrip().startswith("run:")
+    ]
+    assert len(runs) == 1, f"expected exactly one step running the script, found {len(runs)}"
+
+    indent = len(lines[runs[0]]) - len(lines[runs[0]].lstrip())
+    step = []
+    for line in lines[runs[0] + 1 :]:
+        if line.strip().startswith("- ") and len(line) - len(line.lstrip()) < indent:
+            break
+        step.append(line)
+
+    pattern = r"^\s*(GH_TOKEN|GITHUB_TOKEN):\s*\$\{\{\s*github\.token\s*\}\}\s*$"
+    assert re.search(pattern, "\n".join(step), re.M), (
+        "the codegen step no longer receives a token; CI is back on the "
+        "shared anonymous rate budget (#268)"
+    )
