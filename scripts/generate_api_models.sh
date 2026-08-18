@@ -19,11 +19,13 @@
 # tests/unit/test_generate_api_models_auth.py:
 #
 #   1. The header rides curl's stdin (-H @-), so the token value never reaches
-#      argv (visible in `ps`) or the log.
-#   2. Both variables are unset at the top of the script -- above the
-#      source-resolution branch, so no child process inherits the token on
-#      EITHER arm. The sibling-checkout arm never downloads, so a scrub placed
-#      inside the download branch would miss the default local invocation.
+#      argv (visible in `ps`) or the script's own output. It is NOT proof
+#      against `bash -x`, which traces the assignment and the printf; in Actions
+#      the runner masks github.token in logs, so that exposure is a developer
+#      tracing locally with their own PAT, to their own terminal.
+#   2. Both variables are unset at the top of the script -- see the comment at
+#      the capture; the placement above the source-resolution branch is
+#      load-bearing.
 #   3. A failed authenticated attempt retries once anonymously, unconditionally.
 #      The motivating case is a stale token (GitHub 404s -- not 401s -- raw
 #      requests carrying one, with no server-side anonymous fallback), but the
@@ -33,9 +35,8 @@
 #      different bucket from the per-token one, so it can still succeed after
 #      an authenticated 429.
 #
-# Unset-token runs are unchanged, apart from a stderr note saying the download
-# is anonymous -- so losing the CI token surfaces as a visible regression
-# rather than as a return of the original intermittent 429.
+# Unset-token runs are unchanged apart from a stderr note saying the download is
+# anonymous (see the anonymous arm).
 
 set -euo pipefail
 
@@ -73,20 +74,21 @@ else
     trap 'rm -f "$API_YAML"' EXIT
     echo "Downloading api.yaml from GitHub..."
     API_YAML_URL="https://raw.githubusercontent.com/WXYC/wxyc-shared/main/api.yaml"
+    # One definition of the URL/output pairing, called with or without the
+    # header argument, so the three ways in can't drift apart.
     # --max-time/--retry mirror wxyc-shared's generate-python-models.sh pin for
     # this same download; curl's --retry also covers 429/5xx, honoring
-    # Retry-After, which directly serves the #268 goal.
-    CURL_OPTS=(-sSfL --max-time 30 --retry 3)
-    # One definition of the URL/output pairing, called with or without the
-    # header argument, so the ways in can't drift apart.
-    _fetch_api_yaml() { curl "${CURL_OPTS[@]}" "$@" "$API_YAML_URL" -o "$API_YAML"; }
+    # Retry-After, which directly serves the #268 goal. --retry-max-time bounds
+    # the whole ladder: without it, two arms x four attempts x 30s could burn
+    # ~4 minutes of billed CI against a hard outage before failing anyway.
+    _fetch_api_yaml() {
+        curl -sSfL --max-time 30 --retry 3 --retry-max-time 60 "$@" "$API_YAML_URL" -o "$API_YAML"
+    }
     if [[ -n "$AUTH_TOKEN" ]]; then
         echo "  Authenticated download: sending Authorization header (token value not logged)." >&2
         # -H @- reads the header from stdin, keeping the token off the process
         # argv (visible in `ps` on shared hosts). The retry below is
-        # deliberately UNconditional rather than gated on the stale-token 404
-        # described in the header: pre-#268 anonymous behavior is the floor in
-        # every environment.
+        # unconditional by design -- see header property 3.
         if ! printf 'Authorization: Bearer %s\n' "$AUTH_TOKEN" | _fetch_api_yaml -H @-; then
             echo "  Authenticated download failed; retrying anonymously (is the ambient token stale?)..." >&2
             _fetch_api_yaml
