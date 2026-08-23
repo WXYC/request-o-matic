@@ -1,0 +1,141 @@
+name: Codegen Drift (Scheduled)
+
+# Weekly, unattended re-run of ci.yml's `codegen-check` job: regenerate
+# generated/api_models.py from wxyc-shared's current api.yaml and diff. That
+# job is `if: github.event_name == 'pull_request'`, so a wxyc-shared api.yaml
+# merge produces no event here -- nothing runs and nothing goes red until the
+# next contributor opens a PR and pays for someone else's drift (#275). This
+# workflow is the missing signal, on its own schedule, decoupled from PRs.
+#
+# On drift it opens ONE tracking issue rather than just going red on a timer
+# nobody watches -- a scheduled check with no route to a human is not a
+# signal. It searches for an existing open tracking issue by title first so a
+# run every Monday doesn't pile up duplicates; closing that issue is what lets
+# the next drifted run open a fresh one.
+#
+# Deliberately a SEPARATE workflow file rather than adding `schedule:` to
+# ci.yml's `on:` block -- that would put every other ci.yml job (lint,
+# typecheck, test, deploy-staging, deploy-production, marker-sync, ...) on the
+# same weekly timer, which is not what #275 asked for. ci.yml's
+# `codegen-check` job is untouched.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # weekly, Monday 13:00 UTC
+  workflow_dispatch: {}
+
+# contents:read to check out and diff; issues:write only to open the
+# tracking issue below. Neither job pushes code or touches anything else.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: codegen-drift-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  TRACKING_ISSUE_TITLE: "generated/api_models.py is stale against wxyc-shared api.yaml (scheduled drift check)"
+
+jobs:
+  check-drift:
+    name: Codegen Freshness (scheduled)
+    runs-on: ubuntu-latest
+    outputs:
+      drift: ${{ steps.diff.outputs.drift }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # requirements-dev.txt pins datamodel-code-generator + ruff (same pins
+        # as ci.yml's codegen-check job), so a new upstream release can't
+        # silently reformat generated/api_models.py and read as drift here.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Regenerate API models
+        # No sibling wxyc-shared checkout in CI, so the script downloads
+        # api.yaml from wxyc-shared main and regenerates
+        # generated/api_models.py. GITHUB_TOKEN authenticates that
+        # raw.githubusercontent.com download (#268); see
+        # scripts/generate_api_models.sh's header for the full rationale.
+        run: bash scripts/generate_api_models.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Check for drift
+        id: diff
+        run: |
+          if git diff --quiet -- generated/; then
+            echo "No drift: generated/api_models.py matches wxyc-shared api.yaml."
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Drift detected:"
+            git --no-pager diff --stat -- generated/
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  open-tracking-issue:
+    name: Open tracking issue on drift
+    needs: check-drift
+    if: needs.check-drift.outputs.drift == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # Every `${{ }}` expression this job needs inside a `run:` script is
+      # routed through `env:` and referenced as a shell variable, never
+      # inlined directly in the script -- GitHub Actions substitutes `${{ }}`
+      # textually before the shell parses it, so an inline expression is a
+      # script-injection vector for anything not fully trusted (mirrors the
+      # documented rationale in wxyc-shared's check-api-spec-drift.yml, PR
+      # #323). None of these values are attacker-controlled today, but the
+      # habit costs nothing and is the standard hardening here.
+      - name: Search for an existing open tracking issue
+        id: search
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --repo "$REPO" --state open \
+            --search "\"${TRACKING_ISSUE_TITLE}\" in:title" \
+            --json number --jq '.[0].number // empty')"
+          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+
+      - name: Open tracking issue
+        if: steps.search.outputs.existing == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          gh issue create --repo "$REPO" \
+            --title "${TRACKING_ISSUE_TITLE}" \
+            --label bug \
+            --body "$(cat <<EOF
+          The weekly scheduled [Codegen Drift]($RUN_URL) check found that \`generated/api_models.py\` no longer matches wxyc-shared's current \`api.yaml\` (main branch).
+
+          Regenerate and commit:
+
+          \`\`\`
+          bash scripts/generate_api_models.sh
+          \`\`\`
+
+          Then verify with \`git diff generated/\` before committing.
+
+          This issue was opened automatically by \`.github/workflows/codegen-drift.yml\`. It will not be duplicated while an open issue with this exact title exists -- closing it (once the regeneration is committed) is what lets the next drifted run open a fresh one.
+          EOF
+          )"
+
+      - name: Existing tracking issue found
+        if: steps.search.outputs.existing != ''
+        env:
+          EXISTING: ${{ steps.search.outputs.existing }}
+        run: |
+          echo "Open tracking issue #${EXISTING} already exists -- not creating a duplicate."
