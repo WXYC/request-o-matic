@@ -79,16 +79,6 @@ class RotationBin(StrEnum):
     S = "S"
 
 
-class DayOfWeek(StrEnum):
-    Sunday = "Sunday"
-    Monday = "Monday"
-    Tuesday = "Tuesday"
-    Wednesday = "Wednesday"
-    Thursday = "Thursday"
-    Friday = "Friday"
-    Saturday = "Saturday"
-
-
 class FlowsheetEntryBase(BaseModel):
     id: int
     play_order: int
@@ -374,6 +364,48 @@ class Show(BaseModel):
     show_name: str | None = None
     start_time: AwareDatetime | None = None
     end_time: AwareDatetime | None = None
+
+
+class OpenShow(BaseModel):
+    id: int
+    primary_dj_id: str = Field(
+        ...,
+        description="NULL for legacy/tubafrenzy-originated shows and for any show whose DJ account was deleted (`ON DELETE SET NULL`). Such a show can still be closed via `force-end`.\n",
+    )
+    dj_name: str = Field(
+        ...,
+        description="The public DJ handle, resolved through the standard chain (per-show override, then the linked account's handle, then the legacy tubafrenzy handle). Never a real name. NULL when unresolvable.\n",
+    )
+    show_name: str
+    start_time: AwareDatetime
+    legacy_show_id: int = Field(
+        ..., description="The tubafrenzy surrogate key, when this show was mirrored."
+    )
+    entry_count: int = Field(
+        ..., description="Flowsheet rows belonging to this show, all entry types included."
+    )
+    is_current: bool = Field(
+        ...,
+        description="True for the single show every on-air read resolves to. Present so a client can never offer to close the live broadcast.\n",
+    )
+    likely_abandoned: bool = Field(
+        ...,
+        description="Advisory only — an operator hint, not a verdict. True when the show is not current and has fewer than four entries. A show with many entries can still be abandoned; check `start_time`.\n",
+    )
+
+
+class OpenShowsResponse(BaseModel):
+    shows: list[OpenShow] = Field(
+        ..., description="Ordered oldest-first by `start_time`, tie-broken on `id`."
+    )
+    total_in_window: int = Field(
+        ...,
+        description="How many open shows the window holds in total, before `limit` truncates. `shows.length < total_in_window` is the only way a caller can tell it is looking at a partial answer.\n",
+    )
+    older_open_show_count: int = Field(
+        ...,
+        description="Open shows that started BEFORE the window, reported as a count and never listed. Almost all of these are legacy imports whose `show_end` never arrived; see the endpoint description. Widen `window_hours` to reach them.\n\n**Expected to go to zero and stay there.** This field and the 30-year `window_hours` ceiling both exist for one finite cohort — the ~2,813 shows WXYC/Backend-Service#1543 repairs from the final tubafrenzy dump. Once that lands, both are vestigial and a later contract version should drop them rather than preserve them out of habit.\n",
+    )
 
 
 class ShowDJ(BaseModel):
@@ -693,19 +725,6 @@ class Rotation(BaseModel):
     )
 
 
-class DJ(BaseModel):
-    id: int
-    dj_name: str
-    real_name: str | None = None
-    email: str | None = None
-
-
-class NewDJ(BaseModel):
-    cognito_user_name: str | None = None
-    real_name: str | None = None
-    dj_name: str | None = None
-
-
 class BinEntry(BaseModel):
     id: int
     dj_id: int
@@ -765,7 +784,7 @@ class BinLibraryDetails(BaseModel):
     genre_name: str | None = None
     legacy_release_id: int | None = Field(
         None,
-        description="The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) so the live openapi-compliance deploy gate stays green across the publish -> BS-deploy window, matching the CatalogExportRow and BulkResolveInput precedent.\n",
+        description="The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) because the column is emitted per-projection, not globally: NOT NULL is a claim about the column, while `required` is a promise that the key appears on the wire, and WXYC/Backend-Service#2167 is open precisely because the LML search-proxy rows do not emit it explicitly yet. Promoting this to required once every projection returning the schema provably emits it is worth doing, and needs a per-projection audit rather than a text edit. Matches the CatalogExportRow and BulkResolveInput precedent.\n",
     )
 
 
@@ -773,7 +792,7 @@ class ScheduleShift(BaseModel):
     id: int
     dj_id: int
     dj_name: str
-    day: DayOfWeek
+    day: conint(ge=0, le=6) = Field(..., description="Day of the week 0 = Monday, 6 = Sunday")
     start_time: str = Field(..., description="Time in HH:MM format")
     end_time: str = Field(..., description="Time in HH:MM format")
     show_name: str | None = None
@@ -782,7 +801,7 @@ class ScheduleShift(BaseModel):
 
 class AddScheduleShiftRequest(BaseModel):
     dj_id: int
-    day: DayOfWeek
+    day: conint(ge=0, le=6) = Field(..., description="Day of the week 0 = Monday, 6 = Sunday")
     start_time: str
     end_time: str
     show_name: str | None = None
@@ -945,6 +964,54 @@ class Concert(BaseModel):
 class ConcertsResponse(BaseModel):
     concerts: list[Concert]
     pagination: PaginationInfo
+
+
+class Delta(IntEnum):
+    integer__1 = -1
+    integer_1 = 1
+
+
+class SongLikeDelta(BaseModel):
+    song_key: str = Field(
+        ...,
+        description="The client's folded identity for the song: `SongKey.fold` applied to artist and title, joined with `|` (case-, diacritic-, and width-insensitive, whitespace collapsed). The server stores this verbatim as the tally's key and MUST NOT recompute it — the client's fold is authoritative for song identity. Album is deliberately excluded from the key, so a single, an LP cut, and a free-text replay all tally together.",
+    )
+    song_title: str = Field(
+        ..., description="Raw, unfolded song title, exactly as displayed on-device."
+    )
+    artist_name: str = Field(
+        ...,
+        description="Raw, unfolded artist name, exactly as displayed on-device — NOT the folded value baked into `song_key`. The server folds this itself with its own `fold_artist_name` (NFD, strip combining diacritics, lowercase — no width folding, no whitespace collapsing; the twin of the SQL `wxyc_schema.fold_artist_name`) to attempt a catalog match when `artist_id` is absent. The client's fold and the server's fold are deliberately different functions and are never required to agree: width-variant or multi-space artist names may match under one and miss under the other. This field exists for that best-effort match, not for identity — `song_key` alone owns that.",
+    )
+    release_title: str | None = Field(
+        None,
+        description="Album/release title, when the like has one. Optional: standalone tracks and some free-text plays carry no matched release.",
+    )
+    artist_id: int | None = Field(
+        None,
+        description="WXYC catalog artist id, when already resolved on-device (e.g. healed from a V2 flowsheet play). Optional and absent for name-only likes sourced from the V1 API or free-text plays; the server then falls back to matching `artist_name` via its own fold, leaving the artist unresolved — never failing the write — on a miss.",
+    )
+    delta: Delta = Field(
+        ...,
+        description="`1` when the listener liked the song, `-1` when they unliked it. The server clamps the resulting tally at zero: deltas are fire-and-forget and lossy by design, so a `-1` can arrive without its matching `1`.",
+    )
+
+
+class SongLikeTallyRequest(BaseModel):
+    deltas: list[SongLikeDelta] = Field(
+        ...,
+        description="One or more deltas, at most 1000. Order carries no meaning. A client normally sends a single delta per toggle; the array exists so a client adopting the feature can submit the likes already on the device in one request. A device holding more than 1000 likes chunks them across requests — there is no cross-request continuity to preserve, since each delta is independent and the endpoint holds no per-caller state.",
+        max_length=1000,
+        min_length=1,
+    )
+
+
+class SongLikeTallyResponse(BaseModel):
+    applied: int = Field(..., description="Number of deltas applied to the tallies.")
+    resolved: int = Field(
+        ...,
+        description="Of `applied`, how many carried or matched a WXYC catalog artist id. Diagnostic only: it describes catalog coverage, not the caller.",
+    )
 
 
 class AlbumReview(BaseModel):
@@ -2633,9 +2700,13 @@ class AlbumSearchResult(BaseModel):
     genre_name: str
     label: str
     label_id: int | None = None
+    artist_id: int | None = Field(
+        None,
+        description="The WXYC catalog artist id, sharing the `library.artist_id` keyspace. Optional here (never required): it lands ahead of the Backend-Service change that populates it (BS#2227), so a consumer compiled against this field must still tolerate its absence until that deploys.\n",
+    )
     legacy_release_id: int | None = Field(
         None,
-        description="The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) so the live openapi-compliance deploy gate stays green across the publish -> BS-deploy window, matching the CatalogExportRow and BulkResolveInput precedent.\n",
+        description="The library row's surrogate key (BS#1963), NOT NULL in the database since migration 0137. Optional here (never required) because the column is emitted per-projection, not globally: NOT NULL is a claim about the column, while `required` is a promise that the key appears on the wire, and WXYC/Backend-Service#2167 is open precisely because the LML search-proxy rows do not emit it explicitly yet. Promoting this to required once every projection returning the schema provably emits it is worth doing, and needs a per-projection audit rather than a text edit. Matches the CatalogExportRow and BulkResolveInput precedent.\n",
     )
     album_dist: float | None = None
     artist_dist: float | None = None
