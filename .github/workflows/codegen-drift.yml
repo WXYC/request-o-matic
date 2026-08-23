@@ -7,35 +7,34 @@ name: Codegen Drift (Scheduled)
 # next contributor opens a PR and pays for someone else's drift (#275). This
 # workflow is the missing signal, on its own schedule, decoupled from PRs.
 #
-# On drift it opens ONE tracking issue rather than just going red on a timer
-# nobody watches -- a scheduled check with no route to a human is not a
-# signal. It searches for an existing open tracking issue by title first so a
-# run every Monday doesn't pile up duplicates; closing that issue is what lets
-# the next drifted run open a fresh one.
+# A red scheduled run nobody watches is not a signal, so both outcomes that
+# need a human -- drift, and a check that never reached a verdict -- open a
+# tracking issue. Each outcome has its own title and its own open-issue
+# lookup, so neither suppresses the other; closing an issue is what lets the
+# next affected run open a fresh one.
 #
-# Deliberately a SEPARATE workflow file rather than adding `schedule:` to
-# ci.yml's `on:` block -- that would put every other ci.yml job (lint,
-# typecheck, test, deploy-staging, deploy-production, marker-sync, ...) on the
-# same weekly timer, which is not what #275 asked for. ci.yml's
-# `codegen-check` job is untouched.
+# Deliberately a SEPARATE workflow file rather than a `schedule:` trigger
+# added to ci.yml -- that would put every other ci.yml job (lint, typecheck,
+# test, deps-sync, both deploy jobs) on the same weekly timer, which is not
+# what #275 asked for. ci.yml's `codegen-check` job is untouched.
+#
+# Siblings with the same shape: WXYC/library-metadata-lookup's
+# codegen-drift.yml and WXYC/wxyc-ios-64's spec-drift.yml. Keep the three in
+# step -- they are one mechanism aimed at one contract.
 
 on:
   schedule:
     - cron: "0 13 * * 1" # weekly, Monday 13:00 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
 
-# contents:read to check out and diff; issues:write only to open the
-# tracking issue below. Neither job pushes code or touches anything else.
+# contents:read is the floor for the checkout. Only the reporting job writes,
+# and it grants itself issues:write scoped to just that job.
 permissions:
   contents: read
-  issues: write
 
 concurrency:
-  group: codegen-drift-${{ github.workflow }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
-
-env:
-  TRACKING_ISSUE_TITLE: "generated/api_models.py is stale against wxyc-shared api.yaml (scheduled drift check)"
 
 jobs:
   check-drift:
@@ -46,96 +45,139 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        # requirements-dev.txt pins datamodel-code-generator + ruff (same pins
-        # as ci.yml's codegen-check job), so a new upstream release can't
-        # silently reformat generated/api_models.py and read as drift here.
+      # requirements-dev.txt pins datamodel-code-generator + ruff (the same
+      # pins ci.yml's codegen-check job installs), so a new release of either
+      # cannot reformat generated/api_models.py and read as drift here.
+      - name: Install the pinned codegen toolchain
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # No sibling wxyc-shared checkout exists in CI, so the script downloads
+      # api.yaml from wxyc-shared main and regenerates
+      # generated/api_models.py. GITHUB_TOKEN authenticates that
+      # raw.githubusercontent.com download (#268); the script's header holds
+      # the full rationale and the token-safety properties.
       - name: Regenerate API models
-        # No sibling wxyc-shared checkout in CI, so the script downloads
-        # api.yaml from wxyc-shared main and regenerates
-        # generated/api_models.py. GITHUB_TOKEN authenticates that
-        # raw.githubusercontent.com download (#268); see
-        # scripts/generate_api_models.sh's header for the full rationale.
         run: bash scripts/generate_api_models.sh
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      # Stage first: a plain `git diff` compares tracked paths only, so a
+      # generator that starts emitting a *new* file (a codegen release that
+      # splits its output, say) leaves it untracked and the gate passes on an
+      # out-of-sync tree. `git add -A` over the generated path brings
+      # additions and deletions into the index; --cached then sees them.
+      # Same approach as ci.yml's codegen-check job.
       - name: Check for drift
         id: diff
         run: |
-          if git diff --quiet -- generated/; then
-            echo "No drift: generated/api_models.py matches wxyc-shared api.yaml."
+          git add -A -- generated/
+          if git diff --cached --quiet -- generated/; then
+            echo "No drift: generated/ matches wxyc-shared's current api.yaml."
             echo "drift=false" >> "$GITHUB_OUTPUT"
           else
             echo "Drift detected:"
-            git --no-pager diff --stat -- generated/
+            git --no-pager diff --cached --stat -- generated/
             echo "drift=true" >> "$GITHUB_OUTPUT"
           fi
 
-  open-tracking-issue:
-    name: Open tracking issue on drift
+  report-drift:
+    name: Open tracking issue
     needs: check-drift
-    if: needs.check-drift.outputs.drift == 'true'
+    # Two outcomes need a human: drift, and a check-drift job that never
+    # reached a verdict (the api.yaml download 429s, the pinned toolchain
+    # fails to install, the runner dies). Gating on the drift output alone
+    # skips this job in the second case and leaves nothing but a red
+    # scheduled run -- the unwatched signal this workflow exists to replace.
+    # `!cancelled()` keeps a deliberately cancelled run from filing anything.
+    if: >-
+      !cancelled()
+      && (needs.check-drift.result != 'success' || needs.check-drift.outputs.drift == 'true')
     runs-on: ubuntu-latest
+    # The only job in this file that writes anything.
+    permissions:
+      issues: write
+    env:
+      # One literal per outcome, read by both the lookup and the create below,
+      # so a title edit cannot desync the two and start opening a duplicate
+      # every week.
+      DRIFT_ISSUE_TITLE: "generated/api_models.py is stale against wxyc-shared api.yaml"
+      CHECK_FAILED_ISSUE_TITLE: "Scheduled codegen drift check could not run"
     steps:
-      # Every `${{ }}` expression this job needs inside a `run:` script is
-      # routed through `env:` and referenced as a shell variable, never
-      # inlined directly in the script -- GitHub Actions substitutes `${{ }}`
-      # textually before the shell parses it, so an inline expression is a
-      # script-injection vector for anything not fully trusted (mirrors the
-      # documented rationale in wxyc-shared's check-api-spec-drift.yml, PR
-      # #323). None of these values are attacker-controlled today, but the
-      # habit costs nothing and is the standard hardening here.
-      - name: Search for an existing open tracking issue
-        id: search
+      # Every `${{ }}` expression this script needs is routed through `env:`
+      # and read as a shell variable rather than inlined. Actions substitutes
+      # `${{ }}` textually before the shell parses the script, so an inline
+      # expression is a script-injection vector. Nothing here is
+      # attacker-controlled today; the habit costs nothing and matches
+      # wxyc-shared's check-api-spec-drift.yml.
+      - name: File the tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          CHECK_RESULT: ${{ needs.check-drift.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          existing="$(gh issue list --repo "$REPO" --state open \
-            --search "\"${TRACKING_ISSUE_TITLE}\" in:title" \
-            --json number --jq '.[0].number // empty')"
-          echo "existing=$existing" >> "$GITHUB_OUTPUT"
 
-      - name: Open tracking issue
-        if: steps.search.outputs.existing == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        run: |
-          set -euo pipefail
-          gh issue create --repo "$REPO" \
-            --title "${TRACKING_ISSUE_TITLE}" \
-            --label bug \
-            --body "$(cat <<EOF
-          The weekly scheduled [Codegen Drift]($RUN_URL) check found that \`generated/api_models.py\` no longer matches wxyc-shared's current \`api.yaml\` (main branch).
+          if [ "$CHECK_RESULT" = "success" ]; then
+            title="$DRIFT_ISSUE_TITLE"
+            body="$(cat <<EOF
+          The scheduled [Codegen Freshness]($RUN_URL) check found that \`generated/api_models.py\` no longer matches what \`scripts/generate_api_models.sh\` produces from wxyc-shared's current \`api.yaml\` on \`main\`, using the toolchain pinned in \`requirements-dev.txt\`.
 
-          Regenerate and commit:
+          Regenerate and commit the result:
 
           \`\`\`
           bash scripts/generate_api_models.sh
           \`\`\`
 
-          Then verify with \`git diff generated/\` before committing.
-
-          This issue was opened automatically by \`.github/workflows/codegen-drift.yml\`. It will not be duplicated while an open issue with this exact title exists -- closing it (once the regeneration is committed) is what lets the next drifted run open a fresh one.
+          See WXYC/request-o-matic#275 for why this check runs on a schedule, and ci.yml's \`codegen-check\` job for the PR-time gate it complements.
           EOF
           )"
+          else
+            title="$CHECK_FAILED_ISSUE_TITLE"
+            body="$(cat <<EOF
+          The scheduled [Codegen Freshness]($RUN_URL) check never reached a verdict -- it failed before it could compare \`generated/api_models.py\` against wxyc-shared's \`api.yaml\`.
 
-      - name: Existing tracking issue found
-        if: steps.search.outputs.existing != ''
-        env:
-          EXISTING: ${{ steps.search.outputs.existing }}
-        run: |
-          echo "Open tracking issue #${EXISTING} already exists -- not creating a duplicate."
+          Drift here is UNKNOWN, not absent. Read the run log for the failing step; the usual causes are a rate-limited or failed api.yaml download, a pinned-toolchain install failure, or a runner problem.
+
+          If it was transient, re-run the workflow and close this issue. If the check itself is broken, fix it -- while it stays broken, upstream \`api.yaml\` merges go unreported here.
+          EOF
+          )"
+          fi
+
+          # One open issue per title. The label lookup is the primary one: it
+          # is deterministic and does not depend on the search index. The
+          # title search is the fallback for a tracking issue whose label was
+          # removed by hand. Both filter on an EXACT title match -- matching
+          # on the label alone would let ANY open issue carrying it (a human
+          # triaging, a mislabel, an adjacent ticket) suppress every later
+          # report indefinitely, behind a green run.
+          find_open_issue() {
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --limit 100 \
+              --json number,title \
+              "$@" \
+              | jq -r --arg title "$title" 'map(select(.title == $title)) | .[0].number // empty'
+          }
+
+          existing="$(find_open_issue --label codegen-drift)"
+          if [ -z "$existing" ]; then
+            existing="$(find_open_issue --search "\"$title\" in:title")"
+          fi
+
+          if [ -n "$existing" ]; then
+            echo "Open tracking issue #$existing already covers this -- not filing a duplicate."
+            exit 0
+          fi
+
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$title" \
+            --label codegen-drift \
+            --body "$body"
