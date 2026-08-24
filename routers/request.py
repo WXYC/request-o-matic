@@ -111,6 +111,57 @@ _GROQ_TRANSIENT_ERRORS = (
     InternalServerError,
 )
 
+
+def _fingerprint_disposition(raw: str | None, normalized: str | None) -> str:
+    """Classify what the caller sent in ``X-Device-Fingerprint``.
+
+    ``normalize_fingerprint`` already folds "absent", "empty", and "not a UUID"
+    into a single ``None`` so that downstream code cannot accidentally treat a
+    junk value as bannable. That collapse is right for enforcement and wrong for
+    diagnosis: it is why production could show 80 requests with no usable
+    fingerprint and no way to tell a pre-3.2 client from a broken one
+    (WXYC/request-o-matic#278).
+
+    Empty and whitespace-only count as ``absent``, not ``malformed`` -- FastAPI
+    binds a present-but-empty header to ``""``, and a client sending nothing is
+    what that means, matching ``normalize_fingerprint``'s own semantics.
+    """
+    if normalized is not None:
+        return "present"
+    if raw is not None and raw.strip():
+        return "malformed"
+    return "absent"
+
+
+def _caller_properties(
+    user_agent: str | None,
+    raw_fingerprint: str | None,
+    normalized_fingerprint: str | None,
+) -> dict[str, object]:
+    """Caller-identity properties shared by every request-telemetry emit.
+
+    Properties on the *existing* events, never a new event name: the PostHog org
+    is on the free tier at its six-project limit and came off a quota exhaustion
+    on 2026-08-04, so a new per-request event is a billing decision where an
+    added property is not.
+
+    ``user_agent`` is client-declared and unauthenticated -- a diagnostic, never
+    an authorization input; ``services/ua_gate.py`` treats it the same way. The
+    two booleans are independent rather than one tri-state string because
+    ``request_blocked`` has drawn the same line since WXYC/request-o-matic#226.
+
+    The malformed value itself is deliberately not recorded. That a junk value
+    arrived is diagnostic; keeping it in a long-retention sink is not
+    (WXYC/request-o-matic#209).
+    """
+    disposition = _fingerprint_disposition(raw_fingerprint, normalized_fingerprint)
+    return {
+        "user_agent": user_agent,
+        "has_fingerprint": disposition == "present",
+        "fingerprint_malformed": disposition == "malformed",
+    }
+
+
 router = APIRouter(tags=["request"])
 
 
@@ -362,6 +413,15 @@ async def handle_request(
     # emits are the third consumer and read this variable directly (#216) --
     # unlike the Slack path they have no internal normalizer to fall back on.
     normalized_fingerprint = normalize_fingerprint(x_device_fingerprint)
+    # Logged unconditionally, and deliberately not behind the PostHog client:
+    # the 2026-08-04 analytics outage left the documented PostHog fallback
+    # returning zero rows indistinguishably from "no client ever sent one",
+    # while the logs kept answering. Never the fingerprint value itself.
+    logger.info(
+        "Request received (user_agent=%s, fingerprint=%s)",
+        user_agent,
+        _fingerprint_disposition(x_device_fingerprint, normalized_fingerprint),
+    )
 
     # User-Agent gate (WXYC/request-o-matic#155). Runs BEFORE the BS ban check
     # so a known-client request missing a usable fingerprint is rejected without
@@ -550,6 +610,9 @@ async def handle_request(
                 "degraded_mode": DEGRADED_PARSING,
                 "degraded_reason": type(e).__name__,
             }
+            parse_props.update(
+                _caller_properties(user_agent, x_device_fingerprint, normalized_fingerprint)
+            )
             # Record the *normalized* fingerprint, never the raw header
             # (WXYC/request-o-matic#216). The runbook in docs/admin-bans.md has
             # the operator paste this value straight into POST /admin/bans,
@@ -606,6 +669,9 @@ async def handle_request(
             non_request_props: dict = {
                 "message_type": parsed.message_type.value if parsed.message_type else None,
             }
+            non_request_props.update(
+                _caller_properties(user_agent, x_device_fingerprint, normalized_fingerprint)
+            )
             # Normalized, and full-length on purpose -- see the fingerprint
             # comment on the parsing-degraded emit above for both rationales.
             if normalized_fingerprint:
@@ -788,6 +854,9 @@ async def handle_request(
             "is_request": parsed.is_request,
             "message_type": parsed.message_type.value if parsed.message_type else None,
         }
+        properties.update(
+            _caller_properties(user_agent, x_device_fingerprint, normalized_fingerprint)
+        )
         # Normalized, and full-length on purpose -- see the fingerprint comment
         # on the parsing-degraded emit above for both rationales.
         if normalized_fingerprint:
