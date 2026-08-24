@@ -38,6 +38,32 @@ ORDER BY requests DESC
 
 Copy the `fp` value for the offending device into `POST /admin/bans` below. It is a full UUID by construction: the router records the value only after `services/fingerprint.normalize_fingerprint` accepts it, so anything this query returns is something `POST /admin/bans` will take.
 
+### Log probe (when PostHog itself is untrustworthy)
+
+The PostHog query above has a failure mode that looks exactly like a result: if ingestion is down, it returns zero rows, which reads identically to "no client ever sent a fingerprint". That is not hypothetical -- during the 2026-08-04 quota exhaustion the `fingerprint` property added in [#216](https://github.com/WXYC/request-o-matic/issues/216) was never ingested even once, because it shipped on 2026-08-07, *after* ingestion stopped. Anyone running the query in that window would have concluded no client supports fingerprints.
+
+Production logs answered the same question throughout. Every request emits one line before any branching (WXYC/request-o-matic#278):
+
+```
+Request received (user_agent=WXYC-iOS/3.2.1, fingerprint=present)
+```
+
+`fingerprint` is one of `present` (a UUID `POST /admin/bans` will accept), `malformed` (a value arrived but is not a UUID), or `absent`. The value itself is never logged.
+
+```bash
+railway logs --service request-o-matic --environment production \
+  | grep "Request received"
+```
+
+A second, independent probe needs no new logging at all: a `POST https://api.wxyc.org/auth/check-request-ban` line appears **iff** the request carried `authorization or normalized_fingerprint` (`routers/request.py`). Its *absence* against a parsed request is proof that request was unbannable:
+
+```bash
+railway logs --service request-o-matic --environment production \
+  | grep -E "Parsing message:|auth/check-request-ban"
+```
+
+Both probes are log-based, so they keep working when analytics do not. Reach for them before trusting a zero from PostHog.
+
 ### What this fallback query does not cover
 
 - **Malformed fingerprints.** A caller sending anything that isn't a UUID is treated as though it sent no header at all, here and everywhere else in ROM. That is deliberate — a non-UUID cannot be banned, because `POST /admin/bans` types the field as `UUID` and rejects it — so a junk-sending client never appears in the query above. It is not entirely invisible, though: when `STRICT_FINGERPRINT_FOR_KNOWN_CLIENTS` is on and the caller's `User-Agent` claims a known strict client (iOS 3.2+), the request is rejected `403` and emits a `request_blocked` event with `ban_reason='ua_gate_malformed_fingerprint'`, plus a bounded `fingerprint_prefix` and `fingerprint_length` (WXYC/request-o-matic#226). That tells you someone is probing, but it still yields nothing bannable — the whole point is that the value isn't a UUID. Junk from an unknown `User-Agent`, or from anyone at all while that flag is off, stays fully invisible.
