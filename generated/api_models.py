@@ -1187,6 +1187,130 @@ class DeviceAuthActionError(BaseModel):
     error_description: str
 
 
+class AuthUser(BaseModel):
+    id: str
+    email: str
+    emailVerified: bool
+    name: str
+    image: str | None = None
+    role: str | None = Field(
+        None,
+        description='The admin() plugin\'s system role flag on `user.role` (default "user") — NOT a WXYC station role. Station role (member, dj, musicDirector, stationManager, admin) lives on `organization_member.role` and is resolved separately into the JWT\'s `role` claim (buildJwtPayload / selectMemberRole in auth.definition.ts); it is not this field. See that file\'s own comment: "auth_user.role ... carries no station role."\n',
+    )
+    banned: bool | None = None
+    banReason: str | None = None
+    banExpires: AwareDatetime | None = None
+    username: str | None = None
+    displayUsername: str | None = None
+    isAnonymous: bool | None = None
+    hasCompletedOnboarding: bool | None = Field(
+        None, description="WXYC additionalField; defaults false at creation."
+    )
+    realName: str | None = None
+    djName: str | None = None
+    appSkin: str | None = Field(
+        None, description='WXYC additionalField; defaults "modern-light" at creation.'
+    )
+    capabilities: list[str] | None = Field(
+        None, description="WXYC additionalField; defaults [] at creation."
+    )
+    createdAt: AwareDatetime | None = None
+    updatedAt: AwareDatetime | None = None
+
+
+class EmailSignInRequest(BaseModel):
+    email: str
+    password: str
+    callbackURL: str | None = Field(
+        None,
+        description="Redirect target after sign-in / email verification. WXYC's native clients never send this — a callbackURL flips `redirect` true in the response and sets a Location header, both meant for a browser.\n",
+    )
+    rememberMe: bool | None = Field(
+        True, description="When false, the session is not remembered (shorter-lived cookie)."
+    )
+
+
+class UsernameSignInRequest(BaseModel):
+    username: str
+    password: str
+    callbackURL: str | None = None
+    rememberMe: bool | None = None
+
+
+class AuthSignInResult(BaseModel):
+    redirect: bool = Field(
+        ..., description="True when callbackURL was supplied and the client should follow Location."
+    )
+    token: str = Field(..., description="The session token.")
+    url: str | None = Field(
+        None,
+        description="The callbackURL echoed back. NOT nullable — when no callbackURL was supplied, better-auth's handler passes `url: ctx.body.callbackURL` (undefined) straight into `ctx.json(...)` (dist/api/routes/sign-in.mjs signInEmail), and JSON serialization drops an undefined-valued key rather than emitting `null`. The key is therefore OMITTED entirely in that case, not present-and-null — see this schema's `required` list, which does not include `url`.\n",
+    )
+    user: AuthUser
+
+
+class OTPSignInRequest(BaseModel):
+    email: str
+    otp: str
+    name: str | None = None
+    image: str | None = None
+
+
+class AuthTokenAndUserResult(BaseModel):
+    token: str
+    user: AuthUser
+
+
+class AuthTokenResponse(BaseModel):
+    token: str = Field(
+        ..., description="A signed JWT, verifiable against the JWKS at GET /auth/jwks."
+    )
+
+
+class AuthSignOutResult(BaseModel):
+    success: bool
+
+
+class LookupEmailRequest(BaseModel):
+    identifier: str
+
+
+class LookupEmailResponse(BaseModel):
+    email: str
+
+
+class OTPType(StrEnum):
+    sign_in = "sign-in"
+    email_verification = "email-verification"
+    forget_password = "forget-password"
+    change_email = "change-email"
+
+
+class SendLoginCodeRequest(BaseModel):
+    email: str
+    type: OTPType
+
+
+class AuthSendCodeResult(BaseModel):
+    success: bool
+
+
+class AuthErrorResponse(BaseModel):
+    message: str
+    code: str | None = Field(
+        None,
+        description="A defineErrorCodes key, e.g. INVALID_EMAIL_OR_PASSWORD, INVALID_USERNAME_OR_PASSWORD, INVALID_EMAIL, EMAIL_NOT_VERIFIED, UNAUTHORIZED, INVALID_OTP, OTP_EXPIRED, TOO_MANY_ATTEMPTS, ANONYMOUS_USERS_CANNOT_SIGN_IN_AGAIN_ANONYMOUSLY, COULD_NOT_CREATE_SESSION, FAILED_TO_CREATE_USER, MISSING_OR_NULL_ORIGIN, VALIDATION_ERROR (better-call's generic body/query-schema failure, e.g. a missing required field — better-call/dist/endpoint.mjs: `throw new APIError(400, {message: validationError.message, code: \"VALIDATION_ERROR\"})` — thrown before any handler code runs, so it can occur on any operation in this section that takes a body). Left open rather than enumerated — unlike DeviceAuth's closed, small RFC 8628 vocabulary, better-auth's general error surface is broad and not practically exhaustible per operation.\n",
+    )
+
+
+class AuthRateLimitedResponse(BaseModel):
+    message: str
+
+
+class AuthPlainErrorResponse(BaseModel):
+    error: str
+
+
 class RateLimitInfo(BaseModel):
     remaining: int
     reset_at: AwareDatetime
