@@ -42,20 +42,24 @@ Copy the `fp` value for the offending device into `POST /admin/bans` below. It i
 
 The PostHog query above has a failure mode that looks exactly like a result: if ingestion is down, it returns zero rows, which reads identically to "no client ever sent a fingerprint". That is not hypothetical -- during the 2026-08-04 quota exhaustion the `fingerprint` property added in [#216](https://github.com/WXYC/request-o-matic/issues/216) was never ingested even once, because it shipped on 2026-08-07, *after* ingestion stopped. Anyone running the query in that window would have concluded no client supports fingerprints.
 
-Production logs answered the same question throughout. Every request emits one line before any branching (WXYC/request-o-matic#278):
+Production logs answered the same question throughout. Every request that passes the empty-message check emits one line before any other branching (WXYC/request-o-matic#278) -- a blank-message client is rejected with a `400` upstream of it and leaves no line, so this probe counts inbound *work*, not inbound *connections*:
 
 ```
 Request received (user_agent=WXYC-iOS/3.2.1, fingerprint=present)
 ```
 
-`fingerprint` is one of `present` (a UUID `POST /admin/bans` will accept), `malformed` (a value arrived but is not a UUID), or `absent`. The value itself is never logged.
+`fingerprint` is one of `present` (a UUID `POST /admin/bans` will accept), `malformed` (the header arrived but is not a UUID -- **including empty**, which means a client that tried and failed), or `absent` (no header at all, which is what a pre-3.2 client looks like). The value itself is never logged. That `malformed`/`absent` line is drawn the same way on `request_blocked`, so the two event types can be unioned safely.
 
 ```bash
 railway logs --service request-o-matic --environment production \
   | grep "Request received"
 ```
 
-A second, independent probe needs no new logging at all: a `POST https://api.wxyc.org/auth/check-request-ban` line appears **iff** the request carried `authorization or normalized_fingerprint` (`routers/request.py`). Its *absence* against a parsed request is proof that request was unbannable:
+A second, independent probe needs no new logging at all: a `POST https://api.wxyc.org/auth/check-request-ban` line appears when the request carried `authorization or normalized_fingerprint` (`routers/request.py`).
+
+**Confirm enforcement is on before reading anything into its absence.** The call is also gated on `ban_check_client is not None`, which `core/dependencies.get_ban_check_client` returns as `None` whenever `ENFORCE_REQUEST_BANS` is off *or* `BS_CHECK_REQUEST_BAN_URL` is unset. With either true, **zero** ban-check lines appear no matter what headers arrived, and the probe silently reports the same thing it reports when no client is bannable. A BS network failure has the same shape for a different reason: `BanCheckClient` raises before httpx logs the request line.
+
+So absence is evidence only against a positive control. Fire a synthetic request carrying a known-good UUID first; if that produces a ban-check line, the config is live and absence against real traffic then does mean those requests were unbannable:
 
 ```bash
 railway logs --service request-o-matic --environment production \

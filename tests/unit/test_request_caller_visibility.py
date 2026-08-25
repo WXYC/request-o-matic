@@ -36,7 +36,7 @@ from core.dependencies import (
     get_slack_service,
 )
 from generated.api_models import SearchType
-from routers.request import router
+from routers.request import USER_AGENT_MAX_LENGTH, router
 from services.lookup_client import LookupResponse, LookupResult
 from services.parser import MessageType
 from tests.conftest import REQUEST_MESSAGE, make_parsed_request, make_request_app
@@ -93,11 +93,26 @@ def _captured_properties(posthog, event_name):
 
 
 # (header value, expected has_fingerprint, expected fingerprint_malformed)
+#
+# The empty and whitespace-only rows are the ones that carry a decision. A
+# present-but-empty header is `malformed`, not `absent`: `absent` means the
+# client sent no header, and a client that sent one containing nothing is a
+# different animal -- a broken client, which is exactly the population #278
+# exists to separate out. It also matches how `request_blocked` has classified
+# the same header since #226 (`x_device_fingerprint is None` is the missing
+# case, everything else is malformed), so an operator can union the two event
+# types without silently mixing definitions.
 FINGERPRINT_DISPOSITIONS = [
     pytest.param(FINGERPRINT, True, False, id="usable"),
     pytest.param(MALFORMED_FINGERPRINT, False, True, id="malformed"),
+    pytest.param("", False, True, id="empty-is-malformed-not-absent"),
+    pytest.param("   ", False, True, id="whitespace-is-malformed-not-absent"),
     pytest.param(None, False, False, id="absent"),
 ]
+
+# Long enough to matter on every event, shaped like a real product token so the
+# assertion is about the bound and not about the parsing.
+OVERSIZED_USER_AGENT = "WXYC-iOS/3.2.1 " + ("x" * 4000)
 
 
 class TestRequestCompletedCallerVisibility:
@@ -150,6 +165,43 @@ class TestRequestCompletedCallerVisibility:
         properties = _captured_properties(posthog, "request_completed")
         assert properties["has_fingerprint"] is expected_has
         assert properties["fingerprint_malformed"] is expected_malformed
+
+    @pytest.mark.asyncio
+    async def test_user_agent_is_bounded(
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
+    ):
+        """`User-Agent` is unauthenticated and unbounded, and unlike the
+        malformed-fingerprint prefix (bounded to 8 chars on `request_blocked`)
+        it rides on EVERY request, not just rejected ones. An oversized header
+        would inflate every event payload and mint unbounded property-value
+        cardinality in a project that came off a quota exhaustion on
+        2026-08-04."""
+        app = self._app(mock_lookup_client, mock_slack_service, posthog)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
+        ):
+            await _post(app, message=REQUEST_MESSAGE, user_agent=OVERSIZED_USER_AGENT)
+
+        recorded = _captured_properties(posthog, "request_completed")["user_agent"]
+        assert len(recorded) == USER_AGENT_MAX_LENGTH
+        # The bound keeps the front of the string, where the product token is.
+        assert recorded.startswith("WXYC-iOS/3.2.1 ")
+
+    @pytest.mark.asyncio
+    async def test_real_user_agent_is_not_truncated(
+        self, mock_lookup_client, mock_slack_service, posthog, parsed_request
+    ):
+        """The bound is a ceiling, not a reformatting: every real product token
+        is far shorter and must survive verbatim."""
+        app = self._app(mock_lookup_client, mock_slack_service, posthog)
+
+        with patch(
+            "routers.request.parse_request", new_callable=AsyncMock, return_value=parsed_request
+        ):
+            await _post(app, message=REQUEST_MESSAGE)
+
+        assert _captured_properties(posthog, "request_completed")["user_agent"] == USER_AGENT
 
     @pytest.mark.asyncio
     async def test_malformed_value_is_never_recorded(

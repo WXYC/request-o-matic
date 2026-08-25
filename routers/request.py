@@ -112,6 +112,27 @@ _GROQ_TRANSIENT_ERRORS = (
 )
 
 
+#: Ceiling on the recorded ``User-Agent``. Generous next to every real product
+#: token we emit (``WXYC-iOS/3.2.1 (iPhone; iOS 18.5)`` is under 40), and the
+#: point is the ceiling rather than the number: the header is unauthenticated,
+#: unbounded, and now rides on EVERY request event rather than only rejections,
+#: so without a bound one caller can inflate every payload and mint unbounded
+#: property-value cardinality. Same reasoning as the 8-char
+#: ``fingerprint_prefix`` bound below; only the width differs, because a UA has
+#: to stay human-readable to be worth recording at all.
+USER_AGENT_MAX_LENGTH = 128
+
+
+def _bounded_user_agent(user_agent: str | None) -> str | None:
+    """Truncate a client-declared ``User-Agent`` to ``USER_AGENT_MAX_LENGTH``.
+
+    A ceiling, not a reformatting: anything shorter is carried verbatim.
+    """
+    if user_agent is None:
+        return None
+    return user_agent[:USER_AGENT_MAX_LENGTH]
+
+
 def _fingerprint_disposition(raw: str | None, normalized: str | None) -> str:
     """Classify what the caller sent in ``X-Device-Fingerprint``.
 
@@ -122,13 +143,24 @@ def _fingerprint_disposition(raw: str | None, normalized: str | None) -> str:
     fingerprint and no way to tell a pre-3.2 client from a broken one
     (WXYC/request-o-matic#278).
 
-    Empty and whitespace-only count as ``absent``, not ``malformed`` -- FastAPI
-    binds a present-but-empty header to ``""``, and a client sending nothing is
-    what that means, matching ``normalize_fingerprint``'s own semantics.
+    ``absent`` means the header was not sent at all -- ``raw is None``. A
+    present-but-empty or whitespace-only header is ``malformed``, because a
+    client that sent the header containing nothing is a broken client, and
+    separating broken clients from clients that never had the feature is the
+    whole point of #278.
+
+    This deliberately does NOT follow ``normalize_fingerprint``, which folds
+    empty in with absent -- correct for "can we ban this?", wrong for "what is
+    this caller?". It follows ``request_blocked`` instead, whose UA gate has
+    keyed the missing case on ``x_device_fingerprint is None`` since #226. The
+    two must agree: an operator unioning `request_blocked` with
+    `request_completed` while the strict-fingerprint flag flips would otherwise
+    get opposite answers about the same header for reasons having nothing to do
+    with the caller.
     """
     if normalized is not None:
         return "present"
-    if raw is not None and raw.strip():
+    if raw is not None:
         return "malformed"
     return "absent"
 
@@ -156,7 +188,7 @@ def _caller_properties(
     """
     disposition = _fingerprint_disposition(raw_fingerprint, normalized_fingerprint)
     return {
-        "user_agent": user_agent,
+        "user_agent": _bounded_user_agent(user_agent),
         "has_fingerprint": disposition == "present",
         "fingerprint_malformed": disposition == "malformed",
     }
@@ -459,7 +491,7 @@ async def handle_request(
                 "fingerprint": None,
                 "ban_reason": ua_gate_ban_reason,
                 "ban_source": UA_GATE_BAN_SOURCE,
-                "user_agent": user_agent,
+                "user_agent": _bounded_user_agent(user_agent),
             }
             if x_device_fingerprint is not None:
                 # Bounded to 8 chars, the same truncation width
