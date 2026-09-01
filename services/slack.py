@@ -49,10 +49,11 @@ MAX_PRIVATE_METADATA_LEN = 3000
 def _build_ban_menu_block() -> dict[str, Any]:
     """Build the overflow ("...") menu holding the ban action.
 
-    An overflow rather than a standalone ``danger`` button: the affordance sits
-    under every request post, and a red button there reads as an invitation to
-    use it. The menu keeps banning one click away without making it the loudest
-    thing in the channel.
+    An overflow rather than a standalone ``danger`` button (#237): a red button
+    under every request post reads as an invitation to use it. That reduced the
+    volume of the problem without changing its kind -- see
+    :func:`maybe_append_ban_button` for why the menu no longer rides on the
+    public post at all.
     """
     return {
         "type": "actions",
@@ -100,6 +101,24 @@ def maybe_append_ban_button(
 ) -> list[dict[str, Any]]:
     """Append the "Ban requester" actions block iff ``fingerprint`` normalizes
     to a usable UUID (request-o-matic#152).
+
+    **This has no production caller.** ``routers/request.py`` called it on both
+    of its Slack-posting paths until the public post stopped carrying the menu;
+    the next caller is the moderators-channel post, which is where the
+    affordance is being re-homed. It is kept rather than deleted because
+    nothing about *building* the block was wrong -- the defect was its
+    audience.
+
+    The audience is the whole point. ``chat.postMessage`` sends one payload to
+    every member of a channel and Slack has no per-viewer block visibility, so
+    a menu on a public request post is visible to every DJ and usable by the
+    handful on the ban roster. Authorization is enforced at click time in
+    ``routers/slack_interactivity.py`` and was never the gap; the gap was that
+    a visible control reads as an available one, which is what a DJ asked about
+    on 2026-08-31. Per-viewer visibility is only reachable by changing the
+    delivery mechanism, not by conditioning this function on a user. **So do
+    not add a ``user_id`` parameter here** -- there is no payload field it
+    could drive.
 
     Mirrors ``build_slack_metadata``'s usable/unusable split exactly, via the
     same ``normalize_fingerprint`` call: a post without a usable fingerprint

@@ -4,11 +4,24 @@ Three operator endpoints on request-o-matic for managing request-line bans. ROM 
 
 ## When to use this vs the Slack-native ban menu (#152)
 
-The **"Ban requester" item** in the overflow ("...") menu on each Slack request post is the primary operator UX — open the menu, pick it, give a reason, done, no curl required — **once `SLACK_USE_BOT_TOKEN=true` in the target environment** (see the caveat below). This HTTP API stays useful for: ad-hoc scripts, bulk operations, and as a backup if the Slack app or the `/slack/interactivity` endpoint has an outage. Both surfaces call the same `services/ban_service.py.ban(...)`, so the audit trail is identical either way — see `banned_by_user_id` below.
+**This HTTP API is the operator path today.** The "Ban requester" overflow menu no longer rides on public request posts, so there is currently no in-Slack way to originate a ban; it is being re-homed to a moderators-only channel (see below). Both surfaces call the same `services/ban_service.py.ban(...)`, so when the menu returns the audit trail will be identical either way — see `banned_by_user_id` below.
+
+### Why the menu left the public post
+
+`chat.postMessage` sends one payload to every member of a channel, and Slack has **no per-viewer block visibility**. A menu attached to a request post is therefore visible to every DJ in the request channel while being usable only by the handful of accounts on the ban roster. Authorization was never the gap — `routers/slack_interactivity.py` checks the acting user at both the click and the modal submission, and both fail closed — but a visible control reads as an available one, and DJs reasonably asked whether the station was handing ban rights to everybody.
+
+Conditioning the menu on the viewer is not possible: there is no payload field it could drive, which is why `plans/slack-ban-moderators/plan.md` lists "hiding the menu from non-moderators" as out of scope. Matching visibility to authorization requires changing *where* the menu is posted, not *how* it is built. Two things follow for anyone editing this area:
+
+- **Do not re-attach the menu to the public post.** `services/slack.maybe_append_ban_button` still exists and still works; it has no production caller on purpose.
+- **The public post still carries the fingerprint** in private `chat.postMessage` metadata. Removing the visible affordance deliberately did not remove the ban *target*, which is what makes the re-home a matter of posting the existing block somewhere else. `tests/unit/test_request_public_post_blocks.py` pins both halves.
 
 ## Where to find a fingerprint
 
-**Open the "..." menu on the Slack post and choose "Ban requester" — this is the supported path, once the menu is live (see caveat).** The menu (`services/slack.maybe_append_ban_button`) renders whenever the post's outbound `chat.postMessage` call was *given* a usable fingerprint — it has no way to know whether the transport that actually sent the message kept it. Every request to the interactivity endpoint — the click and the submission alike — has its Slack signature verified before anything else runs; an unsigned or stale one gets a flat `401` that looks identical whether or not the deployment is configured.
+**Use the PostHog query below**, then ban with the `curl` in the next section. This is the only path that originates a ban today.
+
+The rest of this section describes the in-Slack flow, which is **live code with no entry point** — the interactivity endpoint, authorization, modal, and footer edit are all deployed and working, and will serve the moderators-channel menu unchanged once it exists. It is documented rather than deleted because nothing about it is being rebuilt.
+
+Every request to the interactivity endpoint — a click and a submission alike — has its Slack signature verified before anything else runs; an unsigned or stale one gets a flat `401` that looks identical whether or not the deployment is configured.
 
 Choosing the menu item checks the acting user against `SLACK_BAN_AUTHORIZED_USERS` (see [`docs/env-vars.md`](env-vars.md)) **before** the modal opens. An unauthorized click gets an ephemeral refusal and no modal — the modal carries the listener's fingerprint in its `private_metadata`, so opening it for anyone who asked would hand out the device UUID this runbook otherwise takes care never to display. Authorization is then re-checked on submission, so the refusal is not something a crafted payload can skip.
 
@@ -18,11 +31,11 @@ Submitting the modal:
 2. Reads the fingerprint from the clicked message's own `chat.postMessage` metadata (never from anything typed into the modal) and calls `services/ban_service.py.ban(fingerprint, reason, actor=None)` — the same function this HTTP API uses (`actor` is always `None` from rom; see that function's docstring for why).
 3. Posts an ephemeral confirmation to the clicking DJ, and edits the original message with a "🚫 Banned by @dj — reason" footer so the whole channel sees the outcome. On an unusually long post the footer is skipped and the ephemeral confirmation says so — the ban still lands, and the original message is left untouched rather than being replaced by a footer-only stub.
 
-**Caveat: the menu is only live on the bot-token transport.** `chat.postMessage` `metadata` (#209, which the menu depends on) is silently dropped by the incoming-webhook transport — see "The fingerprint is never displayed, only acted on" below. Until an environment has `SLACK_USE_BOT_TOKEN=true`, its menus render but have nothing to act on; choosing the item gets an ephemeral explaining that and pointing back to the PostHog fallback, rather than silently doing nothing. Staging carries the full ban stack already; production's cutover (flipping the flag and repointing the Slack app's interactivity Request URL) is a manual post-merge step, not a code change — see [#152](https://github.com/WXYC/request-o-matic/issues/152)'s acceptance criteria.
+**Caveat: the menu only ever worked on the bot-token transport.** `chat.postMessage` `metadata` (#209, which the menu depends on) is silently dropped by the incoming-webhook transport — see "The fingerprint is never displayed, only acted on" below. Until an environment has `SLACK_USE_BOT_TOKEN=true`, its menus render but have nothing to act on; choosing the item gets an ephemeral explaining that and pointing back to the PostHog fallback, rather than silently doing nothing. Staging carries the full ban stack already; production's cutover (flipping the flag and repointing the Slack app's interactivity Request URL) is a manual post-merge step, not a code change — see [#152](https://github.com/WXYC/request-o-matic/issues/152)'s acceptance criteria.
 
-Posts with **no menu at all** have no usable fingerprint by construction — an unauthenticated caller, a pre-3.2 iOS client, or a degraded post. For those, for a pre-cutover environment, or if the interactivity endpoint is down, fall back to the PostHog query below.
+A post carries **no fingerprint at all** when the caller is unauthenticated, on a pre-3.2 iOS client, or the post is degraded. Those listeners cannot be banned by any surface, in-Slack or otherwise — there is nothing to ban.
 
-### PostHog fallback (when there's no menu, the menu isn't live yet, or the endpoint is down)
+### Finding a fingerprint in PostHog
 
 Both `request_completed` (a message the parser classified as a song request) and `request_non_request` (a message it classified as feedback, a DJ shout-out, or other chatter — WXYC/request-o-matic#228) carry a `fingerprint` property whenever the client sent a well-formed `X-Device-Fingerprint` UUID. Run this in the **Request-O-Matic** PostHog project (SQL tab) to see per-device request counts across both event types, most active first. Request-o-matic reports to its own project — it is *not* the WXYC iOS one — and running this query in the wrong project returns zero rows, which reads identically to "the fingerprint was never recorded":
 
@@ -277,5 +290,5 @@ See [`docs/env-vars.md`](env-vars.md) for the canonical reference. The vars this
 - Storage: [WXYC/Backend-Service#1261](https://github.com/WXYC/Backend-Service/issues/1261) — `banned_fingerprints` table + `/internal/banned-fingerprints` CRUD.
 - Moderator roster storage: [WXYC/Backend-Service#2045](https://github.com/WXYC/Backend-Service/issues/2045) — `slack_ban_moderators` table + `/internal/slack-ban-moderators` GET/PUT.
 - Request-time enforcement: [#150](https://github.com/WXYC/request-o-matic/issues/150).
-- Slack-native ban menu: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped — see "Where to find a fingerprint" above, and the transport caveat there for when it goes live in a given environment.
+- Slack-native ban menu: [#152](https://github.com/WXYC/request-o-matic/issues/152). Shipped, then removed from the public request post; the handler remains and awaits a moderators-channel entry point. See "Why the menu left the public post" above.
 - Moderator roster UI: [#240](https://github.com/WXYC/request-o-matic/issues/240).
