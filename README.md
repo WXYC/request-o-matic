@@ -190,7 +190,7 @@ Request-line ban management (`Authorization: Bearer $ADMIN_TOKEN`). All writes a
 
 ### Slack Endpoints
 
-- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" overflow-menu item on request posts (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call -- and the `/request-mods` roster save, whose modal is opened by `POST /slack/commands` but submitted here because Slack delivers every modal submission in the app to this one URL. See [`docs/admin-bans.md`](docs/admin-bans.md).
+- `POST /slack/interactivity` - The Slack app's single interactivity Request URL. Handles the "Ban requester" overflow-menu item (opens a reason modal, then bans on submit) via `services/ban_service.py` -- the same function the admin endpoints above call -- and the `/request-mods` roster save, whose modal is opened by `POST /slack/commands` but submitted here because Slack delivers every modal submission in the app to this one URL. See [`docs/admin-bans.md`](docs/admin-bans.md).
 - `POST /slack/commands` - Slash-command Request URL for `/request-mods`, which opens the moderator-roster picker. Every refusal is a 200 with an ephemeral body rather than a `chat.postEphemeral` call, so a deploy without `SLACK_BOT_TOKEN` refuses visibly instead of silently.
 
 ### Example Requests
@@ -319,7 +319,7 @@ If Slack integration fails:
 1. With the default webhook transport: verify `SLACK_WEBHOOK_URL` is correct, or that the app can fetch one from Railway if it's unset.
 2. With `SLACK_USE_BOT_TOKEN=true`: verify `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are both set. A `not_in_channel` error means the bot hasn't been `/invite`d into `SLACK_CHANNEL_ID` -- the app has `chat:write` but not `chat:write.public`.
 3. Check that your Slack app has proper permissions.
-4. If the "Ban requester" button's modal won't open, or a submit silently does nothing: check `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` are both set, and that the Slack app's interactivity Request URL points at this deployment's `/slack/interactivity`. A 401 there means either the signing secret is wrong/unset or the request is stale (Slack's 5-minute replay window).
+4. If you are looking for the "Ban requester" menu on a request post: it is not there, deliberately. Public posts carry no ban affordance (Slack renders one payload to the whole channel, so the menu was visible to every DJ and usable only by the roster); ban via the `curl` path in [`docs/admin-bans.md`](docs/admin-bans.md). If the menu's modal won't open once it is re-homed to a moderators channel, or a submit silently does nothing: check `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` are both set, and that the Slack app's interactivity Request URL points at this deployment's `/slack/interactivity`. A 401 there means either the signing secret is wrong/unset or the request is stale (Slack's 5-minute replay window).
 
 ## Environment Variables Reference
 

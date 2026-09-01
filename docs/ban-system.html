@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Request-line bans — how it works</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf8;
+    --surface: #ffffff;
+    --border: #e2ded7;
+    --ink: #1c1a17;
+    --ink-soft: #5c564d;
+    --ink-faint: #8a8378;
+    --accent: #7a4419;
+    --accent-soft: #f3e9df;
+    --warn: #8a2f22;
+    --warn-soft: #f8e7e3;
+    --ok: #2f5d3a;
+    --ok-soft: #e6efe7;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171614;
+      --surface: #201e1b;
+      --border: #35322d;
+      --ink: #ece8e1;
+      --ink-soft: #b0a99e;
+      --ink-faint: #857e73;
+      --accent: #e0a06a;
+      --accent-soft: #2e241b;
+      --warn: #e89383;
+      --warn-soft: #33211d;
+      --ok: #9ec9a8;
+      --ok-soft: #1e2a20;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 3.5rem 1.5rem 6rem; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 1.75rem; margin-bottom: 2.5rem; }
+  .eyebrow {
+    font: 600 0.72rem/1 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+  }
+  h1 { font-size: 2.1rem; line-height: 1.15; margin: 0 0 0.6rem; letter-spacing: -0.02em; }
+  .standfirst { font-size: 1.08rem; color: var(--ink-soft); margin: 0; max-width: 46rem; }
+  h2 {
+    font-size: 1.32rem;
+    margin: 3rem 0 0.9rem;
+    letter-spacing: -0.01em;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--border);
+  }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  h3 { font-size: 1.02rem; margin: 1.9rem 0 0.5rem; }
+  p, li { color: var(--ink); }
+  p { margin: 0 0 1rem; }
+  ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }
+  li { margin-bottom: 0.45rem; }
+  code {
+    font: 0.855em var(--mono);
+    background: var(--accent-soft);
+    color: var(--ink);
+    padding: 0.12em 0.36em;
+    border-radius: 3px;
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font: 0.83rem/1.55 var(--mono);
+    margin: 0 0 1.25rem;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    padding: 1rem 1.2rem;
+    margin: 0 0 1.5rem;
+  }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.ok { border-left-color: var(--ok); background: var(--ok-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    display: block;
+    font: 600 0.7rem/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 0.55rem;
+  }
+  .figure {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem 1.25rem 1.1rem;
+    margin: 0 0 1.6rem;
+  }
+  .figure .scroll { overflow-x: auto; }
+  .figure svg { display: block; margin: 0 auto; min-width: 42rem; }
+  figcaption {
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+  }
+  .tablewrap { overflow-x: auto; margin: 0 0 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; min-width: 34rem; }
+  th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .lede { font-weight: 600; }
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.86rem;
+    color: var(--ink-faint);
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  @media print {
+    body { background: #fff; }
+    .wrap { padding: 0; max-width: none; }
+    h2 { break-after: avoid; }
+    .figure, pre, .callout { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Request-O-Matic · Operator &amp; engineering reference</p>
+  <h1>Request-line bans: how it works</h1>
+  <p class="standfirst">How WXYC blocks an abusive listener from the request line — what actually gets banned, where that state lives, who is allowed to issue one, and why there is no ban button on the request posts in Slack.</p>
+</header>
+
+<h2>The short version</h2>
+
+<ul>
+  <li>A ban targets a <strong>device</strong>, not a person and not an account. The target is a UUID the iOS app generates and stores in the iCloud Keychain.</li>
+  <li>Ban state lives in <strong>Backend-Service</strong>. Request-O-Matic is a thin proxy over it, so there is one table and one audit trail no matter which surface issues the ban.</li>
+  <li>A banned listener is <strong>shadow-banned</strong>: their app behaves normally, and nothing reaches Slack, the parser, or the library search.</li>
+  <li><strong>Only a few accounts can ban.</strong> The authorized set is a short break-glass list from configuration, unioned with a roster that moderators edit from Slack.</li>
+  <li>There is <strong>no ban control on public request posts</strong>. That is deliberate and explained below — it is not a permissions hole, and it is not an oversight.</li>
+</ul>
+
+<h2>What gets banned</h2>
+
+<p>Every request from the iOS app carries an <code>X-Device-Fingerprint</code> header: a UUID the app generates once and keeps in the iCloud Keychain, separate from the login session. That UUID is the ban target.</p>
+
+<p>Choosing the device rather than the account is what makes the ban meaningful at all — request-line listeners are anonymous, so there is no account to ban. Storing it in the iCloud Keychain is what makes it durable: it survives signing out, signing back in, and reinstalling the app on the same Apple ID.</p>
+
+<div class="callout warn">
+  <span class="label">Known limit</span>
+  <p>A determined person can disable iCloud Keychain, reinstall, and arrive with a fresh fingerprint. This is accepted. The system is built to deter a persistent nuisance, not to defeat someone committed to evading it.</p>
+</div>
+
+<p>Three kinds of request carry no fingerprint at all and therefore <em>cannot</em> be banned by any surface: an unauthenticated caller, an iOS client older than 3.2, and a post that degraded before the header was read. There is nothing to act on, so no ban affordance is offered for them anywhere.</p>
+
+<h3>The fingerprint is never displayed</h3>
+
+<p>A stable per-device identifier shown in a channel that DJs read all shift is a de-anonymisation vector — it lets anyone correlate a listener's requests across weeks. So the fingerprint travels as <strong>private Slack message metadata</strong>, invisible in the rendered post, and is read back only by the code that acts on it. It is never rendered as visible text, and this document does not print one either.</p>
+
+<h2>How a request flows, and where the ban check sits</h2>
+
+<div class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 720 236" role="img" aria-labelledby="flowtitle flowdesc" width="720" height="236">
+    <title id="flowtitle">Request flow with the ban check</title>
+    <desc id="flowdesc">A request from the iOS app hits the ban check first. If the device is banned it stops there with a silent 403 and nothing further runs: no Slack post, no parsing, no library search. If it is not banned, the request is parsed, searched, and posted to the request channel in Slack, with the device fingerprint attached as private message metadata rather than visible text.</desc>
+    <defs>
+      <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <g fill="none" stroke="currentColor" stroke-width="1.5" color="#8a8378" opacity="0.85">
+      <line x1="128" y1="60" x2="186" y2="60" marker-end="url(#arw)"/>
+      <line x1="300" y1="60" x2="358" y2="60" marker-end="url(#arw)"/>
+      <line x1="452" y1="60" x2="510" y2="60" marker-end="url(#arw)"/>
+      <line x1="243" y1="88" x2="243" y2="146" marker-end="url(#arw)"/>
+      <line x1="595" y1="88" x2="595" y2="146" marker-end="url(#arw)"/>
+    </g>
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#8a8378">
+      <text x="252" y="112">banned</text>
+      <text x="604" y="112">not banned</text>
+    </g>
+    <g stroke-width="1.5">
+      <rect x="18" y="38" width="110" height="44" rx="7" fill="none" stroke="#8a8378"/>
+      <rect x="186" y="38" width="114" height="44" rx="7" fill="none" stroke="#7a4419"/>
+      <rect x="358" y="38" width="94" height="44" rx="7" fill="none" stroke="#8a8378"/>
+      <rect x="510" y="38" width="170" height="44" rx="7" fill="none" stroke="#8a8378"/>
+      <rect x="150" y="146" width="186" height="46" rx="7" fill="none" stroke="#8a2f22"/>
+      <rect x="510" y="146" width="170" height="46" rx="7" fill="none" stroke="#2f5d3a"/>
+    </g>
+    <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
+      <text x="73" y="65">iOS app</text>
+      <text x="243" y="59" font-weight="600">Ban check</text>
+      <text x="243" y="74" font-size="10.5" fill="#8a8378">Backend-Service</text>
+      <text x="405" y="65">Parse</text>
+      <text x="595" y="59">Library search</text>
+      <text x="595" y="74" font-size="10.5" fill="#8a8378">LML</text>
+      <text x="243" y="167" font-weight="600">403, silently</text>
+      <text x="243" y="183" font-size="10.5" fill="#8a8378">no Slack, no parse, no search</text>
+      <text x="595" y="167" font-weight="600">Posted to Slack</text>
+      <text x="595" y="183" font-size="10.5" fill="#8a8378">the request channel</text>
+      <text x="595" y="215" font-size="10.5" fill="#8a8378" font-style="italic">fingerprint rides along as private metadata,</text>
+      <text x="595" y="229" font-size="10.5" fill="#8a8378" font-style="italic">never as visible text</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The ban check runs <strong>first</strong>, before the AI parser and before the library search. That ordering is deliberate: a banned listener must not be able to spend the station's paid parsing quota by spamming the request line.</figcaption>
+</div>
+
+<p>From the listener's side, a ban is invisible. The app receives a refusal it already swallows, so there is no error message, no "you have been banned" screen, and no signal that would tell someone to go get a fresh fingerprint. That is the point of a shadow ban.</p>
+
+<h2>Who can ban</h2>
+
+<p>The authorized set is the <strong>union of two lists</strong>:</p>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th>List</th><th>Lives in</th><th>Edited by</th><th>Purpose</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Break-glass allowlist</td>
+      <td>A Request-O-Matic environment variable</td>
+      <td>Anyone with deploy access, by hand</td>
+      <td>A short administrator list that keeps working when everything else is down</td>
+    </tr>
+    <tr>
+      <td>Moderator roster</td>
+      <td>Backend-Service</td>
+      <td>Moderators, via a slash command in Slack</td>
+      <td>The list that is actually maintained day to day</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>Authorization is checked <strong>twice</strong> on every ban — once when the menu item is chosen, and again when the reason modal is submitted. The second check is not redundant: it means a hand-crafted submission cannot skip the first one.</p>
+
+<div class="callout">
+  <span class="label">Fails closed, in the useful direction</span>
+  <p>If Backend-Service is unreachable, the roster half is simply missing and the authorized set shrinks to the break-glass list. It never widens. An outage in the roster service must not turn into ban rights for the whole workspace — and the thing you are left holding is the administrator list, which is the correct thing to be left holding.</p>
+  <p>The refusal a moderator sees in that situation says "we could not check", not "you are not authorized". Those are different facts, and telling someone the second when the truth is the first sends them to argue about their permissions during an outage that has nothing to do with them.</p>
+</div>
+
+<h2>Why there is no ban button on request posts</h2>
+
+<p>There used to be one: an overflow ("…") menu under every request post in the channel, holding a single "Ban requester" item. It is gone, and the reason is worth stating precisely, because the obvious reading of it is wrong.</p>
+
+<p class="lede">It was never a permissions hole. Every DJ could <em>see</em> the menu; only the authorized handful could <em>use</em> it. An unauthorized click got a private refusal that nobody else in the channel saw, and no ban was issued.</p>
+
+<p>But that is still the wrong design, for a reason that has nothing to do with security. A visible control reads as an available one. DJs seeing a "ban requester" option under every listener message reasonably concluded the station was handing ban rights to everyone — and a moderation control sitting in a channel people read all shift invites questions that its presence cannot answer.</p>
+
+<div class="callout warn">
+  <span class="label">The constraint that forces this</span>
+  <p><strong>Slack has no per-viewer block visibility.</strong> A channel message is one payload delivered identically to every member. There is no field that says "show this element only to these users", so the menu could not be conditioned on who was looking. Matching visibility to authorization is only reachable by changing <em>where</em> the menu is posted — not by changing how it is built.</p>
+</div>
+
+<p>So the affordance was detached from the public post, and is being re-homed to a moderators-only channel, where channel membership does the hiding that Block Kit cannot. What that leaves in place today:</p>
+
+<ul>
+  <li><strong>The public request post still carries the fingerprint</strong> in private metadata. Removing the visible control deliberately did not remove the ban <em>target</em>.</li>
+  <li><strong>The whole click-to-ban path is still deployed and tested</strong> — signature verification, the double authorization check, the reason modal, the ban call, the confirmation, the footer edit. None of it is being rebuilt.</li>
+  <li><strong>The handler is channel-agnostic.</strong> It reads the channel out of the click it receives and never checks it against the request channel, so the same menu works unchanged wherever it is eventually posted.</li>
+</ul>
+
+<p>Until then, bans are issued through the HTTP admin API, which is how every ban has been issued to date.</p>
+
+<h2>Issuing a ban today</h2>
+
+<ol>
+  <li><strong>Find the fingerprint.</strong> Query the Request-O-Matic analytics project for per-device request counts. The exact query is in <code>docs/admin-bans.md</code>. Note it is that project specifically — running it against the iOS app's project returns zero rows, which looks identical to "the fingerprint was never recorded".</li>
+  <li><strong>Issue the ban</strong> against the admin API with a reason. Reasons are not decoration; they are the only record of why, and the person reading it later will not be you.</li>
+  <li><strong>Verify</strong> by listing current bans. The listener is not told anything, so the ban table is the only confirmation that exists.</li>
+  <li><strong>Unban</strong> by deleting the entry. Bans are cheap to reverse and there is no penalty for reversing one.</li>
+</ol>
+
+<p>Full endpoints, arguments, status codes, and worked <code>curl</code> examples live in <a href="admin-bans.md"><code>docs/admin-bans.md</code></a>. They are deliberately not duplicated here — one copy of a command is maintainable, two copies drift.</p>
+
+<h2>What this system does not do</h2>
+
+<ul>
+  <li><strong>It does not record who issued a ban, in Backend-Service.</strong> The acting Slack user is captured in Request-O-Matic's own logs, but the stored ban's actor column expects a WXYC account and a Slack user has no row there. "Who banned whom" therefore survives only in rotating service logs.</li>
+  <li><strong>It does not keep a banned listener's messages.</strong> A ban is currently a hard drop, so once someone is banned the station stops being able to see what they are sending — including an escalation from nuisance to something the station would have a duty to act on. Quarantining that traffic to a moderators channel is planned, not built.</li>
+  <li><strong>It does not derive moderators from station roles.</strong> Ideally being a music director or station manager would simply imply ban rights, with no list to maintain. That needs a mapping between Slack accounts and WXYC accounts that nothing stores today.</li>
+  <li><strong>It has never been used in anger.</strong> No ban has ever been issued against a real listener. This is insurance, and it is worth remembering that when weighing how much machinery it deserves.</li>
+</ul>
+
+<footer>
+  <p>Companion documents: <a href="admin-bans.md"><code>docs/admin-bans.md</code></a> (operator runbook, endpoints, curl) · <a href="architecture.md"><code>docs/architecture.md</code></a> (internals) · <a href="env-vars.md"><code>docs/env-vars.md</code></a> (configuration).</p>
+  <p>This page is a repository file. Open it from a checkout; it is not hosted anywhere and depends on no external resources.</p>
+</footer>
+
+</div>
+</body>
+</html>
