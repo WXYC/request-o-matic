@@ -13,7 +13,18 @@ ReleaseMetadata = DiscogsMatchResult
 
 
 def preview_url(metadata: DiscogsMatchResult) -> str | None:
-    """First available streaming URL, prioritizing Bandcamp."""
+    """First available streaming URL, prioritizing Bandcamp.
+
+    The shared contract types the five streaming fields as ``AnyUrl``, so the
+    parsed values are stringified here at the boundary: ``services/slack.py``
+    interpolates the result straight into a Slack mrkdwn link and needs a
+    ``str``. Pydantic normalizes a bare-domain URL by appending a trailing
+    slash, so a Bandcamp artist link comes back as
+    ``https://artist.bandcamp.com/`` rather than the exact upstream string.
+    That is deliberate (#286): the link resolves identically, and preserving
+    the byte-for-byte original would mean carrying the raw payload value
+    alongside the parsed one for no functional gain.
+    """
     for url in (
         metadata.bandcamp_url,
         metadata.spotify_url,
@@ -22,7 +33,7 @@ def preview_url(metadata: DiscogsMatchResult) -> str | None:
         metadata.soundcloud_url,
     ):
         if url:
-            return url
+            return str(url)
     return None
 
 

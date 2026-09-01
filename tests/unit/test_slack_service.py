@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from pydantic import AnyUrl
 
 from models import ReleaseMetadata
 from services.slack import (
@@ -167,8 +168,8 @@ class TestBuildSlackBlocks:
             album="Aluminum Tunes",
             release_id=99999,
             release_url="https://www.discogs.com/release/99999",
-            spotify_url="https://open.spotify.com/search/stereolab",
-            youtube_music_url="https://music.youtube.com/search?q=stereolab",
+            spotify_url=AnyUrl("https://open.spotify.com/search/stereolab"),
+            youtube_music_url=AnyUrl("https://music.youtube.com/search?q=stereolab"),
         )
 
         blocks = build_slack_blocks(
