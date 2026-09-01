@@ -27,6 +27,27 @@ class ApiErrorResponse(BaseModel):
     details: dict[str, Any] | None = None
 
 
+class FlowsheetJoinIntent(StrEnum):
+    join = "join"
+    takeover = "takeover"
+
+
+class ShowAlreadyOpenErrorCode(StrEnum):
+    show_already_open = "show_already_open"
+
+
+class ShowAlreadyOpenShow(BaseModel):
+    id: int = Field(
+        ...,
+        description="`shows.id` of the open show. This is the value a follow-up `intent: takeover` must send as `expected_show_id`.\n",
+    )
+    dj_name: str | None = Field(
+        None,
+        description='The show OWNER\'s public handle, resolved through the same PII-safe chain as `OpenShow.dj_name` (BS#1371): per-show override -> the DJ\'s chosen handle -> the legacy tubafrenzy handle -> `null` when unresolvable.\n\n**Null is the common case, not the edge.** Essentially the whole open-show backlog this handshake exists to unstick reaches nothing through that chain (2,813 of production\'s 2,814 open shows carried a NULL `primary_dj_id` as of 2026-08-21), so a prompt that interpolates it unguarded renders "null is on air". Fall back to generic phrasing.\n\nFor an abandoned show this names the DJ who LEFT. A client showing "who is on air right now" should prefer `GET /flowsheet/djs-on-air`, whose active-membership answer is the one that disagrees with this field precisely when it matters.\n',
+    )
+    start_time: AwareDatetime
+
+
 class PaginationParams(BaseModel):
     page: conint(ge=1) | None = None
     limit: conint(ge=1, le=100) | None = None
@@ -104,7 +125,7 @@ class FlowsheetRangeShow(BaseModel):
     )
     dj_name: str | None = Field(
         None,
-        description="Resolved public display name of the show's DJ. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> `user.djName` -> `shows.legacy_dj_name` (tubafrenzy's `DJ_HANDLE`) -> null. Never the real-name column.",
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> the DJ's chosen handle (`user.djName`) -> the legacy tubafrenzy handle (`shows.legacy_dj_name`, tubafrenzy's `DJ_HANDLE`) -> `null`.",
     )
     specialty_id: int | None = None
     start_time: AwareDatetime = Field(..., description="When the DJ signed on (ISO 8601).")
@@ -132,7 +153,10 @@ class FlowsheetSongEntry(FlowsheetEntryBase):
 
 
 class FlowsheetShowBlockEntry(FlowsheetEntryBase, DateTimeEntry):
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name — same already-resolved `flowsheet.dj_name` value as `FlowsheetEntryFields.dj_name` (BS#1371). Not currently `$ref`'d by any operation in this document; kept accurate in case that changes.",
+    )
     isStart: bool
 
 
@@ -238,7 +262,10 @@ class PlaylistSearchResult(BaseModel):
     track_title: str
     album_title: str
     record_label: str
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. Read from the denormalized `flowsheet.dj_name` column, itself populated at entry-insert time via the PII-safe chain (BS#1371); `\"Unknown DJ\"` substitutes when that resolves to nothing.",
+    )
     show_id: int
 
 
@@ -277,7 +304,10 @@ class EntryType2(StrEnum):
 
 class FlowsheetV2ShowStartEntry(FlowsheetV2Base):
     entry_type: Literal["show_start"]
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle at show start, never the DJ's legal name: per-show override, else the DJ's chosen handle (`user.djName`). The legacy-tubafrenzy-handle fallback in the full BS#1371 chain doesn't apply here — a new show has no legacy row yet.",
+    )
     timestamp: AwareDatetime
 
 
@@ -287,7 +317,10 @@ class EntryType3(StrEnum):
 
 class FlowsheetV2ShowEndEntry(FlowsheetV2Base):
     entry_type: Literal["show_end"]
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371).",
+    )
     timestamp: AwareDatetime
 
 
@@ -297,7 +330,10 @@ class EntryType4(StrEnum):
 
 class FlowsheetV2DJJoinEntry(FlowsheetV2Base):
     entry_type: Literal["dj_join"]
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The public handle (`user.djName`) of the DJ who joined, never the DJ's legal name. Unlike the full BS#1371 chain, this does not consult a per-show override or the legacy tubafrenzy handle.",
+    )
 
 
 class EntryType5(StrEnum):
@@ -306,7 +342,10 @@ class EntryType5(StrEnum):
 
 class FlowsheetV2DJLeaveEntry(FlowsheetV2Base):
     entry_type: Literal["dj_leave"]
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The public handle (`user.djName`) of the DJ who left, never the DJ's legal name. Unlike the full BS#1371 chain, this does not consult a per-show override or the legacy tubafrenzy handle.",
+    )
 
 
 class EntryType6(StrEnum):
@@ -341,7 +380,10 @@ class FlowsheetV2MessageEntry(FlowsheetV2Base):
 
 
 class OnAirInfo(BaseModel):
-    dj_name: str = Field(..., description="Display name of the DJ currently on air.")
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371), except when unresolvable this substitutes the station name (\"WXYC\") rather than `null` — it's the enclosing `on_air` field that goes `null`, not this one.",
+    )
 
 
 class OnAirDJ(BaseModel):
@@ -349,7 +391,10 @@ class OnAirDJ(BaseModel):
         ...,
         description="The DJ's better-auth `auth_user.id` (an opaque `varchar(255)` string), or `null` for a legacy/tubafrenzy-mirrored show whose on-air DJ has no Backend-Service account (their identity is `legacy_dj_name`, surfaced on `/flowsheet/djs-on-air` with a null id). Historically mistyped as `integer`; corrected to the nullable string it is at runtime (BS#1547).",
     )
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. For a DJ with a Backend-Service account, the DJ's chosen handle (`user.djName`); for a legacy/tubafrenzy-mirrored show with no account, the full PII-safe chain (BS#1371) down to `shows.legacy_dj_name`.",
+    )
 
 
 class OnAirStatusResponse(BaseModel):
@@ -374,7 +419,7 @@ class OpenShow(BaseModel):
     )
     dj_name: str = Field(
         ...,
-        description="The public DJ handle, resolved through the standard chain (per-show override, then the linked account's handle, then the legacy tubafrenzy handle). Never a real name. NULL when unresolvable.\n",
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> the DJ's chosen handle -> the legacy tubafrenzy handle -> `null` when unresolvable.\n",
     )
     show_name: str
     start_time: AwareDatetime
@@ -416,7 +461,10 @@ class ShowDJ(BaseModel):
 
 class Dj(BaseModel):
     dj_id: int | None = None
-    dj_name: str | None = None
+    dj_name: str | None = Field(
+        None,
+        description="The DJ's raw stored handle (`user.djName`), read directly via join with no per-show-override or legacy-handle resolution — may be blank or literally \"Anonymous\". Still never the DJ's legal name; this never reads `real_name`.",
+    )
 
 
 class Artist(BaseModel):
@@ -535,6 +583,58 @@ class CatalogExportRow(BaseModel):
     rotation_kill_date: date_aliased | None = Field(
         None,
         description="Date (YYYY-MM-DD; server ::text cast) the current rotation record expires, or null if it has none. Used with rotation_bin to evaluate live rotation client-side. Absent from AlbumSearchResult — a client that reuses AlbumSearchResult for this endpoint silently loses it.\n",
+    )
+    has_digital_audio: bool | None = Field(
+        None,
+        description="True when the digital archive (WXYC/Backend-Service#2320) has at least one asset bound to this album — the badge the archive player client uses to decide whether to offer playback before calling GET /digital-archive/albums/{id}/playback. OPTIONAL and OUT of `required`, same leniency as the BS#1965 producer fields above and for the same reason: a Backend that hasn't deployed #2320 yet does not emit this key at all, and a required key it doesn't emit would fail every NDJSON line. Absent means false — a client not yet regenerated against this field, or talking to a Backend that doesn't emit it, correctly treats every row as having no digital audio rather than crashing the decode.\n",
+    )
+
+
+class Provenance(StrEnum):
+    rotation_upload = "rotation_upload"
+    cd_rip = "cd_rip"
+
+
+class Codec(StrEnum):
+    mp3 = "mp3"
+    aac = "aac"
+    flac = "flac"
+    m4a = "m4a"
+    wav = "wav"
+
+
+class Rendition(BaseModel):
+    codec: Codec = Field(
+        ...,
+        description="The five formats the archive actually holds, matching digital_asset_file.codec in Backend-Service's schema. The bulk is mp3; `library/freeform/` also carries FLAC, m4a and wav, and the enum lists them so a bound row can never be unrepresentable here.\n",
+    )
+    bitrate_kbps: int | None = None
+    url: AnyUrl = Field(
+        ...,
+        description="Presigned GET. Opaque; a bearer credential until `expires_at` on the enclosing manifest.\n",
+    )
+
+
+class DigitalArchivePlaybackTrack(BaseModel):
+    file_id: int = Field(
+        ...,
+        description="digital_asset_file.id — stable across manifest refetches, for a future offline-cache key. NOT part of any URL; opaque to storage.\n",
+    )
+    provenance: Provenance = Field(
+        ...,
+        description="Where this track's owning digital asset came from. Per-track rather than per-manifest because a manifest may merge several bound assets for one album — see DigitalArchivePlaybackManifest.\n",
+    )
+    disc_number: int | None = None
+    track_number: int | None = None
+    title: str
+    duration_secs: float | None = None
+    content_hash: str | None = Field(
+        None,
+        description="MD5 from the store's ETag today; sha256 once CD rips land. Not guaranteed to be either algorithm going forward — treat as an opaque change-detection token, not a verified checksum.\n",
+    )
+    renditions: list[Rendition] = Field(
+        ...,
+        description="Every rendition the archive holds for this track, in no guaranteed order. Usually one; a track backfilled to a second format carries both. A client picks whichever codec it can play — do not assume an `mp3` entry is present.\n",
     )
 
 
@@ -791,7 +891,10 @@ class BinLibraryDetails(BaseModel):
 class ScheduleShift(BaseModel):
     id: int
     dj_id: int
-    dj_name: str
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. Per the declared/actual mismatch noted above (BS#2224), no current handler populates this from a verified `dj_name`-bearing source — this description states the intent for when that gap closes, not today's implemented behavior.",
+    )
     day: conint(ge=0, le=6) = Field(..., description="Day of the week 0 = Monday, 6 = Sunday")
     start_time: str = Field(..., description="Time in HH:MM format")
     end_time: str = Field(..., description="Time in HH:MM format")
@@ -1207,7 +1310,10 @@ class AuthUser(BaseModel):
         None, description="WXYC additionalField; defaults false at creation."
     )
     realName: str | None = None
-    djName: str | None = None
+    djName: str | None = Field(
+        None,
+        description='The DJ\'s chosen public on-air handle, set on their profile (`auth_user.dj_name`) — the raw, unfiltered source value that the PII-safe resolution chain (BS#1371) consults before falling back to the legacy tubafrenzy handle. May be `null`, blank, or literally "Anonymous"; not itself scrubbed. Distinct from `realName`: `djName` is the public handle and is safe to surface, `realName` is the legal name and never is.',
+    )
     appSkin: str | None = Field(
         None, description='WXYC additionalField; defaults "modern-light" at creation.'
     )
@@ -1346,11 +1452,26 @@ class AlbumMetadata(BaseModel):
     discogs_url: str | None = None
     discogs_id: int | None = None
     release_year: int | None = None
-    spotify_url: str | None = None
-    apple_music_url: str | None = None
-    youtube_music_url: str | None = None
-    bandcamp_url: str | None = None
-    soundcloud_url: str | None = None
+    spotify_url: AnyUrl | None = Field(
+        None,
+        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    apple_music_url: AnyUrl | None = Field(
+        None,
+        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    youtube_music_url: AnyUrl | None = Field(
+        None,
+        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    bandcamp_url: AnyUrl | None = Field(
+        None,
+        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    soundcloud_url: AnyUrl | None = Field(
+        None,
+        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
     last_fetched: AwareDatetime | None = None
 
 
@@ -1429,11 +1550,26 @@ class DiscogsRelease(BaseModel):
 
 
 class StreamingLinks(BaseModel):
-    spotify_url: str | None = Field(None, description="Spotify album URL")
-    apple_music_url: str | None = Field(None, description="Apple Music album URL")
-    youtube_music_url: str | None = Field(None, description="YouTube Music search URL")
-    bandcamp_url: str | None = Field(None, description="Bandcamp album URL")
-    soundcloud_url: str | None = Field(None, description="SoundCloud search URL")
+    spotify_url: AnyUrl | None = Field(
+        None,
+        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    apple_music_url: AnyUrl | None = Field(
+        None,
+        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    youtube_music_url: AnyUrl | None = Field(
+        None,
+        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    bandcamp_url: AnyUrl | None = Field(
+        None,
+        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    soundcloud_url: AnyUrl | None = Field(
+        None,
+        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
 
 
 class StreamingResolutionStatus(StrEnum):
@@ -1975,7 +2111,7 @@ class DiscogsArtistCredit(BaseModel):
     )
 
 
-class Provenance(StrEnum):
+class Provenance1(StrEnum):
     track = "track"
     release = "release"
 
@@ -1988,7 +2124,7 @@ class DiscogsWriterCredits(BaseModel):
         None,
         description='The verbatim Discogs role strings the names were drawn from (e.g. "Written-By", "Words By, Music By"), for auditability of the writer-role mapping.\n',
     )
-    provenance: Provenance = Field(
+    provenance: Provenance1 = Field(
         ...,
         description="`track` = scoped to the resolved track's per-track credits (precise); `release` = a release-level credit applied to the whole release (approximate for an individual track, mirroring tubafrenzy's auto-fill-from-artist fallback). Populated as `release` in the initial rollout; `track` is added when per-track resolution lands.\n",
     )
@@ -2641,6 +2777,10 @@ class AutoDJDeactivateResponse(BaseModel):
     deactivatedAt: AwareDatetime
 
 
+class ShowAlreadyOpenErrorDetails(BaseModel):
+    show: ShowAlreadyOpenShow | None = None
+
+
 class FlowsheetEntryFields(BaseModel):
     album_id: int | None = None
     track_title: str | None = None
@@ -2663,11 +2803,26 @@ class FlowsheetEntryFields(BaseModel):
     discogsUnavailableNote: constr(max_length=500) | None = Field(
         None, description="Optional free-text reason for `discogsUnavailable`."
     )
-    spotify_url: str | None = None
-    apple_music_url: str | None = None
-    youtube_music_url: str | None = None
-    bandcamp_url: str | None = None
-    soundcloud_url: str | None = None
+    spotify_url: AnyUrl | None = Field(
+        None,
+        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    apple_music_url: AnyUrl | None = Field(
+        None,
+        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    youtube_music_url: AnyUrl | None = Field(
+        None,
+        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    bandcamp_url: AnyUrl | None = Field(
+        None,
+        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    soundcloud_url: AnyUrl | None = Field(
+        None,
+        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
     artist_bio: str | None = None
     artist_wikipedia_url: str | None = None
     track_position: str | None = Field(
@@ -2685,7 +2840,7 @@ class FlowsheetEntryFields(BaseModel):
     )
     dj_name: str | None = Field(
         None,
-        description="Resolved public display name of the DJ on the row's show. Nullable per the PII-safe resolution chain (BS#1371): user.djName -> shows.legacy_dj_name -> null; never the real-name PII column.",
+        description="The DJ's public on-air handle, never the DJ's legal name. Resolved through the PII-safe chain (BS#1371): per-show override -> the DJ's chosen handle (`user.djName`) -> the legacy tubafrenzy handle (`shows.legacy_dj_name`) -> `null`.",
     )
 
 
@@ -2730,11 +2885,26 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
     artwork_url: str | None = None
     discogs_url: str | None = None
     release_year: int | None = None
-    spotify_url: str | None = None
-    apple_music_url: str | None = None
-    youtube_music_url: str | None = None
-    bandcamp_url: str | None = None
-    soundcloud_url: str | None = None
+    spotify_url: AnyUrl | None = Field(
+        None,
+        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    apple_music_url: AnyUrl | None = Field(
+        None,
+        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    youtube_music_url: AnyUrl | None = Field(
+        None,
+        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    bandcamp_url: AnyUrl | None = Field(
+        None,
+        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    soundcloud_url: AnyUrl | None = Field(
+        None,
+        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
     artist_bio: str | None = None
     artist_wikipedia_url: str | None = None
     on_streaming: bool | None = Field(
@@ -2874,6 +3044,18 @@ class AlbumSearchResult(BaseModel):
     )
 
 
+class DigitalArchivePlaybackManifest(BaseModel):
+    library_id: int = Field(
+        ...,
+        description="The album's wxyc_schema.library.id — the same key CatalogExportRow.id ships.",
+    )
+    expires_at: AwareDatetime = Field(
+        ...,
+        description="Every URL under `tracks` is dead after this instant — refetch this manifest rather than caching URLs past it.\n",
+    )
+    tracks: list[DigitalArchivePlaybackTrack]
+
+
 class AlbumDetail(BaseModel):
     id: int = Field(..., description="Backend's serial `wxyc_schema.library.id`.")
     artist_id: int
@@ -2975,11 +3157,26 @@ class DiscogsMatchResult(BaseModel):
     release_year: int | None = Field(None, description="Release year from Discogs")
     artist_bio: str | None = Field(None, description="Artist biography from Discogs profile")
     wikipedia_url: str | None = Field(None, description="Wikipedia URL for the artist")
-    spotify_url: str | None = Field(None, description="Spotify album URL")
-    apple_music_url: str | None = Field(None, description="Apple Music album URL")
-    youtube_music_url: str | None = Field(None, description="YouTube Music search URL")
-    bandcamp_url: str | None = Field(None, description="Bandcamp album URL")
-    soundcloud_url: str | None = Field(None, description="SoundCloud search URL")
+    spotify_url: AnyUrl | None = Field(
+        None,
+        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    apple_music_url: AnyUrl | None = Field(
+        None,
+        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    youtube_music_url: AnyUrl | None = Field(
+        None,
+        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    bandcamp_url: AnyUrl | None = Field(
+        None,
+        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
+    soundcloud_url: AnyUrl | None = Field(
+        None,
+        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+    )
     streaming_status: StreamingResolution | None = Field(
         None,
         description="Per-service streaming resolution status (verified / absent / unresolved) for this result, disambiguating WHY a sibling `*_url` field is null. A service marked `unresolved` timed out, had its enrichment tail shed, or was a cold cache miss — its null url is transient and MAY resolve on a later retry; `absent` means the service was consulted and genuinely has no match — its null url is terminal and must NOT be re-probed (re-asking `absent` is the per-play LML-call amplifier BS#1747 killed). A service whose key is OMITTED from this object was never consulted (e.g. Bandcamp on the `/lookup/bulk` path, or the library.db override skipped for a non-library row) and must not be treated as `absent`. Additive and optional: null/omitted on responses from an LML predating the producer rollout, or on paths that resolve no per-service status. Does not change the meaning of the `*_url` fields — it only annotates them. Emitted identically on `/lookup` and `/lookup/bulk` (the LML#681 parity rule). Mirrors the per-service verdict vocabulary of `/api/v1/streaming-check` (LML#376). See LML#1053 / BS#1819.\n",
@@ -3103,6 +3300,12 @@ class LiveFsEvent(RootModel[LiveFsUpdateEvent | LiveFsRefetchEvent | LiveFsInser
         description="Discriminated union of events emitted on the `live-fs-topic`. Every event has the same `{ type, payload, timestamp }` envelope — pinned by `CONTRACTS.LIVE_FS_EVENT_ENVELOPE_SHAPE`.\n",
         discriminator="type",
     )
+
+
+class ShowAlreadyOpenError(BaseModel):
+    message: str
+    code: ShowAlreadyOpenErrorCode | None = None
+    details: ShowAlreadyOpenErrorDetails | None = None
 
 
 class LibraryQueryResponse(BaseModel):

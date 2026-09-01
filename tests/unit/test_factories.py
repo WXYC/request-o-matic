@@ -101,5 +101,8 @@ class TestMakeReleaseMetadata:
         ["spotify_url", "apple_music_url", "youtube_music_url", "bandcamp_url", "soundcloud_url"],
     )
     def test_streaming_url_pass_through(self, field: str) -> None:
+        """The contract types these as ``AnyUrl``, so the factory hands back a
+        parsed URL object rather than the ``str`` it was given -- compare the
+        stringified form, which is what ``preview_url`` returns."""
         metadata = make_release_metadata(**{field: "https://example.com/s"})  # type: ignore[arg-type]
-        assert getattr(metadata, field) == "https://example.com/s"
+        assert str(getattr(metadata, field)) == "https://example.com/s"
