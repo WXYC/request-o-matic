@@ -240,7 +240,12 @@ class SlackService:
         self.channel_id = channel_id
 
     async def post_blocks(
-        self, blocks: list[dict], metadata: dict[str, Any] | None = None
+        self,
+        blocks: list[dict],
+        metadata: dict[str, Any] | None = None,
+        *,
+        channel: str | None = None,
+        thread_ts: str | None = None,
     ) -> str | None:
         """Post message blocks to Slack.
 
@@ -252,6 +257,15 @@ class SlackService:
                 support it, so it is silently ignored on that transport rather
                 than sent (Slack would ignore it anyway, but skipping it here
                 keeps the contract explicit).
+            channel: Optional channel override (request-o-matic#290). When
+                None, posts to ``self.channel_id`` as before.
+            thread_ts: Optional parent message ``ts`` (request-o-matic#290).
+                When set, the post lands as a threaded reply under it.
+
+        Both ``channel`` and ``thread_ts`` are bot-token-only, unlike
+        ``metadata`` -- dropping a channel override would misdeliver the
+        message to the wrong audience, so the webhook transport refuses
+        rather than silently ignoring them.
 
         Returns:
             The posted message's ``ts`` when using the bot-token transport,
@@ -262,23 +276,36 @@ class SlackService:
             SlackPostError: If the bot-token transport returns
                 ``{"ok": false}`` (a 200 that Slack still reports as a
                 failure -- ``chat.postMessage`` does not use HTTP status
-                codes for API-level errors).
+                codes for API-level errors), or if ``channel``/``thread_ts``
+                is passed on the webhook-only transport.
         """
         if self.bot_token is not None:
-            return await self._post_via_bot_token(blocks, metadata)
+            return await self._post_via_bot_token(
+                blocks, metadata, channel=channel, thread_ts=thread_ts
+            )
 
         if self.webhook_url is None:
             raise SlackPostError("SlackService has neither a webhook_url nor a bot_token")
+        if channel is not None:
+            raise SlackPostError("SlackService webhook transport does not support channel")
+        if thread_ts is not None:
+            raise SlackPostError("SlackService webhook transport does not support thread_ts")
         response = await self.http_client.post(self.webhook_url, json={"blocks": blocks})
         response.raise_for_status()
         logger.info("Posted to Slack successfully")
         return None
 
     async def _post_via_bot_token(
-        self, blocks: list[dict], metadata: dict[str, Any] | None = None
+        self,
+        blocks: list[dict],
+        metadata: dict[str, Any] | None = None,
+        *,
+        channel: str | None = None,
+        thread_ts: str | None = None,
     ) -> str:
+        target_channel = channel if channel is not None else self.channel_id
         payload: dict[str, Any] = {
-            "channel": self.channel_id,
+            "channel": target_channel,
             "blocks": blocks,
             # Slack unfurls app-posted links by default (`unfurl_media` is on),
             # and a request post links out to Discogs, WXYC, and a streaming
@@ -292,6 +319,8 @@ class SlackService:
         }
         if metadata is not None:
             payload["metadata"] = metadata
+        if thread_ts is not None:
+            payload["thread_ts"] = thread_ts
         response = await self.http_client.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {self.bot_token}"},
@@ -300,7 +329,7 @@ class SlackService:
         response.raise_for_status()
         data = response.json()
         if not data.get("ok"):
-            raise self._api_error("chat.postMessage", data, channel=self.channel_id)
+            raise self._api_error("chat.postMessage", data, channel=target_channel)
         logger.info("Posted to Slack successfully")
         ts: str = data["ts"]
         return ts
@@ -387,6 +416,27 @@ class SlackService:
         if not data.get("ok"):
             raise self._api_error("chat.update", data, channel=channel)
         logger.info("Updated Slack message successfully")
+
+    async def delete_message(self, *, channel: str, ts: str) -> None:
+        """Delete a message via ``chat.delete`` (request-o-matic#290).
+
+        Structurally identical to ``update_message`` minus the unfurl
+        suppression, which ``chat.delete`` has no use for. Only needs
+        ``chat:write`` for the bot's own posts, which the app already holds.
+
+        Raises:
+            SlackPostError: If ``chat.delete`` returns ``{"ok": false}``.
+        """
+        response = await self.http_client.post(
+            "https://slack.com/api/chat.delete",
+            headers={"Authorization": f"Bearer {self.bot_token}"},
+            json={"channel": channel, "ts": ts},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise self._api_error("chat.delete", data, channel=channel)
+        logger.info("Deleted Slack message successfully")
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
         """Post an ephemeral confirmation via ``chat.postEphemeral`` (request-o-matic#152).
