@@ -604,6 +604,148 @@ class TestSlackServiceBotToken:
             },
         )
 
+    @pytest.mark.asyncio
+    async def test_post_blocks_channel_override(self):
+        """A non-None ``channel`` replaces ``self.channel_id`` in the payload,
+        but does not mutate the service's own ``channel_id`` (#290)."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        await service.post_blocks(blocks, channel="C_MODS")
+
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert payload["channel"] == "C_MODS"
+        assert service.channel_id == "C123"
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_thread_ts_added_to_payload(self):
+        """A non-None ``thread_ts`` lands the post as a threaded reply (#290)."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        await service.post_blocks(blocks, thread_ts="1700000000.000100")
+
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert payload["thread_ts"] == "1700000000.000100"
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_no_thread_ts_key_when_absent(self):
+        """No-argument calls must stay byte-identical to today's payload (#290)."""
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True, "ts": "1234.5678"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(
+            http_client=mock_client,
+            bot_token="xoxb-test-token",
+            channel_id="C123",
+        )
+
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "Test"}}]
+        await service.post_blocks(blocks)
+
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert "thread_ts" not in payload
+        assert payload["channel"] == "C123"
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_channel_refused_on_webhook_transport(self):
+        """``channel`` is bot-token-only; the webhook transport must refuse it
+        rather than silently ignore it, since dropping it would misdeliver the
+        message to the wrong audience (#290)."""
+        mock_client = AsyncMock()
+        service = SlackService(
+            webhook_url="https://hooks.slack.com/test",
+            http_client=mock_client,
+        )
+
+        with pytest.raises(SlackPostError):
+            await service.post_blocks([{"type": "section"}], channel="C_MODS")
+
+    @pytest.mark.asyncio
+    async def test_post_blocks_thread_ts_refused_on_webhook_transport(self):
+        """``thread_ts`` is likewise bot-token-only and refused on webhooks (#290)."""
+        mock_client = AsyncMock()
+        service = SlackService(
+            webhook_url="https://hooks.slack.com/test",
+            http_client=mock_client,
+        )
+
+        with pytest.raises(SlackPostError):
+            await service.post_blocks([{"type": "section"}], thread_ts="1.2")
+
+
+class TestSlackServiceDeleteMessage:
+    """Tests for SlackService.delete_message -- chat.delete (request-o-matic#290)."""
+
+    @pytest.mark.asyncio
+    async def test_delete_message_posts_channel_and_ts(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": True}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        await service.delete_message(channel="C123", ts="1700000000.000100")
+
+        mock_client.post.assert_called_once_with(
+            "https://slack.com/api/chat.delete",
+            headers={"Authorization": "Bearer xoxb-test-token"},
+            json={"channel": "C123", "ts": "1700000000.000100"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_message_ok_false_raises(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "message_not_found"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        with pytest.raises(SlackPostError, match="chat.delete") as exc_info:
+            await service.delete_message(channel="C123", ts="1700000000.000100")
+        assert "message_not_found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_delete_message_not_in_channel_names_channel(self):
+        mock_client = AsyncMock()
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"ok": False, "error": "not_in_channel"}
+        mock_client.post.return_value = mock_response
+
+        service = SlackService(http_client=mock_client, bot_token="xoxb-test-token")
+
+        with pytest.raises(SlackPostError, match="not_in_channel") as exc_info:
+            await service.delete_message(channel="C123", ts="1234.5678")
+        assert "C123" in str(exc_info.value)
+
 
 class TestSlackServiceOpenView:
     """Tests for SlackService.open_view -- views.open (request-o-matic#152)."""
