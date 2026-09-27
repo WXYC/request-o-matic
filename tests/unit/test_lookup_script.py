@@ -1,17 +1,20 @@
-"""Unit tests for scripts/lookup.py Server-Timing rendering (PR 3b) and its
-handling of the server's degraded `parsing_unavailable` mode."""
+"""Unit tests for scripts/lookup.py Server-Timing rendering (PR 3b), its
+handling of the server's degraded `parsing_unavailable` mode, and its shelf
+location rendering."""
 
 import pytest
 
 from routers.request import DEGRADED_PARSING, DEGRADED_SEARCH
 from scripts._common import describe_degraded_mode
 from scripts.lookup import (
+    print_library_results,
     print_parsed_request,
     print_search_summary,
     print_server_timing,
     run_lookup,
 )
-from tests.factories import make_degraded_response
+from services.slack import build_slack_blocks
+from tests.factories import make_degraded_response, make_library_item
 
 # A realistic merged header as ROM emits it: rom stages (parse, lookup_service,
 # slack_post) + forwarded LML sub-stages (library_search, metadata_enrichment,
@@ -204,3 +207,114 @@ class TestDegradedParsingOutput:
         assert data["parsed"] is None
         out = capsys.readouterr().out
         assert "unavailable" in out.lower()
+
+
+class TestLibraryResultLocation:
+    """The printed shelf location must be the one the service composed.
+
+    The CLI used to re-derive `Location:` from `call_letters`,
+    `artist_call_number` and `release_call_number`, dropping genre and format.
+    Genre is the shelf *section*, so the derived string is far less specific
+    than the wire value: over a 64,193-row library.db, 48.8% of rows shared
+    their derived locator with another row against 7.3% for the composed one,
+    and `V/A 0/3` alone named 57 records across 12 genres (#298). Slack has
+    always rendered `item.call_number`, so the two surfaces disagreed about
+    where a record physically is.
+    """
+
+    def test_location_prints_the_composed_call_number_with_genre_and_format(self, capsys):
+        """The wire `call_number` is printed verbatim, genre and format included."""
+        item = make_library_item(
+            artist="Jessica Pratt",
+            title="On Your Own Love Again",
+            genre="Rock",
+            format="CD",
+            call_letters="PRA",
+            artist_call_number=4,
+            release_call_number=2,
+        )
+
+        print_library_results([item.model_dump(mode="json")], None)
+
+        out = capsys.readouterr().out
+        assert "Location: Rock CD PRA 4/2" in out
+
+    def test_location_falls_back_to_components_when_call_number_absent(self, capsys):
+        """A deployed service predating the field still yields a usable locator.
+
+        `call_number` is required by the contract, but the CLI points at
+        whatever is deployed, so an absent key falls back to the old derivation
+        rather than printing nothing.
+        """
+        item = {
+            "artist": "Cat Power",
+            "title": "Moon Pix",
+            "call_letters": "CAT",
+            "artist_call_number": 7,
+            "release_call_number": 1,
+        }
+
+        print_library_results([item], None)
+
+        assert "Location: CAT 7/1" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            pytest.param(
+                {"artist": "Juana Molina", "title": "DOGA", "call_number": ""},
+                id="empty-call-number",
+            ),
+            pytest.param(
+                {"artist": "Juana Molina", "title": "DOGA"},
+                id="no-call-number-and-no-components",
+            ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_number": "",
+                    "call_letters": "MOL",
+                    "artist_call_number": 0,
+                    "release_call_number": 3,
+                },
+                id="empty-call-number-does-not-resurrect-the-derivation",
+            ),
+        ],
+    )
+    def test_empty_or_missing_call_number_prints_none(self, capsys, item):
+        """An empty locator reads as `(none)`, never as a bare `/` or a traceback."""
+        print_library_results([item], None)
+
+        out = capsys.readouterr().out
+        assert "Location: (none)" in out
+        location_line = next(line for line in out.splitlines() if "Location:" in line)
+        assert "/" not in location_line
+
+    def test_cli_and_slack_render_the_same_locator(self, capsys):
+        """Both surfaces print one string for one item, pinned over a shared fixture."""
+        item = make_library_item(
+            artist="Duke Ellington & John Coltrane",
+            title="Duke Ellington & John Coltrane",
+            genre="Jazz",
+            format="CD",
+            call_letters="ELL",
+            artist_call_number=12,
+            release_call_number=3,
+        )
+
+        print_library_results([item.model_dump(mode="json")], None)
+        cli_line = next(
+            line for line in capsys.readouterr().out.splitlines() if "Location:" in line
+        )
+        cli_locator = cli_line.split("Location:", 1)[1].strip()
+
+        blocks = build_slack_blocks("Now playing", [(item, None)])
+        slack_locator = next(
+            line.strip("_")
+            for block in blocks
+            for line in block["text"]["text"].splitlines()
+            if line.startswith("_") and line.endswith("_")
+        )
+
+        assert cli_locator == slack_locator == item.call_number
