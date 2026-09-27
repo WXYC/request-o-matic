@@ -257,6 +257,16 @@ class TestLibraryResultLocation:
                 "CAT /1",
                 id="null-component-renders-blank-not-the-word-None",
             ),
+            pytest.param(
+                {"call_letters": "CAT", "artist_call_number": 7, "release_call_number": 0},
+                "CAT 7/0",
+                id="zero-release-number-is-a-value-not-a-blank",
+            ),
+            pytest.param(
+                {"call_letters": "CAT", "artist_call_number": 7, "release_call_number": None},
+                "CAT 7/",
+                id="null-release-number-renders-blank-not-the-word-None",
+            ),
         ],
     )
     def test_location_falls_back_to_components_when_call_number_absent(
@@ -289,6 +299,16 @@ class TestLibraryResultLocation:
             pytest.param(
                 {"artist": "Juana Molina", "title": "DOGA"},
                 id="no-call-number-and-no-components",
+            ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_letters": "",
+                    "artist_call_number": 7,
+                    "release_call_number": 1,
+                },
+                id="empty-call-letters-do-not-print-a-letterless-locator",
             ),
             pytest.param(
                 {

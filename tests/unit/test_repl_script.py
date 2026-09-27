@@ -143,6 +143,27 @@ class TestReplShelfLocation:
                 },
                 id="empty-call-number-does-not-resurrect-the-derivation",
             ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_number": None,
+                    "call_letters": "MOL",
+                    "artist_call_number": 0,
+                    "release_call_number": 3,
+                },
+                id="null-call-number-does-not-resurrect-the-derivation",
+            ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_letters": "",
+                    "artist_call_number": 7,
+                    "release_call_number": 1,
+                },
+                id="empty-call-letters-do-not-print-a-letterless-locator",
+            ),
         ],
     )
     def test_no_locator_omits_the_line_rather_than_inventing_one(self, capsys, item):
