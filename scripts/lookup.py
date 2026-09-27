@@ -28,6 +28,7 @@ from scripts._common import (
     describe_degraded_mode,
     indent,
     set_up_logging,
+    shelf_location,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,20 +131,7 @@ def print_library_results(
         print(f"      Artist:   {artist}")
         print(f"      Genre:    {item.get('genre') or '(none)'}")
         print(f"      Format:   {item.get('format') or '(none)'}")
-        # The service composes the shelf locator from genre, format and the
-        # call-number components, and Slack renders that value as-is. Print it
-        # verbatim rather than recomposing it here: genre is the shelf section,
-        # and a locally-derived string drops it and lands on a slot that can
-        # hold dozens of records across a dozen genres (#298). The derivation
-        # survives only as a fallback for a deployed service predating the
-        # field -- an empty value means "unknown", not "derive it yourself".
-        call_number = item.get("call_number")
-        if call_number is None and item.get("call_letters"):
-            call_number = (
-                f"{item.get('call_letters')} "
-                f"{item.get('artist_call_number', '')}/{item.get('release_call_number', '')}"
-            )
-        print(f"      Location: {call_number or '(none)'}")
+        print(f"      Location: {shelf_location(item) or '(none)'}")
         print(f"      WXYC:     {item.get('library_url') or '(none)'}")
         item_artwork = artworks[i - 1] if i - 1 < len(artworks) else None
         discogs_url = item_artwork.get("release_url") if item_artwork else None

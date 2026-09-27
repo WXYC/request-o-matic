@@ -51,6 +51,56 @@ def describe_degraded_mode(data: dict[str, Any]) -> str | None:
     )
 
 
+def shelf_location(item: dict[str, Any]) -> str | None:
+    """Return the shelf locator to print for one `library_results` item.
+
+    The service composes `call_number` from genre, format and the call-number
+    components, and `services/slack.py` renders that value verbatim. Both CLIs
+    print what this returns, so one record names one shelf slot on every
+    surface (#298).
+
+    The composition belongs to the producer and lives here only as a legacy
+    shim, never as a "richer" local format. Genre is the shelf *section*, so a
+    re-derived `letters num/num` is the least specific string available: over a
+    64,193-row library.db, 48.8% of rows shared it with another row against
+    7.3% for the composed one, and `V/A 0/3` alone named 57 records across 12
+    genres. Various-Artists rows are worst hit -- `artist_call_number` is `0`
+    for all 6,318 of them, leaving genre as the only component doing any work.
+
+    Args:
+        item: One decoded `library_results` entry.
+
+    Returns:
+        The locator, or None when there is nothing to print -- callers render
+        that as they render any other empty field.
+
+        An **absent** `call_number` falls back to the components: the field is
+        required by the contract, but a CLI points at whatever is deployed and
+        a service predating it still has the parts. A **present** one is
+        authoritative even when it is empty or null, because that means the
+        producer composed nothing from the very components a fallback would
+        reach for, and recomposing it here is the divergence this function
+        exists to remove.
+
+        The components are `int | None`, and their two nullish shapes are not
+        interchangeable: `0` is a real Various-Artists artist number that a
+        truthiness test would blank, while `None` must not reach an operator
+        as the word `None`.
+    """
+    if "call_number" in item:
+        return item["call_number"] or None
+    call_letters = item.get("call_letters")
+    if not call_letters:
+        return None
+    artist_num = item.get("artist_call_number")
+    release_num = item.get("release_call_number")
+    return (
+        f"{call_letters} "
+        f"{'' if artist_num is None else artist_num}/"
+        f"{'' if release_num is None else release_num}"
+    )
+
+
 def indent(text: str, prefix: str = "  ") -> str:
     """Prefix every line of `text`, so callers own their own indentation."""
     return "\n".join(f"{prefix}{line}" for line in text.splitlines())

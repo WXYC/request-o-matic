@@ -26,6 +26,7 @@ from scripts._common import (
     describe_degraded_mode,
     indent,
     set_up_logging,
+    shelf_location,
 )
 
 # History file location
@@ -99,11 +100,8 @@ def print_result(data: dict) -> None:
             print(f"      Artist:   {artist}")
             if item.get("genre"):
                 print(f"      Genre:    {item.get('genre')}")
-            call_letters = item.get("call_letters", "")
-            artist_num = item.get("artist_call_number", "")
-            release_num = item.get("release_call_number", "")
-            if call_letters:
-                print(f"      Location: {call_letters} {artist_num}/{release_num}")
+            if location := shelf_location(item):
+                print(f"      Location: {location}")
             # Only show Discogs URL if we have a confirmed match from artwork
             if artwork_url and title.lower() == artwork_album:
                 print(f"      Discogs:  {artwork_url}")
