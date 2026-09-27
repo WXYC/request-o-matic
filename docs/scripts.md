@@ -22,6 +22,8 @@ The installer's control flow (arg dispatch, guard clauses) is covered by fast, n
 ## Manual Testing Tools
 - **`scripts/lookup.py`** - One-off lookups against production (default) or local (`--local`).
 - **`scripts/repl.py`** - Interactive REPL with command history, server switching (`:local`/`:prod`)
+
+Both tools print a result's `Location:` as the `call_number` the service composed (e.g. `Rock CD PRA 4/2`), the same string the Slack post italicizes, via `scripts/_common.shelf_location`. Neither rebuilds it from `call_letters` and the numeric components: that form drops genre, the shelf section, and names a slot shared by dozens of records ([#298](https://github.com/WXYC/request-o-matic/issues/298)).
 - **`scripts/create_posthog_dashboard.py`** - Creates PostHog dashboard for telemetry visualization (requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`)
 
 ## CI Helpers
