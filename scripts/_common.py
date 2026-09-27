@@ -85,7 +85,8 @@ def shelf_location(item: dict[str, Any]) -> str | None:
         The components are `int | None`, and their two nullish shapes are not
         interchangeable: `0` is a real Various-Artists artist number that a
         truthiness test would blank, while `None` must not reach an operator
-        as the word `None`.
+        as the word `None`. With neither number present there is no slot to
+        derive, so the letters alone are not printed as a bare `MOL /`.
     """
     if "call_number" in item:
         return item["call_number"] or None
@@ -94,6 +95,8 @@ def shelf_location(item: dict[str, Any]) -> str | None:
         return None
     artist_num = item.get("artist_call_number")
     release_num = item.get("release_call_number")
+    if artist_num is None and release_num is None:
+        return None
     return (
         f"{call_letters} "
         f"{'' if artist_num is None else artist_num}/"
