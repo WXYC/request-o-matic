@@ -239,24 +239,45 @@ class TestLibraryResultLocation:
         out = capsys.readouterr().out
         assert "Location: Rock CD PRA 4/2" in out
 
-    def test_location_falls_back_to_components_when_call_number_absent(self, capsys):
+    @pytest.mark.parametrize(
+        ("components", "expected"),
+        [
+            pytest.param(
+                {"call_letters": "CAT", "artist_call_number": 7, "release_call_number": 1},
+                "CAT 7/1",
+                id="both-components-present",
+            ),
+            pytest.param(
+                {"call_letters": "V/A", "artist_call_number": 0, "release_call_number": 3},
+                "V/A 0/3",
+                id="zero-artist-number-is-a-value-not-a-blank",
+            ),
+            pytest.param(
+                {"call_letters": "CAT", "artist_call_number": None, "release_call_number": 1},
+                "CAT /1",
+                id="null-component-renders-blank-not-the-word-None",
+            ),
+        ],
+    )
+    def test_location_falls_back_to_components_when_call_number_absent(
+        self, capsys, components, expected
+    ):
         """A deployed service predating the field still yields a usable locator.
 
         `call_number` is required by the contract, but the CLI points at
         whatever is deployed, so an absent key falls back to the old derivation
         rather than printing nothing.
+
+        The components are `int | None` on the contract, and the two nullish
+        shapes are not interchangeable: `artist_call_number` is `0` for every
+        Various-Artists row, so a truthiness test would blank a real value,
+        while a null component must not reach the operator as the word `None`.
         """
-        item = {
-            "artist": "Cat Power",
-            "title": "Moon Pix",
-            "call_letters": "CAT",
-            "artist_call_number": 7,
-            "release_call_number": 1,
-        }
+        item = {"artist": "Cat Power", "title": "Moon Pix", **components}
 
         print_library_results([item], None)
 
-        assert "Location: CAT 7/1" in capsys.readouterr().out
+        assert f"Location: {expected}" in capsys.readouterr().out
 
     @pytest.mark.parametrize(
         "item",
@@ -279,6 +300,17 @@ class TestLibraryResultLocation:
                     "release_call_number": 3,
                 },
                 id="empty-call-number-does-not-resurrect-the-derivation",
+            ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_number": None,
+                    "call_letters": "MOL",
+                    "artist_call_number": 0,
+                    "release_call_number": 3,
+                },
+                id="null-call-number-does-not-resurrect-the-derivation",
             ),
         ],
     )
