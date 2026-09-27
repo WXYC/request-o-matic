@@ -126,7 +126,11 @@ class TestReplShelfLocation:
         """A deployed service predating the field still yields a usable locator."""
         print_result(_response_with({"title": "Moon Pix", "artist": "Cat Power", **components}))
 
-        assert f"Location: {expected}" in capsys.readouterr().out
+        # Exact, not containment -- see the lookup counterpart for why.
+        location_line = next(
+            line for line in capsys.readouterr().out.splitlines() if "Location:" in line
+        )
+        assert location_line.strip() == f"Location: {expected}"
 
     @pytest.mark.parametrize(
         "item",
@@ -164,6 +168,16 @@ class TestReplShelfLocation:
                 },
                 id="empty-call-letters-do-not-print-a-letterless-locator",
             ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_letters": "MOL",
+                    "artist_call_number": None,
+                    "release_call_number": None,
+                },
+                id="letters-with-no-numbers-do-not-print-a-bare-slash",
+            ),
         ],
     )
     def test_no_locator_omits_the_line_rather_than_inventing_one(self, capsys, item):
@@ -195,12 +209,11 @@ class TestReplShelfLocation:
         )
         repl_locator = repl_line.split("Location:", 1)[1].strip()
 
+        # build_slack_blocks emits [header, item]; the item block's text is
+        # `*artist*` / title / `_call_number_`. Index the known slot rather
+        # than scanning for underscores, which a title like `_o_` would match.
         blocks = build_slack_blocks("Now playing", [(item, None)])
-        slack_locator = next(
-            line.strip("_")
-            for block in blocks
-            for line in block["text"]["text"].splitlines()
-            if line.startswith("_") and line.endswith("_")
-        )
+        slack_line = blocks[1]["text"]["text"].splitlines()[2]
+        slack_locator = slack_line.removeprefix("_").removesuffix("_")
 
         assert repl_locator == slack_locator == item.call_number

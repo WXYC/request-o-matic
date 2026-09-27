@@ -287,7 +287,12 @@ class TestLibraryResultLocation:
 
         print_library_results([item], None)
 
-        assert f"Location: {expected}" in capsys.readouterr().out
+        # Exact, not containment: "Location: CAT 7/" is a prefix of
+        # "Location: CAT 7/None", so `in` cannot catch the word leaking.
+        location_line = next(
+            line for line in capsys.readouterr().out.splitlines() if "Location:" in line
+        )
+        assert location_line.strip() == f"Location: {expected}"
 
     @pytest.mark.parametrize(
         "item",
@@ -309,6 +314,16 @@ class TestLibraryResultLocation:
                     "release_call_number": 1,
                 },
                 id="empty-call-letters-do-not-print-a-letterless-locator",
+            ),
+            pytest.param(
+                {
+                    "artist": "Juana Molina",
+                    "title": "DOGA",
+                    "call_letters": "MOL",
+                    "artist_call_number": None,
+                    "release_call_number": None,
+                },
+                id="letters-with-no-numbers-do-not-print-a-bare-slash",
             ),
             pytest.param(
                 {
@@ -361,12 +376,11 @@ class TestLibraryResultLocation:
         )
         cli_locator = cli_line.split("Location:", 1)[1].strip()
 
+        # build_slack_blocks emits [header, item]; the item block's text is
+        # `*artist*` / title / `_call_number_`. Index the known slot rather
+        # than scanning for underscores, which a title like `_o_` would match.
         blocks = build_slack_blocks("Now playing", [(item, None)])
-        slack_locator = next(
-            line.strip("_")
-            for block in blocks
-            for line in block["text"]["text"].splitlines()
-            if line.startswith("_") and line.endswith("_")
-        )
+        slack_line = blocks[1]["text"]["text"].splitlines()[2]
+        slack_locator = slack_line.removeprefix("_").removesuffix("_")
 
         assert cli_locator == slack_locator == item.call_number
