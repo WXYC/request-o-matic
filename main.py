@@ -7,7 +7,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from wxyc_fastapi.healthcheck import liveness_router
-from wxyc_fastapi.observability import flush_posthog, init_sentry, shutdown_posthog
+from wxyc_fastapi.observability import (
+    flush_posthog,
+    init_error_tracking,
+    init_sentry,
+    shutdown_posthog,
+)
 
 from config.settings import get_settings
 from core.dependencies import close_http_client
@@ -69,6 +74,17 @@ app = FastAPI(
     description="Supplement song requests with structured metadata, album artwork, and library catalog info",
     version=settings.app_version,
     lifespan=lifespan,
+)
+
+# Staging gets the smaller per-process daily ceiling (wxyc-fastapi error-tracking contract).
+init_error_tracking(
+    service="request-o-matic",
+    environment=settings.deployment_environment,
+    daily_ceiling=50
+    if settings.deployment_environment.strip().lower() in ("staging", "stage")
+    else 100,
+    release=settings.app_version,
+    app=app,
 )
 
 

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -634,19 +634,17 @@ wheels = [
 
 [[package]]
 name = "posthog"
-version = "7.9.1"
+version = "7.73.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
     { name = "distro" },
-    { name = "python-dateutil" },
     { name = "requests" },
-    { name = "six" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/8c/0b66a64bca61d927b7e3ddab564419213303ab9f2bce42036b894c3919d7/posthog-7.9.1.tar.gz", hash = "sha256:448fb0ec4d5cabb8967a36512b8a9aa50d1e46657913245031b41ca434ca9882", size = 172247, upload-time = "2026-02-17T16:59:40.345Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/55/0ac54e115de9bd2e972c2da341f99161b32ab8cf2cab66c87e16572cd346/posthog-7.73.1.tar.gz", hash = "sha256:af3a2faeb0bfccaebac65e5d8aa1568581c563b00ab2852b92b37d3b241d0ef6", size = 764785, upload-time = "2026-10-20T11:53:49.806Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/47/9033ff9020f9b473e4f89b349f821c2ad053241cf2274693f838c9edbc7b/posthog-7.9.1-py3-none-any.whl", hash = "sha256:fe1c4869545f0bfaf458618f03875ea226f17ea23a94553e2e9d611dc77af722", size = 197851, upload-time = "2026-02-17T16:59:37.679Z" },
+    { url = "https://files.pythonhosted.org/packages/50/a8/5cc1117b7c5c26f4a23e75ed8400ec6fe8ba95dc53788ddc079fa894016c/posthog-7.73.1-py3-none-any.whl", hash = "sha256:aca0e3bea228e50fbd245a3b07bef17413ec7a1cc83f464e0c79086f7adbbd23", size = 894496, upload-time = "2026-10-20T11:53:47.464Z" },
 ]
 
 [[package]]
@@ -815,18 +813,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-dateutil"
-version = "2.9.0.post0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "six" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
-]
-
-[[package]]
 name = "python-dotenv"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -954,7 +940,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.1" },
     { name = "uvicorn", specifier = ">=0.24.0" },
-    { name = "wxyc-fastapi", extras = ["posthog"], specifier = ">=1.4.0,<2.0.0" },
+    { name = "wxyc-fastapi", extras = ["posthog"], specifier = ">=1.6.0,<2.0.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1014,15 +1000,6 @@ wheels = [
 [package.optional-dependencies]
 fastapi = [
     { name = "fastapi" },
-]
-
-[[package]]
-name = "six"
-version = "1.17.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
 
 [[package]]
@@ -1104,16 +1081,16 @@ wheels = [
 
 [[package]]
 name = "wxyc-fastapi"
-version = "1.4.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "sentry-sdk", extra = ["fastapi"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/bd/4da7356a8c5108d8eea9a95fc0b7732c3bf072f84ba8cbdc5d752d007ea9/wxyc_fastapi-1.4.0.tar.gz", hash = "sha256:2d0b03f0ce7a1be51e6379e8c56ff25378d16e6d7c19f7c8beb2f52c93adff39", size = 26686, upload-time = "2026-08-09T17:14:31.305Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/2c/bc8987ce6bcaf3121d02fbe96b9cb65d3c1c8ac72419c19c2c0540584e05/wxyc_fastapi-1.6.0.tar.gz", hash = "sha256:132c9b7bbea25d0d5dd50baab74ef47ee911ea9edde7cba1773db9f6cfe95cb5", size = 34077, upload-time = "2026-10-20T03:40:56.091Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/a5/328ac08ca3fa3defa3127e1c668e203c67df87635f8bac68d73713ff28dd/wxyc_fastapi-1.4.0-py3-none-any.whl", hash = "sha256:5b7d52f108706444d0641272167ca8c298bf1d2c7056a3e3c34cc039c607e61f", size = 29419, upload-time = "2026-08-09T17:14:29.91Z" },
+    { url = "https://files.pythonhosted.org/packages/da/1d/252614a660ae2fa1f22b5370583982bfc6618009f65fab2e2860ba858dfd/wxyc_fastapi-1.6.0-py3-none-any.whl", hash = "sha256:5015605e28265099b598248f3a8bd8311c0dda522898dbe0daba42810eec5e3c", size = 38878, upload-time = "2026-10-20T03:40:54.758Z" },
 ]
 
 [package.optional-dependencies]
