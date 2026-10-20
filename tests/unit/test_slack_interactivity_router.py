@@ -17,7 +17,7 @@ import hmac
 import json
 import time
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -734,6 +734,21 @@ class TestViewSubmissionAuthorization:
         slack.update_message.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_unauthorized_ban_attempt_leaves_a_posthog_breadcrumb(self):
+        payload = _view_submission_payload(user_id="U99UNAUTHORIZED")
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(), ban_client=_mock_ban_client(), allowed_users=ACTING_USER
+        )
+
+        with patch("routers.slack_interactivity.add_breadcrumb") as mock_crumb:
+            await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        mock_crumb.assert_called_once_with(
+            category="slack_ban", message="Unauthorized ban attempt via Slack interactivity"
+        )
+
+    @pytest.mark.asyncio
     async def test_empty_allowlist_denies_everyone(self):
         """SLACK_BAN_AUTHORIZED_USERS unset/empty -> deny-all, even the user
         who would otherwise be allowlisted -- fail closed."""
@@ -1291,6 +1306,22 @@ class TestRosterSubmissionAuthorization:
         assert resp.status_code == 200
         assert "not authorized" in _errors_for(resp)[MODERATOR_BLOCK_ID]
         moderators.replace_moderators.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_roster_save_leaves_a_posthog_breadcrumb(self):
+        payload = _roster_submission_payload(user_id="U99ZZZ", selected=[MOD_TWO])
+        body = _form_body(payload)
+        app = _build_app(
+            slack=_mock_slack_service(), moderator_client=_mock_moderator_client([MOD_ONE])
+        )
+
+        with patch("routers.slack_interactivity.add_breadcrumb") as mock_crumb:
+            await _post(app, body, _signed_headers(SIGNING_SECRET, body))
+
+        mock_crumb.assert_called_once_with(
+            category="slack_moderators",
+            message="Unauthorized moderator-roster save via Slack interactivity",
+        )
 
     @pytest.mark.asyncio
     async def test_refusal_keeps_the_modal_open_rather_than_looking_like_a_save(self):

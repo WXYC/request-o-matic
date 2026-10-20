@@ -422,6 +422,37 @@ class TestBanCheckUnreachableFailsOpen:
         mock_slack_service.post_blocks.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_bs_unreachable_leaves_a_posthog_breadcrumb(
+        self, mock_ban_check_client, mock_lookup_client, mock_slack_service, mock_posthog
+    ):
+        mock_ban_check_client.check.side_effect = BanCheckUnavailableError("BS down")
+        app = _make_app(
+            ban_check_client=mock_ban_check_client,
+            lookup_client=mock_lookup_client,
+            slack_service=mock_slack_service,
+            posthog_client=mock_posthog,
+        )
+
+        with (
+            patch(
+                "routers.request.parse_request", new_callable=AsyncMock, return_value=SAMPLE_PARSED
+            ),
+            patch("routers.request.add_breadcrumb") as mock_crumb,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                await client.post(
+                    "/api/v1/request",
+                    json={"message": "play la paradoja"},
+                    headers={"Authorization": "Bearer eyJ..."},
+                )
+
+        mock_crumb.assert_called_once_with(
+            category="ban_check", message="BS /auth/check-request-ban unavailable; failing open"
+        )
+
+    @pytest.mark.asyncio
     async def test_bs_unreachable_emits_ban_check_degraded_telemetry(
         self,
         mock_ban_check_client,
