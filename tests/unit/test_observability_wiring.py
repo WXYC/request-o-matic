@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -75,12 +76,13 @@ def test_main_calls_init_error_tracking_with_per_environment_ceiling(
 
 def test_error_log_produces_exception_event_through_stubbed_client():
     """An ERROR log reaches PostHog as a `$exception` once error tracking is initialised."""
+    from posthog import Posthog
     from wxyc_fastapi.observability import PosthogErrorsClient, init_error_tracking
     from wxyc_fastapi.testing import CountingPosthog
 
     stub = CountingPosthog()
     client = PosthogErrorsClient(
-        stub, service="request-o-matic", environment="staging", daily_ceiling=50
+        cast(Posthog, stub), service="request-o-matic", environment="staging", daily_ceiling=50
     )
     root = logging.getLogger()
     handlers_before = list(root.handlers)
@@ -98,8 +100,10 @@ def test_error_log_produces_exception_event_through_stubbed_client():
         root.handlers[:] = handlers_before
 
     assert [c.event for c in stub.captures] == ["$exception"]
-    assert stub.captures[0].properties["service"] == "request-o-matic"
-    assert stub.captures[0].properties["logger"] == "routers.request"
+    properties = stub.captures[0].properties
+    assert properties is not None
+    assert properties["service"] == "request-o-matic"
+    assert properties["logger"] == "routers.request"
 
 
 def test_request_router_constructs_telemetry_with_rom_parameters():
