@@ -106,6 +106,59 @@ def test_error_log_produces_exception_event_through_stubbed_client():
     assert properties["logger"] == "routers.request"
 
 
+def test_error_log_in_request_through_main_app_produces_one_exception_event(monkeypatch):
+    """An ERROR log inside a request to `main.app` reaches PostHog as one `$exception`.
+
+    Goes through request-o-matic's own wiring: `main` runs `setup_logging(force=True)`
+    (which strips root handlers) and only then `init_error_tracking(app=app)`. If the
+    init moves above `setup_logging`, or is removed, the handler is gone and this fails.
+    """
+    from fastapi.testclient import TestClient
+    from wxyc_fastapi.observability import error_tracking, errors
+    from wxyc_fastapi.testing import CountingPosthog
+
+    monkeypatch.setenv("GROQ_API_KEY", "test_key")
+    monkeypatch.setenv("POSTHOG_ERRORS_API_KEY", "phc_test_errors_key")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+    monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+    monkeypatch.setattr(errors, "_client", None)
+    monkeypatch.setattr(errors, "_config", None)
+    monkeypatch.setattr(errors, "_init_failed", False)
+    monkeypatch.setattr(error_tracking, "_install_excepthooks", lambda client: None)
+
+    from config import settings as settings_module
+
+    stub = CountingPosthog()
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    level_before = root.level
+    sys.modules.pop("main", None)
+    settings_module.get_settings.cache_clear()
+    try:
+        with patch("posthog.Posthog", return_value=stub):
+            main = importlib.import_module("main")
+
+        def _logs_an_error() -> dict[str, bool]:
+            logging.getLogger("routers.request").error("LML lookup exploded")
+            return {"ok": True}
+
+        main.app.add_api_route("/_test/log-error", _logs_an_error)
+        response = TestClient(main.app).get("/_test/log-error", headers={"X-Request-ID": "req-301"})
+    finally:
+        root.handlers[:] = handlers_before
+        root.setLevel(level_before)
+        sys.modules.pop("main", None)
+        settings_module.get_settings.cache_clear()
+
+    assert response.status_code == 200
+    assert [c.event for c in stub.captures] == ["$exception"]
+    properties = stub.captures[0].properties
+    assert properties is not None
+    assert properties["service"] == "request-o-matic"
+    assert properties["logger"] == "routers.request"
+    assert properties["request_id"] == "req-301"
+
+
 def test_request_router_constructs_telemetry_with_rom_parameters():
     """`process_request` builds a `RequestTelemetry` keyed for rom's services."""
     from wxyc_fastapi.observability import RequestTelemetry

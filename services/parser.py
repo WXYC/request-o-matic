@@ -7,8 +7,6 @@ from typing import Literal, get_args
 from groq import AsyncGroq
 from pydantic import BaseModel
 
-from core.groq_tracing import groq_parse_span
-
 logger = logging.getLogger(__name__)
 
 # Groq retired the entire Llama 3.x family on 2026-08-17, including the previous
@@ -493,78 +491,67 @@ async def parse_request(message: str, client: AsyncGroq) -> ParsedRequest:
         pre_pass_album = None
         groq_message = message
 
-    with groq_parse_span(model=GROQ_MODEL, message=message) as span:
-        try:
-            response = await client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=groq_message)},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                # gpt-oss is a reasoning model, unlike the llama-3.1-8b-instant
-                # it replaced. At the default effort it spent 135-413 hidden
-                # reasoning tokens per parse (measured across the scenario
-                # corpus) to emit ~38 tokens of JSON, and discarded them. On the
-                # free tier's 8000 TPM bucket that is a large fraction of the
-                # per-minute budget spent on chain-of-thought for a slot-filling
-                # task. "low" is the floor Groq accepts for this model ("none"
-                # is rejected); the parser suite is green on it.
-                reasoning_effort="low",
-                # The model card advertises a 65536-token completion ceiling. One
-                # message that sends it into a long reasoning loop could consume
-                # the entire minute-bucket eight times over and 429 every other
-                # parse. The old model had no reasoning phase, so the JSON shape
-                # bounded output naturally; that bound has to be explicit now.
-                # Worst completion observed is 533, so 1024 is ample headroom.
-                max_completion_tokens=1024,
-            )
+    try:
+        response = await client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(message=groq_message)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            # gpt-oss is a reasoning model, unlike the llama-3.1-8b-instant
+            # it replaced. At the default effort it spent 135-413 hidden
+            # reasoning tokens per parse (measured across the scenario
+            # corpus) to emit ~38 tokens of JSON, and discarded them. On the
+            # free tier's 8000 TPM bucket that is a large fraction of the
+            # per-minute budget spent on chain-of-thought for a slot-filling
+            # task. "low" is the floor Groq accepts for this model ("none"
+            # is rejected); the parser suite is green on it.
+            reasoning_effort="low",
+            # The model card advertises a 65536-token completion ceiling. One
+            # message that sends it into a long reasoning loop could consume
+            # the entire minute-bucket eight times over and 429 every other
+            # parse. The old model had no reasoning phase, so the JSON shape
+            # bounded output naturally; that bound has to be explicit now.
+            # Worst completion observed is 533, so 1024 is ample headroom.
+            max_completion_tokens=1024,
+        )
 
-            content = response.choices[0].message.content
-            if content is None:
-                raise ValueError("Empty response from Groq")
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("Empty response from Groq")
 
-            parsed = json.loads(content)
-            logger.debug(f"Raw parsed response: {parsed}")
+        parsed = json.loads(content)
+        logger.debug(f"Raw parsed response: {parsed}")
 
-            # If the deterministic pre-pass extracted an album, trust it over
-            # whatever Groq returned in that slot (Groq sees the message
-            # without the album suffix, so it shouldn't claim one anyway).
-            album = pre_pass_album if pre_pass_album is not None else parsed.get("album")
+        # If the deterministic pre-pass extracted an album, trust it over
+        # whatever Groq returned in that slot (Groq sees the message
+        # without the album suffix, so it shouldn't claim one anyway).
+        album = pre_pass_album if pre_pass_album is not None else parsed.get("album")
 
-            parsed_request = ParsedRequest(
-                song=parsed.get("song"),
-                album=album,
-                artist=parsed.get("artist"),
-                is_request=parsed.get("is_request", False),
-                message_type=parsed.get("message_type", MessageType.OTHER),
-                raw_message=message,
-            )
+        parsed_request = ParsedRequest(
+            song=parsed.get("song"),
+            album=album,
+            artist=parsed.get("artist"),
+            is_request=parsed.get("is_request", False),
+            message_type=parsed.get("message_type", MessageType.OTHER),
+            raw_message=message,
+        )
 
-            span.set_data("ai.output.is_request", parsed_request.is_request)
-            span.set_data("ai.output.message_type", parsed_request.message_type.value)
-            span.set_data("ai.output.album_prepass_fired", pre_pass_album is not None)
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                if getattr(usage, "prompt_tokens", None) is not None:
-                    span.set_data("ai.tokens.prompt", usage.prompt_tokens)
-                if getattr(usage, "completion_tokens", None) is not None:
-                    span.set_data("ai.tokens.completion", usage.completion_tokens)
+        return parsed_request
 
-            return parsed_request
-
-        # Both handlers log at WARNING and re-raise: whether a failure is worth
-        # alerting on is the caller's policy, not the parser's. Sentry's
-        # LoggingIntegration promotes ERROR to an event, so logging it here
-        # minted one for every failure alike -- a routine free-tier 429 became
-        # indistinguishable from the decommissioned model pin that degraded the
-        # service for hours on 2026-08-17. `/request` now grades the exception
-        # (routers/request.py `_GROQ_TRANSIENT_ERRORS`) and `/parse` maps it to a
-        # status code; both raise the severity themselves when it is warranted.
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON response: {e}")
-            raise ValueError(f"Invalid JSON response from Groq: {e}") from e
-        except Exception as e:
-            logger.warning(f"Error parsing request: {e}")
-            raise
+    # Both handlers log at WARNING and re-raise: whether a failure is worth
+    # alerting on is the caller's policy, not the parser's. Sentry's
+    # LoggingIntegration promotes ERROR to an event, so logging it here
+    # minted one for every failure alike -- a routine free-tier 429 became
+    # indistinguishable from the decommissioned model pin that degraded the
+    # service for hours on 2026-08-17. `/request` now grades the exception
+    # (routers/request.py `_GROQ_TRANSIENT_ERRORS`) and `/parse` maps it to a
+    # status code; both raise the severity themselves when it is warranted.
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON response: {e}")
+        raise ValueError(f"Invalid JSON response from Groq: {e}") from e
+    except Exception as e:
+        logger.warning(f"Error parsing request: {e}")
+        raise
