@@ -52,7 +52,7 @@ The gate is `scripts/nlp_nightly_gate.py`, and it makes two decisions:
    | Watched | Why |
    |---|---|
    | `services/parser.py` | The prompt, the model pin, and `parse_request()` itself |
-   | `core/groq_tracing.py` | Groq span wiring |
+   | `core/groq_tracing.py` | Groq retry breadcrumb wiring |
    | `tests/scenarios.py` | The shared assertion corpus |
    | `tests/integration/test_integration.py` | The suite itself |
    | `tests/conftest.py`, `tests/integration/conftest.py` | The fixtures the job leans on (`TEST_ENV`, autouse `local_server`) |

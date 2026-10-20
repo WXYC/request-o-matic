@@ -1,28 +1,16 @@
-"""Sentry tracing helpers for Groq AI parse calls.
+"""Retry breadcrumbs for Groq AI parse calls.
 
-Two pieces of instrumentation live here:
-
-1. ``groq_parse_span`` — context manager that opens an ``ai.parse`` span around
-   a single Groq chat-completions call. Tagged with model name, input length,
-   and (on success) token counts + parse-result fields. ``HttpxIntegration``
-   already emits one child span per HTTP attempt, so the ``ai.parse`` span
-   shows the 429-retry cadence as a series of child spans with sleep gaps
-   between them, under a single named parent that consumers can filter on
-   in Sentry's trace explorer.
-
-2. ``install_groq_retry_breadcrumbs`` — installs a logging.Filter on the
-   ``groq._base_client`` logger that converts ``Retrying request to <path>
-   in <n> seconds`` log lines into structured Sentry breadcrumbs (category
-   ``groq.retry``). This surfaces retry cadence on captured events even
-   when the surrounding trace is unsampled.
+``install_groq_retry_breadcrumbs`` installs a logging.Filter on the
+``groq._base_client`` logger that converts ``Retrying request to <path>
+in <n> seconds`` log lines into structured breadcrumbs (category
+``groq.retry``). This surfaces retry cadence on captured events even
+when the surrounding trace is unsampled.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import re
-from collections.abc import Iterator
 
 import sentry_sdk
 from wxyc_fastapi.observability import add_breadcrumb
@@ -34,25 +22,6 @@ GROQ_RETRY_LOGGER = "groq._base_client"
 # Matches the Groq SDK retry log: "Retrying request to /openai/v1/chat/completions in 8.000000 seconds"
 # Source: https://github.com/groq/groq-python/blob/main/src/groq/_base_client.py
 _RETRY_LOG_RE = re.compile(r"Retrying request to (\S+) in ([\d.]+) seconds")
-
-
-@contextlib.contextmanager
-def groq_parse_span(*, model: str, message: str) -> Iterator[sentry_sdk.tracing.Span]:
-    """Open an ``ai.parse`` span around a Groq chat-completions call.
-
-    The yielded span is pre-tagged with ``ai.model`` and the input message
-    length. Callers should additionally call ``span.set_data(...)`` for
-    output-side fields (parsed result, token counts) after a successful
-    Groq response.
-
-    When Sentry isn't initialized, ``sentry_sdk.start_span`` returns a no-op
-    span that swallows ``set_data`` silently, so this is safe to call
-    unconditionally.
-    """
-    with sentry_sdk.start_span(op="ai.parse", name="groq.parse") as span:
-        span.set_data("ai.model", model)
-        span.set_data("ai.input.message_length", len(message))
-        yield span
 
 
 class _GroqRetryBreadcrumbFilter(logging.Filter):
