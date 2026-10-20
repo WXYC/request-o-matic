@@ -209,6 +209,17 @@ class TestGroqRetryBreadcrumbs:
         assert kwargs["data"]["path"] == "/openai/v1/chat/completions"
         assert kwargs["data"]["retry_in_seconds"] == 8.0
 
+    def test_retry_log_also_emits_posthog_breadcrumb(self):
+        from core.groq_tracing import install_groq_retry_breadcrumbs
+
+        install_groq_retry_breadcrumbs()
+        message = "Retrying request to /openai/v1/chat/completions in 8.000000 seconds"
+
+        with patch("core.groq_tracing.add_breadcrumb") as mock_add:
+            logging.getLogger("groq._base_client").info(message)
+
+        mock_add.assert_called_once_with(category="groq.retry", message=message)
+
     def test_non_retry_log_does_not_emit_breadcrumb(self):
         from core.groq_tracing import install_groq_retry_breadcrumbs
 

@@ -14,7 +14,7 @@ guarantee out of ``is_authorized_slack_user``.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -281,6 +281,16 @@ class TestDegradedIsDistinguishableFromDenied:
     @pytest.mark.asyncio
     async def test_client_error_is_degraded(self):
         assert (await resolve_authorized_users(_failing_client(), "U01ABC")).degraded is True
+
+    @pytest.mark.asyncio
+    async def test_degraded_roster_leaves_a_posthog_breadcrumb(self):
+        with patch("services.slack_authorization.add_breadcrumb") as mock_crumb:
+            await resolve_authorized_users(_failing_client(), "U01ABC")
+
+        mock_crumb.assert_called_once_with(
+            category="slack_ban",
+            message="Moderator roster unavailable; authorized set degraded to the env allowlist",
+        )
 
     @pytest.mark.asyncio
     async def test_unconfigured_client_is_degraded(self):
