@@ -25,6 +25,7 @@ import re
 from collections.abc import Iterator
 
 import sentry_sdk
+from wxyc_fastapi.observability import add_breadcrumb
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class _GroqRetryBreadcrumbFilter(logging.Filter):
                     "retry_in_seconds": float(match.group(2)),
                 },
             )
+            add_breadcrumb(category="groq.retry", message=message)
         except Exception:
             # Breadcrumb emission must never break logging itself.
             pass

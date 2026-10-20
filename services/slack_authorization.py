@@ -25,6 +25,7 @@ import logging
 from typing import NamedTuple
 
 import sentry_sdk
+from wxyc_fastapi.observability import add_breadcrumb
 
 from services.moderator_client import ModeratorClient, ModeratorClientError
 
@@ -180,6 +181,10 @@ async def resolve_authorized_users(
             level="warning",
             message="Moderator roster unavailable; authorized set degraded to the env allowlist",
             data={"environment_entries": len(environment)},
+        )
+        add_breadcrumb(
+            category="slack_ban",
+            message="Moderator roster unavailable; authorized set degraded to the env allowlist",
         )
         return AuthorizedUsers(environment, degraded=True)
 

@@ -38,7 +38,12 @@ from groq import (
     RateLimitError,
 )
 from pydantic import BaseModel
-from wxyc_fastapi.observability import RequestTelemetry, get_cache_stats, init_cache_stats
+from wxyc_fastapi.observability import (
+    RequestTelemetry,
+    add_breadcrumb,
+    get_cache_stats,
+    init_cache_stats,
+)
 
 from config.settings import Settings, get_settings
 from core.dependencies import (
@@ -552,6 +557,10 @@ async def handle_request(
                 level="warning",
                 message="BS /auth/check-request-ban unavailable; failing open",
                 data={"error": str(exc)},
+            )
+            add_breadcrumb(
+                category="ban_check",
+                message="BS /auth/check-request-ban unavailable; failing open",
             )
             ban_check_degraded = True
         else:

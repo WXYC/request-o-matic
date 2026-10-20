@@ -50,7 +50,7 @@ idna==3.11
     #   anyio
     #   httpx
     #   requests
-posthog==7.9.1
+posthog==7.73.1
     # via wxyc-fastapi
 pydantic==2.12.5
     # via
@@ -62,8 +62,6 @@ pydantic-core==2.41.5
     # via pydantic
 pydantic-settings==2.13.0
     # via request-o-matic
-python-dateutil==2.9.0.post0
-    # via posthog
 python-dotenv==1.2.1
     # via
     #   pydantic-settings
@@ -72,10 +70,6 @@ requests==2.32.5
     # via posthog
 sentry-sdk==2.58.0
     # via wxyc-fastapi
-six==1.17.0
-    # via
-    #   posthog
-    #   python-dateutil
 sniffio==1.3.1
     # via groq
 starlette==0.52.1
@@ -101,5 +95,5 @@ urllib3==2.6.3
     #   sentry-sdk
 uvicorn==0.41.0
     # via request-o-matic
-wxyc-fastapi==1.4.0
+wxyc-fastapi==1.6.0
     # via request-o-matic

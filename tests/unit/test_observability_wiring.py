@@ -10,8 +10,11 @@ later refactor can't silently change them.
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from unittest.mock import patch
+
+import pytest
 
 
 def test_main_calls_init_sentry_with_request_o_matic_service_name(monkeypatch):
@@ -37,6 +40,66 @@ def test_main_calls_init_sentry_with_request_o_matic_service_name(monkeypatch):
     assert kwargs["service_name"] == "request-o-matic"
     assert kwargs["environment"] == "staging"
     assert kwargs["release"] == Settings().app_version
+
+
+@pytest.mark.parametrize(
+    ("railway_env", "expected_ceiling"),
+    [("staging", 50), ("stage", 50), ("Staging", 50), ("production", 100), ("local", 100)],
+)
+def test_main_calls_init_error_tracking_with_per_environment_ceiling(
+    monkeypatch, railway_env, expected_ceiling
+):
+    """`main` wires settings into `init_error_tracking`; staging gets the smaller daily ceiling."""
+    monkeypatch.setenv("GROQ_API_KEY", "test_key")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", railway_env)
+    monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+
+    from config import settings as settings_module
+
+    sys.modules.pop("main", None)
+    settings_module.get_settings.cache_clear()
+
+    with patch("wxyc_fastapi.observability.init_error_tracking") as mock_init:
+        main = importlib.import_module("main")
+
+    from config.settings import Settings
+
+    mock_init.assert_called_once()
+    kwargs = mock_init.call_args.kwargs
+    assert kwargs["service"] == "request-o-matic"
+    assert kwargs["environment"] == railway_env
+    assert kwargs["release"] == Settings().app_version
+    assert kwargs["daily_ceiling"] == expected_ceiling
+    assert kwargs["app"] is main.app
+
+
+def test_error_log_produces_exception_event_through_stubbed_client():
+    """An ERROR log reaches PostHog as a `$exception` once error tracking is initialised."""
+    from wxyc_fastapi.observability import PosthogErrorsClient, init_error_tracking
+    from wxyc_fastapi.testing import CountingPosthog
+
+    stub = CountingPosthog()
+    client = PosthogErrorsClient(
+        stub, service="request-o-matic", environment="staging", daily_ceiling=50
+    )
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+    try:
+        with (
+            patch(
+                "wxyc_fastapi.observability.error_tracking.get_posthog_errors_client",
+                return_value=client,
+            ),
+            patch("wxyc_fastapi.observability.error_tracking._install_excepthooks"),
+        ):
+            init_error_tracking(service="request-o-matic", environment="staging", daily_ceiling=50)
+        logging.getLogger("routers.request").error("LML lookup exploded")
+    finally:
+        root.handlers[:] = handlers_before
+
+    assert [c.event for c in stub.captures] == ["$exception"]
+    assert stub.captures[0].properties["service"] == "request-o-matic"
+    assert stub.captures[0].properties["logger"] == "routers.request"
 
 
 def test_request_router_constructs_telemetry_with_rom_parameters():

@@ -61,6 +61,7 @@ import httpx
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
+from wxyc_fastapi.observability import add_breadcrumb
 
 from config.settings import Settings, get_settings
 from core.dependencies import (
@@ -475,6 +476,10 @@ async def _handle_moderator_view_submission(
             message="Unauthorized moderator-roster save via Slack interactivity",
             data={"user_id": user_id},
         )
+        add_breadcrumb(
+            category="slack_moderators",
+            message="Unauthorized moderator-roster save via Slack interactivity",
+        )
         return _roster_error("You are not authorized to manage moderators.")
 
     # Unreachable in practice -- resolve_authorized_users above would have
@@ -617,6 +622,9 @@ async def _handle_ban_view_submission(
             level="warning",
             message="Unauthorized ban attempt via Slack interactivity",
             data={"user_id": user_id},
+        )
+        add_breadcrumb(
+            category="slack_ban", message="Unauthorized ban attempt via Slack interactivity"
         )
         if slack is not None and channel:
             await _notify_slack(
