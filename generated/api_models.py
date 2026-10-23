@@ -7,6 +7,7 @@ from datetime import date as date_aliased
 from datetime import time as time_aliased
 from enum import Enum, IntEnum, StrEnum
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import (
     AnyUrl,
@@ -34,18 +35,6 @@ class FlowsheetJoinIntent(StrEnum):
 
 class ShowAlreadyOpenErrorCode(StrEnum):
     show_already_open = "show_already_open"
-
-
-class ShowAlreadyOpenShow(BaseModel):
-    id: int = Field(
-        ...,
-        description="`shows.id` of the open show. This is the value a follow-up `intent: takeover` must send as `expected_show_id`.\n",
-    )
-    dj_name: str | None = Field(
-        None,
-        description='The show OWNER\'s public handle, resolved through the same PII-safe chain as `OpenShow.dj_name` (BS#1371): per-show override -> the DJ\'s chosen handle -> the legacy tubafrenzy handle -> `null` when unresolvable.\n\n**Null is the common case, not the edge.** Essentially the whole open-show backlog this handshake exists to unstick reaches nothing through that chain (2,813 of production\'s 2,814 open shows carried a NULL `primary_dj_id` as of 2026-08-21), so a prompt that interpolates it unguarded renders "null is on air". Fall back to generic phrasing.\n\nFor an abandoned show this names the DJ who LEFT. A client showing "who is on air right now" should prefer `GET /flowsheet/djs-on-air`, whose active-membership answer is the one that disagrees with this field precisely when it matters.\n',
-    )
-    start_time: AwareDatetime
 
 
 class PaginationParams(BaseModel):
@@ -81,14 +70,8 @@ class HealthCheckResponse(BaseModel):
     )
 
 
-class Services(StrEnum):
-    ok = "ok"
-    unavailable = "unavailable"
-    timeout = "timeout"
-
-
 class ReadinessResponse(HealthCheckResponse):
-    services: dict[str, Services] = Field(
+    services: dict[str, str] = Field(
         ..., description="Per-dependency readiness map keyed by dependency name."
     )
 
@@ -103,35 +86,9 @@ class RotationBin(StrEnum):
 class FlowsheetEntryBase(BaseModel):
     id: int
     play_order: int
-    show_id: int
-
-
-class FlowsheetRangeEntryBase(BaseModel):
-    id: int
-    play_order: int
     show_id: int = Field(
         ...,
-        description="The show this entry belongs to, or `null` for an **unattributed** entry — a row that exists with no linked show. 20 of 2,619,011 rows are in that state (2005-02-06 → 2026-04-21), and the Phase 0 audit for the tubafrenzy decommissioning decided against backfilling them, so this endpoint returns them rather than dropping them. Consumers that group entries by show must render an unattributed bucket; they must not assume every entry joins to a member of `shows`, and must not crash on the null. The key is always present.",
-    )
-
-
-class FlowsheetRangeShow(BaseModel):
-    id: int = Field(
-        ...,
-        description="Matches `FlowsheetRangeEntry.show_id` for every entry belonging to this show.",
-    )
-    show_name: str | None = Field(
-        None, description="Specialty-show name, or `null` for a regular show."
-    )
-    dj_name: str | None = Field(
-        None,
-        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> the DJ's chosen handle (`user.djName`) -> the legacy tubafrenzy handle (`shows.legacy_dj_name`, tubafrenzy's `DJ_HANDLE`) -> `null`.",
-    )
-    specialty_id: int | None = None
-    start_time: AwareDatetime = Field(..., description="When the DJ signed on (ISO 8601).")
-    end_time: AwareDatetime | None = Field(
-        None,
-        description='When the DJ signed off (ISO 8601), or `null`. Null has **two** causes and they are not distinguishable from this field alone: the show is genuinely on the air, or its `show_end` delivery was dropped and the column stayed null permanently (nothing re-closes it on a schedule). Do not render a null `end_time` as "on air now"; compare `start_time` against the present, or read the `show_end` marker row in `entries`, which is the second independent signal.',
+        description="The show this entry belongs to, or `null` for an **unattributed** entry — a row that exists with no linked show. `flowsheet.show_id` carries no NOT NULL and its foreign key is `ON DELETE SET NULL`, and the table documents NULL `show_id` as a shape Backend-canonical writes must accept: entries that pre-date a show, marker rows, and never-linked tracks. The Phase 0 audit for the tubafrenzy decommissioning counted 20 such rows of 2,619,011 (2005-02-06 → 2026-04-21) and decided against backfilling them, so they reach the wire rather than being dropped.\n\nConsumers that group entries by show must render an unattributed bucket; they must not assume every entry joins to a show, and must not crash on the null. The key is always present. Same column and same contract as `FlowsheetV2Base.show_id` — the two identity blocks are separate for historical reasons, not because the column differs between them.",
     )
 
 
@@ -140,7 +97,10 @@ class FlowsheetSongEntry(FlowsheetEntryBase):
     artist_name: str
     album_title: str
     record_label: str
-    label_id: int | None = None
+    label_id: int | None = Field(
+        None,
+        description="Same column and same contract as `FlowsheetEntryFields.label_id`: `labels.id` for `record_label`, or `null` when the row's label was never linked to a catalog row, which is the state of the large majority of rows. Declared again here because this shape carries its own copy of the field set rather than composing that block.",
+    )
     request_flag: bool
     segue: bool | None = None
     album_id: int | None = None
@@ -213,18 +173,8 @@ class FlowsheetCreateMessage(BaseModel):
     )
 
 
-class FlowsheetUpdateRequest(BaseModel):
-    track_title: str | None = None
-    track_position: str | None = Field(
-        None,
-        description='Track position on the release (e.g., "A1", "B2", "5", "1-12"). Set when re-picking a track via the flowsheet picker; cleared (omitted) when a DJ edits the entry to a free-text track_title. String-typed to match Discogs\'s `release_track.position`.\n',
-    )
-    artist_name: str | None = None
-    album_title: str | None = None
-    record_label: str | None = None
-    label_id: int | None = None
-    request_flag: bool | None = None
-    segue: bool | None = None
+class EntryType1(StrEnum):
+    spotlight = "spotlight"
 
 
 class FlowsheetQueryParams(BaseModel):
@@ -248,11 +198,21 @@ class Order(StrEnum):
 
 
 class PlaylistSearchParams(BaseModel):
-    q: str | None = Field(None, description='Search query (supports AND, OR, NOT, "", *)')
-    page: conint(ge=0) | None = 0
+    q: str | None = Field(
+        None,
+        description='Search query. Optional — an empty or omitted `q` applies no filter and returns all track entries in the requested sort (most recent first by default). Supports upper-case `AND`, `OR`, `NOT`, and the field prefixes `artist:`, `song:`, `album:`, `label:`, `dj:`, `date:YYYY-MM-DD`, and `dateRange:YYYY-MM-DD..YYYY-MM-DD`. A bare term whole-word matches by default. Under the effective date sort only, when whole-word matching finds no rows the server falls back to matching the last (still-typing) term as a prefix, and then to substring matching — so the same `q` can return rows under the date sort and none under `artist`, `song`, or `dj`. A "quoted" value matches a field whose entire value equals it, case-insensitively — not a phrase match within a longer field value — and never falls back to partial matching, in any sort.',
+    )
+    page: conint(ge=0) | None = Field(
+        0,
+        description="Send `0` when paging with `cursor` — cursor pagination carries its own position and does not use this as an offset.",
+    )
     limit: conint(ge=1, le=100) | None = 50
     sort: Sort | None = "date"
     order: Order | None = "desc"
+    cursor: str | None = Field(
+        None,
+        description="Opaque pagination token copied verbatim from a previous response's `nextCursor`. Honoured only when the effective sort is `date` (the default, and the fallback when `sort` is omitted or unrecognised); validated and then ignored under any other effective sort. A cursor is tied to the `q`, `sort`, and `order` that produced it, but not to `limit` — discard it whenever `q`, `sort`, or `order` change; the server does not detect a mismatched cursor and returns a page that may skip or repeat rows. `page` and `limit` are still validated even when `cursor` is sent — send `page=0` alongside it, since cursor pagination does not use the page offset. Treat the token as opaque: do not parse its contents or assume a stable format.",
+    )
 
 
 class PlaylistSearchResult(BaseModel):
@@ -267,13 +227,35 @@ class PlaylistSearchResult(BaseModel):
         description="The DJ's public on-air handle, never the DJ's legal name. Read from the denormalized `flowsheet.dj_name` column, itself populated at entry-insert time via the PII-safe chain (BS#1371); `\"Unknown DJ\"` substitutes when that resolves to nothing.",
     )
     show_id: int
+    rotation_bin: RotationBin | None = Field(
+        None,
+        description="Resolved by the shared flowsheet resolver: the writer's `rotation_id` where present (unwindowed, per BS#2183), otherwise a window bounded on both sides against this entry's own `add_time`. Null when neither source resolves. This reports that the release was in rotation at some point, not that it was in rotation when this entry aired. BS#2184 tracks a known inaccuracy in the retired-record cohort.\n",
+    )
+    request_flag: bool | None = Field(
+        None,
+        description="Straight from `flowsheet.request_flag` (`NOT NULL DEFAULT false`), so a present `false` is a real negative. The key itself is optional on the wire: absent means this server does not emit the field, so treat absence as unknown, not as `false`.\n",
+    )
+    on_streaming: bool | None = Field(
+        None,
+        description="True if this release is available on at least one streaming service. False means only available in the WXYC physical library. Null if unknown.",
+    )
 
 
 class PlaylistSearchResponse(BaseModel):
     results: list[PlaylistSearchResult]
-    total: int
+    total: int = Field(
+        ...,
+        description="The match count, capped at 10,001 (meaning more than 10,000). Under cursor pagination the count query carries the same cursor predicate as the page itself, so `total` is the count of matching rows from the cursor position onward and shrinks on every later page — it equals the full match count only on the first page (the one sent with no inbound `cursor`). When the underlying count query is unavailable, `total` falls back to a best-effort estimate instead: the rows already paged past, plus this page. That estimate is exact on a partial final page, a lower bound on a full page, and can over-estimate on an empty page past the end. Clients must not use `total` to decide whether more rows exist under the date sort — use `nextCursor` for that.",
+    )
     page: int
-    totalPages: int
+    totalPages: int = Field(
+        ...,
+        description="`ceil(total / limit)`. Exact when `total` itself is an exact count below the 10,001 cap; otherwise approximate, inheriting whichever of `total`'s caveats applies — the cap, the count-unavailable estimate, or (under cursor pagination) the shrinking from-cursor-onward count.",
+    )
+    nextCursor: str | None = Field(
+        None,
+        description="Opaque pagination token for the next page. Present only when the effective sort is `date` (the default, and the fallback when `sort` is omitted or unrecognised) and the page is full; pass it back unchanged as `cursor`. Its absence under the date sort normally means there is no further page — except on a first (uncursored) page, where an empty result with no `nextCursor` can also mean a fallback tier timed out after whole-word matching found nothing, so treat that case as retryable rather than definitive. Absent when the effective sort is `artist`, `song`, or `dj`.",
+    )
 
 
 class FlowsheetEntryType(StrEnum):
@@ -285,20 +267,24 @@ class FlowsheetEntryType(StrEnum):
     talkset = "talkset"
     breakpoint = "breakpoint"
     message = "message"
+    spotlight = "spotlight"
 
 
 class FlowsheetV2Base(BaseModel):
     id: int
-    show_id: int
+    show_id: int = Field(
+        ...,
+        description="The show this entry belongs to, or `null` for an **unattributed** entry — a row that exists with no linked show. 20 of 2,619,011 rows are in that state (2005-02-06 → 2026-04-21), and the Phase 0 audit for the tubafrenzy decommissioning decided against backfilling them, so every read that can reach a historical row can reach a null here. Consumers that group entries by show must render an unattributed bucket; they must not assume every entry joins to a show, and must not crash on the null. The key is always present.",
+    )
     play_order: int
     add_time: AwareDatetime
 
 
-class EntryType1(StrEnum):
+class EntryType2(StrEnum):
     track = "track"
 
 
-class EntryType2(StrEnum):
+class EntryType3(StrEnum):
     show_start = "show_start"
 
 
@@ -311,7 +297,7 @@ class FlowsheetV2ShowStartEntry(FlowsheetV2Base):
     timestamp: AwareDatetime
 
 
-class EntryType3(StrEnum):
+class EntryType4(StrEnum):
     show_end = "show_end"
 
 
@@ -324,7 +310,7 @@ class FlowsheetV2ShowEndEntry(FlowsheetV2Base):
     timestamp: AwareDatetime
 
 
-class EntryType4(StrEnum):
+class EntryType5(StrEnum):
     dj_join = "dj_join"
 
 
@@ -336,7 +322,7 @@ class FlowsheetV2DJJoinEntry(FlowsheetV2Base):
     )
 
 
-class EntryType5(StrEnum):
+class EntryType6(StrEnum):
     dj_leave = "dj_leave"
 
 
@@ -348,7 +334,7 @@ class FlowsheetV2DJLeaveEntry(FlowsheetV2Base):
     )
 
 
-class EntryType6(StrEnum):
+class EntryType7(StrEnum):
     talkset = "talkset"
 
 
@@ -357,7 +343,7 @@ class FlowsheetV2TalksetEntry(FlowsheetV2Base):
     message: str
 
 
-class EntryType7(StrEnum):
+class EntryType8(StrEnum):
     breakpoint = "breakpoint"
 
 
@@ -370,7 +356,7 @@ class FlowsheetV2BreakpointEntry(FlowsheetV2Base):
     message: str | None = None
 
 
-class EntryType8(StrEnum):
+class EntryType9(StrEnum):
     message = "message"
 
 
@@ -379,11 +365,15 @@ class FlowsheetV2MessageEntry(FlowsheetV2Base):
     message: str
 
 
-class OnAirInfo(BaseModel):
-    dj_name: str = Field(
-        ...,
-        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371), except when unresolvable this substitutes the station name (\"WXYC\") rather than `null` — it's the enclosing `on_air` field that goes `null`, not this one.",
-    )
+class EntryType10(StrEnum):
+    spotlight = "spotlight"
+
+
+class Source(StrEnum):
+    dj = "dj"
+    program = "program"
+    spotlight = "spotlight"
+    default = "default"
 
 
 class OnAirDJ(BaseModel):
@@ -393,13 +383,19 @@ class OnAirDJ(BaseModel):
     )
     dj_name: str = Field(
         ...,
-        description="The DJ's public on-air handle, never the DJ's legal name. For a DJ with a Backend-Service account, the DJ's chosen handle (`user.djName`); for a legacy/tubafrenzy-mirrored show with no account, the full PII-safe chain (BS#1371) down to `shows.legacy_dj_name`.",
+        description="The DJ's public on-air handle, never the DJ's legal name. For a DJ with a Backend-Service account, the DJ's chosen handle (`user.djName`); for a legacy/tubafrenzy-mirrored show with no account, the full PII-safe chain (BS#1371) down to `shows.legacy_dj_name`.\n\n`null` when that chain resolves to nothing. The account arm keeps the DJ's row and nulls the name — `resolveDjDisplayName` discards a blank handle and the literal \"Anonymous\" (BS#1286) — so every operation serving this schema can return it. Present-but-null, never omitted: `dj_name` stays required.\n\nA null `dj_name` and a null `id` never co-occur. The legacy arm is the only source of a null `id`, and it emits an entry only when it has a name to put in it.",
     )
 
 
-class OnAirStatusResponse(BaseModel):
-    djs: list[OnAirDJ]
-    onAir: str = Field(..., description='Status indicator - "on" or "off"')
+class ShowPlaylistDJ(BaseModel):
+    id: str = Field(
+        ..., description="The DJ's `auth_user.id`, or `null` for a legacy show DJ with no account."
+    )
+    dj_name: str = Field(..., description="The DJ's public on-air handle; see `OnAirDJ.dj_name`.")
+    active: bool = Field(
+        ...,
+        description="`true` when the DJ's `show_djs` membership row is active, `false` when the DJ left the show.",
+    )
 
 
 class Show(BaseModel):
@@ -453,6 +449,30 @@ class OpenShowsResponse(BaseModel):
     )
 
 
+class RecentShow(BaseModel):
+    id: int = Field(
+        ...,
+        description="`shows.id` — the value to pass as `show_id` to `GET /flowsheet/playlist` to read the show itself.\n",
+    )
+    show_name: str
+    start_time: AwareDatetime
+    end_time: AwareDatetime = Field(
+        ...,
+        description='`null` while the show is still on the air — and also when its sign-off was lost, which is common enough that `null` must not be read as "live". `GET /flowsheet/open-shows` is the read that separates the two, via its `is_current` field.\n',
+    )
+    djs: list[OnAirDJ] = Field(
+        ...,
+        description='Who had the room. `$ref`s the same `OnAirDJ` that `GET /flowsheet/djs-on-air` returns, because Backend composes both from one function (`composeShowDJList`) — a second declaration of the shape is how the two would come to disagree.\n\nEmpty when the show carries no account rows AND no resolvable show-level handle. The show is still listed, so a consumer renders "unknown" against real times rather than losing the row.\n\nMembership is NOT filtered to still-active DJs, unlike `/flowsheet/djs-on-air`: sign-off deactivates every remaining membership, so filtering would empty the list for every properly ended show. Co-hosts therefore appear alongside the primary DJ.\n',
+    )
+
+
+class RecentShowsResponse(BaseModel):
+    shows: list[RecentShow] = Field(
+        ...,
+        description="Ordered newest-first by `start_time`, tie-broken on `id` DESC.\n\nCapped at 200 rows, which truncates the OLDEST shows in the window — the reason no `limit` parameter is offered, since those are the least useful rows to a DJ taking over. A page that reaches the cap carries no flag saying so; narrow `window_hours` if you need to know you have the whole window.\n",
+    )
+
+
 class ShowDJ(BaseModel):
     show_id: int | None = None
     dj_id: int | None = None
@@ -472,14 +492,11 @@ class Artist(BaseModel):
     artist_name: str
     code_letters: str
     code_artist_number: int
-    genre_id: int
-
-
-class ArtistWithGenre(Artist):
-    genre_name: str = Field(
-        ...,
-        description="Free-form: `genres.genre_name` is a `varchar(64)` in a lookup table `POST /library/genres` appends to. `GET /library/genres` is the authoritative enumeration (#367).\n",
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
     )
+    genre_id: int
 
 
 class Album(BaseModel):
@@ -487,6 +504,10 @@ class Album(BaseModel):
     artist_id: int
     album_title: str
     code_number: int
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="Volume letters for the release call code (`library.code_volume_letters`, varchar(4)).\n\n**Present here for longer than it has been writable, and the two facts are separate.** This is a raw-row schema — no joins, just the `library` columns as they were inserted — so the column has ridden along in this payload since it existed, because the create returns the whole row. Writability arrived per verb: `AlbumCreateFields.code_volume_letters` on the create wire (BS#2410) and `UpdateAlbumRequest.code_volume_letters` on the PATCH wire (BS#2564). A client written against an older contract version still RECEIVES this field; what it could not do is send it.\n",
+    )
     genre_id: int
     format_id: int
     label: str | None = None
@@ -519,9 +540,33 @@ class UpdateAlbumRequest(BaseModel):
     format_id: int | None = None
     artist_id: int | None = None
     alternate_artist_name: str | None = None
+    album_artist: str | None = Field(
+        None,
+        description="Credited album artist on a compilation card (BS#2004). Omit to leave the stored value alone; `null` or an empty string clears it.\n",
+    )
     disc_quantity: int | None = None
+    code_number: conint(ge=1, le=32767) | None = Field(
+        None,
+        description="Operator-chosen release call number (BS#2564; the PATCH half of `AlbumCreateFields.code_number`, BS#2410). `library.code_number` is a Postgres smallint, hence the 32767 ceiling. No application-level collision check on a `code_number`-only or `artist_id`-only edit, same as the create side (single-librarian decision, rotation-import plan D2); for those paths the eventual DB uniqueness constraint and its 409 mapping are tracked at WXYC/Backend-Service#2033. The one path that IS checked is a PATCH that changes `genre_id` (WXYC/Backend-Service#2587): the resulting `(artist_id, genre_id, code_number, code_volume_letters)` slot is looked up against the real shelf, and an occupied slot refuses with `409 library_slot_conflict` rather than silently filing two releases onto it — see this operation's 409. Alongside an `artist_id` move in the same request, a value that DIFFERS from the stored one is honored verbatim as the destination shelf; a value that merely echoes the stored one expresses no choice and still auto-regenerates when the destination artist already owns that number.\n",
+    )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description='Volume letters for the release call code (`library.code_volume_letters`, varchar(4)). An empty string or an explicit `null` clears it to NULL — `null` is accepted here (unlike `AlbumCreateFields.code_volume_letters`, which has nothing to clear on a create) because omitting the key already means "leave unchanged" on a PATCH, so clearing needs a distinct spelling, and `AlbumDetail.code_volume_letters` is `nullable: true`, so a client round-tripping a GET body into a PATCH must be able to send back the `null` it just received.\n',
+    )
     discogsUnavailable: bool | None = None
     discogsUnavailableNote: constr(max_length=500) | None = None
+
+
+class Url(RootModel[constr(max_length=2048)]):
+    root: constr(max_length=2048)
+
+
+class AlbumUrlsUpdate(BaseModel):
+    urls: list[Url] = Field(
+        ...,
+        description="The links to store for this release, in the order they should be displayed. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. An empty array clears the release's links. Bounded at 20 links of 2048 characters each — identical to the read shapes and `RotationCreateFields.urls` — and the bounds ship with the field because oasdiff treats adding a request-side bound later as a breaking change.\n",
+        max_length=20,
+    )
 
 
 class CatalogExportRow(BaseModel):
@@ -549,11 +594,19 @@ class CatalogExportRow(BaseModel):
         None,
         description='Names of the artists cataloger-cross-referenced to this row\'s artist, in either FK direction, via artist_crossreference (discogs-etl#334) — e.g. a band filed under its name carries a member\'s personal name. Empty array when the artist has no cross-references.\nAn ARRAY, not the pipe-joined string library.db stores: the producer does the `" | "` join when it writes the SQLite column. The wire must not carry the delimiter, because nothing constrains artists.artist_name from containing "|" or " | " — a joined string would silently split into phantom aliases on the consumer side (library-metadata-lookup splits this field on the pipe) with no escaping rule to recover from, and the legacy MySQL source has the same latent bug plus GROUP_CONCAT\'s silent group_concat_max_len truncation. Array-on-the-wire retires both.\nDerivation (pinned, because the legacy query it replaces is load-bearing for the producer — LIBRARY_CODE_CROSS_REFERENCE in discogs-etl/scripts/sync-library.sh):\n  * BOTH FK directions — an artist_crossreference row matching on\n    either source_artist_id or target_artist_id contributes its\n    OTHER side.\n  * EXCLUDES the row\'s own artist (the legacy query\'s\n    `AND xlc.ID != lc.ID`). A self-referencing crossreference row\n    must not produce a self-alias — LML would match the artist\n    against itself.\n  * Deduplicated.\n  * Ordered by Unicode code point (Postgres `COLLATE "C"`), NOT the\n    database\'s default collation. en_US.UTF-8 ignores punctuation\n    and case at the primary level, so it orders the diacritic- and\n    punctuation-bearing names most likely to carry aliases (Nilüfer\n    Yanya, Csillagrablók, Hermanos Gutiérrez, "C. Spencer Yeh")\n    unstably across locales. The legacy GROUP_CONCAT has no ORDER BY\n    at all, so there is no legacy order to match — pick the\n    deterministic one.\n\nFRESHNESS: this endpoint\'s conditional GET rides library_watermark. Migration 0105 fanned the watermark trigger out to library, artists, genres, format, genre_artist_crossreference, and rotation; artist_crossreference was left uncovered until migration 0138 added touch_library_watermark_from_artist_crossreference (AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ... FOR EACH STATEMENT). A cross-reference write now advances the watermark, the per-watermark gzip cache rebuilds, and the producer\'s next fetch carries the new alias. Before 0138 this was silent and unbounded rather than a bounded lag — a write to an uncovered source table changed nothing observable until an unrelated write on a covered table happened to bump the watermark, which is why every table a field on this row is derived from must carry the trigger.\n',
     )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="The per-release volume letter, library.code_volume_letters (varchar(4)). Volumes of one set share a call number (e.g. volumes A-G of one compilation at one shelf location), so this tells them apart. Stored RAW: the wire does not trim or case-fold it. Case policy is Backend-Service#2582's; library.db folds it at build time (discogs-etl#439, wxyc_catalog.normalize_volume_letters).\nNOT the compilation-section letter (code_comp_letter, a separate field). Optional and nullable like the other producer-facing fields, for the reason given in the schema description.\n",
+    )
     album_title: str
     code_letters: str = Field(..., description='Shelf call-number letters (e.g. "AU").')
     code_number: int = Field(..., description="Shelf call-number release number.")
     code_artist_number: int = Field(
         ..., description="Shelf call-number artist number (genre-scoped)."
+    )
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
     )
     label: str | None = Field(
         None,
@@ -652,17 +705,42 @@ class CatalogCompilationTrackRow(BaseModel):
     )
 
 
-class AddAlbumRequest(BaseModel):
-    album_title: str
-    artist_name: str | None = None
-    artist_id: int | None = None
-    label: str
+class AlbumCreateFields(BaseModel):
+    album_title: constr(max_length=128) = Field(
+        ..., description="`library.album_title`, varchar(128); over 128 code points is a 400.\n"
+    )
+    label: constr(max_length=128) | None = Field(
+        None,
+        description="`labels.label_name` / `library.label`, varchar(128); over 128 code points is a 400.\n",
+    )
     label_id: int | None = None
     genre_id: int
     format_id: int
+    code_number: conint(ge=1, le=32767) | None = Field(
+        None,
+        description="Operator-chosen release call number (BS#2410). `library.code_number` is a Postgres smallint, hence the 32767 ceiling. Omitted, Backend assigns MAX+1 for the artist — this field makes that assignment overridable, it does not replace it. No application-level collision check by design (single-librarian decision; the eventual DB uniqueness constraint and its 409 mapping are tracked at WXYC/Backend-Service#2033).\n",
+    )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="Optional volume letters for the release call code (BS#2410; `library.code_volume_letters`, varchar(4)). Trimmed server-side; an empty or whitespace-only value is stored as NULL rather than `''`, and over-length input is a 400 measured in code points, not UTF-16 units.\n",
+    )
     disc_quantity: int | None = None
-    alternate_artist_name: str | None = None
-    album_artist: str | None = None
+    alternate_artist_name: constr(max_length=128) | None = Field(
+        None, description="varchar(128); over 128 code points is a 400.\n"
+    )
+    album_artist: constr(max_length=128) | None = Field(
+        None,
+        description="varchar(128). On `POST /library`, over 128 code points is a 400. `POST /library/filings` does not read this field from `release`, so there it is accepted and stored as nothing whatever its length; the bound is declared on the shared schema, not enforced by that endpoint.\n",
+    )
+
+
+class AddAlbumRequest(AlbumCreateFields):
+    artist_name: str | None = None
+    artist_id: int | None = None
+    from_rotation_id: conint(ge=1, le=2147483647) | None = Field(
+        None,
+        description="The id of a rotation row with no library link, added on or before the cutover date (or moved from one that was). This request creates the release for that row and links it in the same transaction, plays included, so the import is one request rather than `POST /library` then `PATCH /library/rotation/{rotation_id}/link`, and cannot be replayed to mint more library rows. Omit it for an ordinary add; null means omitted. A row that is linked, not legacy, missing (no such row) or moved to another bin is a 409 `rotation_not_eligible`; a killed row is importable, since killed rows are most of the import queue. A moved record's chain is one record: only its newest row is importable.\n",
+    )
 
 
 class Label(BaseModel):
@@ -680,19 +758,10 @@ class AddArtistRequest(BaseModel):
     artist_name: str
     code_letters: str
     genre_id: int
-
-
-class OrderDirection(StrEnum):
-    asc = "asc"
-    desc = "desc"
-
-
-class CatalogSearchParams(BaseModel):
-    artist_name: str | None = None
-    album_title: str | None = None
-    n: int | None = Field(None, description="Maximum number of results")
-    orderBy: str | None = None
-    orderDirection: OrderDirection | None = None
+    code_number: conint(ge=1, le=2147483647) | None = Field(
+        None,
+        description="Operator-chosen artist call number within the `(genre_id, code_letters)` bucket. The backing column (`genre_artist_crossreference.artist_genre_code`) is a Postgres integer, hence the 2147483647 ceiling — bounded here, at publish time, because oasdiff treats adding request-side bounds later as a breaking change (see `RotationCreateFields.urls`). Declared optional ahead of the Backend-Service relaxation that honors omission (WXYC/Backend-Service#2475): the deployed `POST /library/artists` still 400s on a body without it, so a client must keep sending it until #2475 ships. Once omission is honored, the server assigns the next number in the bucket — the same generator behind Backend's artist-code peek route (`GET /library/artists/peek-code`, a Backend route this contract does not declare) — and this field makes that assignment overridable, it does not replace it.\n",
+    )
 
 
 class FormatEntry(BaseModel):
@@ -704,34 +773,6 @@ class GenreEntry(BaseModel):
     id: int
     genre_name: str
     code_letters: str
-
-
-class Source(StrEnum):
-    discogs = "discogs"
-    flowsheet = "flowsheet"
-    bin = "bin"
-
-
-class TrackSearchResult(BaseModel):
-    track_id: int | None = None
-    title: str
-    position: str | None = None
-    duration: str | None = None
-    album_id: int | None = None
-    album_title: str
-    artist_name: str
-    label: str | None = None
-    rotation_id: int | None = None
-    rotation_bin: RotationBin | None = None
-    source: Source
-
-
-class TrackSearchParams(BaseModel):
-    song: str
-    artist: str | None = None
-    album: str | None = None
-    label: str | None = None
-    n: int | None = None
 
 
 class CompilationTrackInput(BaseModel):
@@ -779,17 +820,95 @@ class CompilationTrackSuggestions(BaseModel):
     tracks: list[CompilationTrackInput]
 
 
+class RotationCard(BaseModel):
+    id: int
+    bin: RotationBin
+    number: int = Field(
+        ...,
+        description="Contiguous 1..N within a bin. `POST /library/rotation/cards` assigns `max(number) + 1` for the bin; `DELETE /library/rotation/cards/{id}` is refused unless the card is the highest-numbered in its bin AND has zero active rotation rows (see that endpoint's 409 for the two ways it can fail). There is no renumber endpoint, so gaps do not arise through the API, even though the underlying storage does not itself forbid them. \"The bin's newest card\" — referenced by the server-side `card_id` default still being specified (WXYC/Backend-Service#2472, WXYC/Backend-Service#2473) — means the highest `number` in the bin, `id` descending as the tie-break; stated once here rather than re-derived at each call site.\n",
+    )
+    name: str | None = None
+
+
+class AddRotationCardRequest(BaseModel):
+    bin: RotationBin
+    name: str | None = None
+
+
+class UpdateRotationCardRequest(BaseModel):
+    name: str
+
+
+class RotationWindowDays(BaseModel):
+    H: conint(ge=1)
+    M: conint(ge=1)
+    L: conint(ge=1)
+    S: conint(ge=1)
+
+
+class UpdateRotationWindowDays(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    H: conint(ge=1, le=365) | None = None
+    M: conint(ge=1, le=365) | None = None
+    L: conint(ge=1, le=365) | None = None
+    S: conint(ge=1, le=365) | None = None
+
+
 class RotationEntry(BaseModel):
     id: int
-    album_id: int
+    album_id: int = Field(
+        ...,
+        description="Linked `library.id`, or `null` on a rotation row that never linked to a catalog release — the defining state of the Awaiting Cataloging queue, which `GET /library/rotation/uncatalogued` serves as exactly the rows where this is null. Passed straight through from `rotation.album_id`, which carries no NOT NULL and whose table documents the unlinked row as a shape Backend-canonical writes must accept. Both operations returning this schema echo the raw rotation row, so `PATCH /library/rotation` reports null whenever the killed row was never catalogued. Same column and same contract as `RotationRowSummary.album_id`. A consumer keying a catalog cache on this value must skip the null rather than write an entry under it.",
+    )
     rotation_bin: RotationBin
     add_date: date_aliased
     kill_date: date_aliased | None = None
+    card: RotationCard | None = None
+    urls: list[str] | None = Field(
+        None,
+        description="Storage order. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. Deliberately an inline twin: `Rotation.urls` and `RotationEntry.urls` are pinned identical by a spec test rather than `$ref`ing a named array schema, because naming a top-level array makes the Python generator wrap the field in a RootModel (`.root` to reach the list) while every other target keeps a plain string list.\n",
+    )
 
 
-class AddRotationRequest(BaseModel):
-    album_id: int
+class RotationCreateFields(BaseModel):
     rotation_bin: RotationBin
+    card_id: int | None = None
+    urls: list[Url] | None = Field(
+        None,
+        description="Storage order. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. Bounded here, at publish time, because oasdiff treats adding request-side bounds later as a breaking change — they could never be added after this ships. The spec's existing request arrays split between per-item-work caps (25) and bulk-drain caps (1000); neither fits a hand-curated link list, so this takes a small cap of 20, with 2048 characters per item covering any pasted URL. An empty array is equivalent to omitting the field.\n",
+        max_length=20,
+    )
+
+
+class AddRotationRequest(RotationCreateFields):
+    album_id: int
+
+
+class AddRotationTypedTextRequest(RotationCreateFields):
+    artist_name: constr(max_length=128) = Field(
+        ..., description="`rotation.artist_name`, varchar(128); over 128 code points is a 400.\n"
+    )
+    album_title: constr(max_length=128) = Field(
+        ..., description="`rotation.album_title`, varchar(128); over 128 code points is a 400.\n"
+    )
+    record_label: constr(max_length=128) | None = Field(
+        None, description="`rotation.record_label`, varchar(128); over 128 code points is a 400.\n"
+    )
+    format_id: int | None = None
+    label_id: int | None = None
+    moved_from_rotation_id: conint(ge=1, le=2147483647) | None = Field(
+        None,
+        description="The unlinked rotation row this one replaces in a cross-bin move; Backend-Service kills it in the same transaction. The source must be an active typed-text row (`kill_date` null or in the future) added on or before the cutover date, or moved from one; otherwise the request is a 409 `rotation_not_eligible`. Null means omitted.\n",
+    )
+
+
+class AddRotationBody(RootModel[AddRotationRequest | AddRotationTypedTextRequest]):
+    root: AddRotationRequest | AddRotationTypedTextRequest = Field(
+        ...,
+        description="The `POST /library/rotation` request body: `AddRotationRequest` when `album_id` names a release already in the library, `AddRotationTypedTextRequest` when the record is identified by typed text. Not discriminated, and the arms are disjoint by one rule: the presence of `album_id` selects the album arm. The typed-text arm carries `not: {required: [album_id]}`, so a body with an `album_id` plus typed-text fields matches only the album arm, and a body without `album_id` matches only the typed-text arm; without that rule a body carrying both would match both arms and be invalid under `oneOf`. Backend-Service treats an explicit `album_id: null` as absent, but this contract does not admit it: omit the key. The `not` rule is documentation the pipeline does not enforce. The Kotlin generator collapses the union into one `AddRotationBody` class with `albumId`, `artistName` and `albumTitle` all required, so a Kotlin client cannot send the typed-text arm; no Kotlin client calls this route today (Android and the DJ apps do not add rotation rows).\n",
+    )
 
 
 class KillRotationRequest(BaseModel):
@@ -804,24 +923,1008 @@ class RotationWithAlbum(RotationEntry):
     code_number: int
 
 
-class Rotation(BaseModel):
-    id: int | None = None
-    code_letters: str | None = None
-    code_artist_number: int | None = None
-    code_number: int | None = None
+class Kind(StrEnum):
+    create = "create"
+
+
+class FilingArtistCreate(AddArtistRequest):
+    kind: Literal["create"]
+
+
+class Kind1(StrEnum):
+    existing = "existing"
+
+
+class FilingArtistExisting(BaseModel):
+    kind: Literal["existing"]
+    artist_id: int
+
+
+class FilingArtist(RootModel[FilingArtistCreate | FilingArtistExisting]):
+    root: FilingArtistCreate | FilingArtistExisting = Field(
+        ...,
+        description="Either a full new-artist payload (`kind: create`) or a reference to an already-catalogued artist (`kind: existing`). Discriminated rather than left a bare `oneOf` deliberately — the same idiom as `LiveFsEvent` and `AutoDJWebSocketMessage`: without `kind`, a payload carrying both an `artist_id` and the new-artist trio validates against both arms, and try-order decoders (the generated Swift and Python clients) silently take the create arm — filing a duplicate artist while reporting success instead of attaching the release to the referenced one. The required `kind` makes the caller's intent explicit on the wire and that ambiguous payload rejectable.\n",
+        discriminator="kind",
+    )
+
+
+class FilingRotationRequest(RotationCreateFields):
+    pass
+
+
+class LibraryFilingRequest(BaseModel):
+    artist: FilingArtist
+    release: AlbumCreateFields
+    rotation: FilingRotationRequest | None = None
+
+
+class LibraryFilingResponse(BaseModel):
+    artist: Artist
+    release: Album
+    rotation: RotationEntry | None = None
+
+
+class LibraryFilingConflictReason(StrEnum):
+    artist_code_conflict = "artist_code_conflict"
+    artist_name_conflict = "artist_name_conflict"
+    rotation_card_bin_mismatch = "rotation_card_bin_mismatch"
+    review_required = "review_required"
+
+
+class LibraryAddConflictReason(StrEnum):
+    review_required = "review_required"
+    rotation_not_eligible = "rotation_not_eligible"
+
+
+class LibraryAddConflictError(BaseModel):
+    message: str
+    reason: LibraryAddConflictReason
+
+
+class RotationConflictReason(StrEnum):
+    rotation_card_bin_mismatch = "rotation_card_bin_mismatch"
+    card_not_highest_in_bin = "card_not_highest_in_bin"
+    card_has_active_rotations = "card_has_active_rotations"
+    review_required = "review_required"
+    rotation_not_eligible = "rotation_not_eligible"
+
+
+class RotationConflictError(BaseModel):
+    message: str
+    reason: RotationConflictReason
+
+
+class LibraryFilingConflictError(BaseModel):
+    message: str
+    reason: LibraryFilingConflictReason
+    artist: Artist | None = Field(
+        None,
+        description="The already-catalogued artist that collided. Present on `artist_code_conflict` (the holder of the taken `(code_letters, genre_id, code_number)` triple) and `artist_name_conflict` (the genre-scoped fold-matched name); absent on `rotation_card_bin_mismatch`, which has no artist to name.\n",
+    )
+
+
+class IntakeItemState(StrEnum):
+    pool = "pool"
+    requested = "requested"
+    checked_out = "checked_out"
+    reviewed = "reviewed"
+    filed = "filed"
+    finalized = "finalized"
+
+
+class Pass(BaseModel):
+    dj_name: str = Field(
+        ...,
+        description="The passing DJ's real name as shown inside the station, falling back to their account name (on-air handle, else username) when no real name is on file, current at read time. Station-only: not for any public or anonymous surface, because it holds a legal name; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    passed_at: AwareDatetime
+    dj_id: str | None = Field(
+        None,
+        description="The passing account's `auth_user.id`, so a client can match a pass to an account without comparing names. Optional: a server that predates it omits it. Station-only: not for any public or anonymous surface; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+
+
+class IntakeItem(BaseModel):
+    id: int
+    artist_name: constr(max_length=128)
+    album_title: constr(max_length=128)
+    record_label: constr(max_length=128)
+    label_id: int
+    format_id: int
+    digital: bool = Field(
+        ...,
+        description="True when the album reached the station as files, not a disc. A music director burns it onto CD-R once a review is chosen for it, so `format_id` is the CD-R format from the moment it is added. It stays true after filing; screens show the format as Digital until the record is filed.\n",
+    )
+    discogs_release_id: int
+    spotify_url: str | None = Field(
+        None,
+        description="A link to the record on Spotify, or null when none is known. A preview for choosing and hearing a record, not the station's review copy: certification counts only a recorded listen of the station's file. Filled by a lookup after adding and refreshed by one after a rename, never entered by a music director: no request carries it. A rename's own response can still carry the old record's link, as the lookup runs without being waited for. A server that predates the field leaves it out, so treat a missing key like `null`.\n",
+    )
+    apple_music_url: str | None = Field(
+        None,
+        description="A link to the record on Apple Music, or null when none is known. A preview for choosing and hearing a record, not the station's review copy: certification counts only a recorded listen of the station's file. Filled by a lookup after adding and refreshed by one after a rename, never entered by a music director: no request carries it. A rename's own response can still carry the old record's link, as the lookup runs without being waited for. A server that predates the field leaves it out, so treat a missing key like `null`.\n",
+    )
+    bandcamp_url: str | None = Field(
+        None,
+        description="A link to the record on Bandcamp, or null when none is known. A preview for choosing and hearing a record, not the station's review copy: certification counts only a recorded listen of the station's file. Entered by a music director when adding or editing the record, or filled by a lookup after adding and refreshed by one after a rename; a found link never replaces one a music director entered. A rename's own response can still carry the old record's link, as the lookup runs without being waited for. A server that predates the field leaves it out, so treat a missing key like `null`. There is no Discogs URL field: clients build it from `discogs_release_id`.\n",
+    )
+    state: IntakeItemState
+    effective_state: IntakeItemState = Field(
+        ...,
+        description="`state` as actually usable, per WXYC/Backend-Service#2796: equal to `state` except a stale `requested` reads as `pool` — stale meaning `requested_at` is more than 7 days old, or `requested_dj_id` is `null` because the DJ it was requested of had their account deleted. A read never writes, so `state` itself is left untouched by the lapse; only `effective_state` reflects it.\n",
+    )
+    overdue: bool = Field(
+        ...,
+        description="True while the record's checkout is more than 14 days old (`checked_out_at`), in `checked_out` or `reviewed`; a reviewed record that has been returned has no checkout and is never overdue. A digital album's holder is cleared when its review is chosen, so its flag can only be set while it is still being reviewed.\n",
+    )
+    logged_at: AwareDatetime
+    requested_dj_id: str = Field(
+        ...,
+        description="The DJ a music director asked to review the item, set when it enters `requested`. Read it together with `state` and `effective_state`, not as proof of a live request: later transitions may leave it set (a checkout clears the request's fields, and accepting a review withdraws a pending request). `null` while `state: requested` means the requested DJ's account has since been deleted, the case that makes `effective_state` read `pool` despite `state` still saying `requested`.\n",
+    )
+    requested_dj_name: str = Field(
+        ...,
+        description="The requested DJ's real name as shown inside the station, falling back to their account name (on-air handle, else username) when no real name is on file, current at read time. Station-only: not for any public or anonymous surface, because it holds a legal name; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    requested_by: str | None = Field(
+        None,
+        description="The asking music director's account id, shaped like `checked_out_by`, set together with `requested_dj_id` when the item enters `requested`. Only an item whose `state` is `requested` carries it: withdrawing the request, the requested DJ accepting or passing it, a checkout, accepting a review for the item and filing each clear it along with the request's other fields, so an item in any other state reads `null`. A read never writes, so a stale `requested` item, whose `effective_state` reads `pool`, keeps it set. Read it together with `state` and `effective_state`, not as proof of a live request. `null` while `state: requested` means the request was made before the server recorded the asker, or the asker's account has since been deleted; show a generic line, not an error, in either case. A server that predates the field leaves it out, so treat a missing key like `null`.\n",
+    )
+    requested_by_name: str | None = Field(
+        None,
+        description="The asker's real name as shown inside the station, falling back to their account name (on-air handle, else username) when no real name is on file, current at read time. `null` whenever `requested_by` is `null`. Station-only: not for any public or anonymous surface, because it holds a legal name; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    requested_at: AwareDatetime
+    checked_out_by: str = Field(
+        ...,
+        description='Who holds the record, set on checkout: the DJ who has the disc, or for a digital album the DJ who claimed it to review. It stays set when a review is accepted, so a `reviewed` item can still name the DJ who has the copy: deleting the accepted review of an item not yet filed returns it to `checked_out` with the same holder, or to `pool` when there is none. A `reviewed` item keeps its holder until the holder or a music director returns it (`POST /intake/{id}/release`) or the item is filed, which clears it. A digital album is the exception: when its review is chosen (`POST /intake/{id}/accept-review`) both `checked_out_by` and `checked_out_at` are cleared, because nothing was lent out. Read it together with `state`, not as proof of a live checkout. `null` while `checked_out_at` is set, in `checked_out` or `reviewed`, means the holder\'s account has since been deleted, shown to MDs as "holder removed"; an MD may release the item.\n',
+    )
+    checked_out_by_name: str = Field(
+        ...,
+        description="The holder's real name as shown inside the station, falling back to their account name (on-air handle, else username) when no real name is on file, current at read time. Station-only: not for any public or anonymous surface, because it holds a legal name; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    checked_out_at: AwareDatetime
+    cited_album_id: int
+    cited_submission_id: int
+    album_id: int
+    rotation_id: int
+    filed_at: AwareDatetime
+    printed_at: AwareDatetime = Field(
+        ...,
+        description="When this item's slip was last printed: the time of its latest print-log entry.\n",
+    )
+    finalized_at: AwareDatetime
+    passes: list[Pass] | None = Field(
+        None, description="Present only for callers holding `reviews: manage`."
+    )
+    accepted_review_id: int = Field(
+        ...,
+        description="The review a music director accepted for this item: the one its slip prints. It is a review of the item, of the release the item was filed as, or of the release the item cites. `null` until one is accepted, and again if the accepted review is deleted or the citation it was chosen through is changed or cleared. Deleting the cited release from the catalog does not clear it: the item is first given its own copy of that review (WXYC/Backend-Service#2875).\n",
+    )
+    accepted_by: str = Field(
+        ...,
+        description="The accepting music director's account id, shaped like `checked_out_by`. `null` when none is accepted or that account has been deleted.\n",
+    )
+    accepted_at: AwareDatetime
+    submitted_review_count: conint(ge=0) = Field(
+        ...,
+        description="How many submitted reviews are attached to this item through `intake_item_id`.\n",
+    )
+    draft_authors: list[str] | None = Field(
+        None,
+        description="Present only for callers holding `reviews: manage`. The `author` of each unsubmitted draft attached to this item: names only, never content, so a music director can see whose unfinished work a delete would remove. These are `reviews.author` snapshots and carry the caveat on `IntakeDeleteResponse.deleted_review_authors`: station-only, never for client telemetry, and not for any public or anonymous surface, because they hold a legal name.\n",
+    )
+
+
+class IntakeAcceptReviewRequest(BaseModel):
+    review_id: conint(ge=1, le=2147483647)
+
+
+class LibraryPrintRequest(BaseModel):
+    review_id: conint(ge=1, le=2147483647)
+
+
+class NewIntakeItemRequest(BaseModel):
+    artist_name: constr(max_length=128)
+    album_title: constr(max_length=128)
+    record_label: constr(max_length=128) | None = None
+    label_id: int | None = None
+    format_id: int | None = Field(
+        None,
+        description="Required unless `digital` is true. Must be omitted when `digital` is true, because the server then stores the CD-R format itself.\n",
+    )
+    digital: bool | None = Field(
+        None,
+        description="True when the album reached the station as files, not a disc. `format_id` must then be omitted. Defaults to false when omitted.\n",
+    )
+    discogs_release_id: int | None = None
+    bandcamp_url: constr(max_length=512) | None = Field(
+        None,
+        description="A link to the record on Bandcamp, a preview for choosing and hearing it and not the station's review copy. Surrounding whitespace is trimmed. A blank or whitespace-only string means no link, the same as `null`. Any other value must be an `https` URL on `bandcamp.com` or a subdomain of it, or the request is a 400. Any link sent counts as entered by a music director, and a lookup never replaces it, so send `bandcamp_url` only when a music director entered or changed it, not to send back the value a read returned.\n",
+    )
+
+
+class IntakeItemPatch(BaseModel):
+    artist_name: constr(max_length=128) | None = None
+    album_title: constr(max_length=128) | None = None
+    record_label: constr(max_length=128) | None = None
+    label_id: int | None = None
+    format_id: int | None = None
+    discogs_release_id: int | None = None
+    bandcamp_url: constr(max_length=512) | None = Field(
+        None,
+        description="A link to the record on Bandcamp, a preview for choosing and hearing it and not the station's review copy. Surrounding whitespace is trimmed. A blank or whitespace-only string means no link, the same as `null`. Any other value must be an `https` URL on `bandcamp.com` or a subdomain of it, or the request is a 400. A PATCH with `null` or a blank string clears it. Swift omits nil optionals and cannot send an explicit `null`, so it sends an empty string. Any link sent counts as entered by a music director, and a lookup never replaces it, so send `bandcamp_url` only when a music director entered or changed it, not to send back the value a read returned.\n",
+    )
+    cited_album_id: int | None = None
+    cited_submission_id: int | None = None
+
+
+class Kind2(StrEnum):
+    new_release = "new_release"
+
+
+class IntakeFileNewRelease(LibraryFilingRequest):
+    kind: Literal["new_release"]
+
+
+class Kind3(StrEnum):
+    existing_release = "existing_release"
+
+
+class IntakeFileExistingRelease(BaseModel):
+    kind: Literal["existing_release"]
+    album_id: int
+
+
+class IntakeFileRequest(RootModel[IntakeFileNewRelease | IntakeFileExistingRelease]):
+    root: IntakeFileNewRelease | IntakeFileExistingRelease = Field(
+        ...,
+        description="Files an intake item into the catalog: either a full new-release payload (`kind: new_release`) or a reference to a release already in the library (`kind: existing_release`). Discriminated rather than left a bare `oneOf` deliberately — the same idiom as `FilingArtist`, `LiveFsEvent` and `AutoDJWebSocketMessage`: without `kind`, a payload carrying both an `album_id` and the new-release trio validates against both arms, and try-order decoders (the generated Swift and Python clients) silently take one arm over the other. The required `kind` makes the caller's intent explicit on the wire and that ambiguous payload rejectable.\n",
+        discriminator="kind",
+    )
+
+
+class IntakeConflictReason(StrEnum):
+    state_changed = "state_changed"
+    not_reviewed = "not_reviewed"
+    invalid_citation = "invalid_citation"
+    already_filed = "already_filed"
+    in_rotation = "in_rotation"
+
+
+class IntakeConflictError(BaseModel):
+    message: str
+    reason: IntakeConflictReason
+
+
+class IntakeRequestRefusedCode(StrEnum):
+    asked_dj_cannot_see_feature = "asked_dj_cannot_see_feature"
+
+
+class IntakeRequestRefusedError(BaseModel):
+    message: str
+    code: IntakeRequestRefusedCode
+
+
+class IntakeDeleteResponse(BaseModel):
+    deleted_review_authors: list[str] = Field(
+        ...,
+        description="`reviews.author` snapshots (WXYC/Backend-Service#2805), not `auth_user.name`. For an account-holding DJ's own review this is the same real name (falling back to the account name when none is on file), a snapshot taken when written; for a handwritten or on-behalf review an MD typed by hand, it is free text and may be a real name. Like `IntakeItem`'s `*_name` fields, it is not guaranteed PII-free — it exists for the MD's own in-station confirmation of what was removed, not for any public or anonymous surface, because it holds a legal name, never for display outside the station or for client telemetry (analytics properties, error breadcrumbs, logs). Includes the authors of unsubmitted drafts that went with the item, the same names `IntakeItem.draft_authors` showed before the delete.\n",
+    )
+
+
+class ReviewMedium(StrEnum):
+    typed = "typed"
+    handwritten = "handwritten"
+    printed = "printed"
+
+
+class ReviewStatus(StrEnum):
+    draft = "draft"
+    submitted = "submitted"
+
+
+class ReviewCredit(StrEnum):
+    dj_name = "dj_name"
+    real_name = "real_name"
+    none = "none"
+
+
+class Reviewer(BaseModel):
+    id: str = Field(
+        ..., description="The `auth_user.id`, the value to send as `dj_id` or `author_user_id`."
+    )
+    name: str = Field(
+        ...,
+        description="The person's real name as shown inside the station, falling back to their account name (on-air handle, else username) when no real name is on file, so the fallback can be the on-air name. It is never the `dj_name` field. Shown only inside the station; not for any public or anonymous surface, because it holds a legal name; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    on_air_name: str | None = Field(
+        None,
+        description='The account\'s on-air name as the public playlist shows it (`auth_user.dj_name`, except that a literal "Anonymous" counts as none); `null` when there is none. Optional: a server that predates it omits it. Station-only: not for any public surface, because this is an activity fact about a person; never for client telemetry (analytics properties, error breadcrumbs, logs).\n',
+    )
+    records_out: conint(ge=0) | None = Field(
+        None,
+        description="How many unfiled records the account has checked out or taken now. Optional: a server that predates it omits it. Station-only: not for any public surface, because this is an activity fact about a person; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    last_submitted_at: AwareDatetime | None = Field(
+        None,
+        description="When the account last submitted a review; `null` if never. Optional: a server that predates it omits it. Station-only: not for any public surface, because this is an activity fact about a person; never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+
+
+class Review(BaseModel):
+    id: int
+    album_id: int
+    intake_item_id: int
+    author: constr(max_length=128) = Field(
+        ...,
+        description="Null on a row that predates the in-app model (the column has never been NOT NULL), and on a review created by the one-time Backend-Service job that copies form-archive submissions (see `AlbumReview`) when the form's reviewer answer was blank. For a review that job created, it is the form's reviewer answer as typed, trimmed, which may carry a date or other text. For an account holder's own review, a snapshot of their real name as shown inside the station, taken when written, falling back to their account name (on-air handle, else username) when no real name is on file. For a handwritten or on-behalf review it is what the music director typed: free text that may be a real name, so it is not guaranteed PII-free. Shown only inside the station; not for any public or anonymous surface, because it holds a legal name; never the published credit (`credit` decides that) and never for client telemetry (analytics properties, error breadcrumbs, logs).\n",
+    )
+    author_user_id: str = Field(
+        ...,
+        description="The review's author account. When set on an on-behalf review, that account is the author: it may edit and delete the review and is the only account that may set `publish_*` and `credit`.",
+    )
+    recorded_by_user_id: str = Field(
+        ...,
+        description="For an on-behalf or handwritten review, the music director who recorded it. Draft visibility names it (a draft is visible to its author and to whoever recorded it).",
+    )
+    medium: ReviewMedium
+    status: ReviewStatus
+    buzzwords: str
+    artist_blurb: str
+    review: str = Field(
+        ...,
+        description="`null`, never an empty string: a blank value is stored as `null`. May be `null` for a draft with no text yet, for a handwritten review, or for one whose OCR text is still pending. A `typed` review cannot be submitted while this is `null`.\n",
+    )
+    recommended_tracks: str
+    fcc: str
+    publish_website: bool
+    publish_apps: bool
+    publish_instagram: bool
+    credit: ReviewCredit = Field(
+        ...,
+        description="`null` means no choice has been made yet (an on-behalf review starts this way); `none` means the author chose no name. The one-time Backend-Service job that copies form-archive submissions sets `none` on every review it creates, as a station decision and not as any author's choice. Such a review has no author account, so no account can change its `credit` or `publish_*`, which keep the values the job set.",
+    )
+    add_date: date_aliased
+    submitted_at: AwareDatetime
+    last_modified: AwareDatetime
+    in_use: bool = Field(
+        ...,
+        description="Computed. `true` when this review is the accepted review of an intake item, or is the review in the latest print-log entry of a copy or of a library release (`POST /library/{id}/print`); a print with no intake item counts only while its release does not have exactly one filed or finalized intake item. An author cannot delete a review that is in use (`ReviewConflictReason` `in_use`), but may still edit it.\n",
+    )
+    on_cover: bool = Field(
+        ...,
+        description="Computed, and meaningful only in a list filtered by `album_id` (`GET /reviews?album_id=`): `true` when this review is on the cover of a copy of that release. That is, it is the accepted review of an intake item filed or finalized as that release, or the review in the latest print-log entry of such an item, or the review in the release's latest print-log entry that has no intake item while the release does not have exactly one filed or finalized intake item. These are the reviews that list puts first. `false` in every other response: a single review, the write responses, and the unfiltered, `mine` and `intake_item_id` lists. It differs from `in_use`, which is true when the review is in use for any record: a review reached through `cited_album_id` is in use for the release it belongs to, and is on the cover here only once it has been chosen or printed for a copy of this release. A print from `POST /library/{id}/print` on a release with exactly one filed or finalized intake item is that item's print, so it is never a second cover. A print with no intake item is left off the cover for as long as the release has exactly one filed or finalized intake item, and is back on it when the release has none or two or more. That is delivered by WXYC/Backend-Service#3075.\n",
+    )
+    printed_revision_id: int = Field(
+        ...,
+        description="The revision of this review that was most recently printed; `null` if it has never been printed. When it is not the current revision, the printed slip is out of date. Its `id` is one of the entries of `GET /reviews/{id}/revisions`.\n",
+    )
+    printed_at: AwareDatetime = Field(..., description="When that print happened.")
+    revision_count: conint(ge=0) = Field(
+        ...,
+        description="How many revisions the review has: `0` for a draft, `1` once submitted, more after edits. A review submitted before edit history began counts `0` until its first edit, which brings it to `2`. Above `1` means there is history to show (`GET /reviews/{id}/revisions`).\n",
+    )
+
+
+class ReviewRevision(BaseModel):
+    id: int
+    review_id: int
+    revision: conint(ge=1) = Field(
+        ...,
+        description="1-based. Revision 1 is written when the review is submitted; each later edit of the submitted review writes the next. A review submitted before edit history began has none until its first edit, which writes revision 1 (its text before that edit, under its author, dated when it was submitted, or at its last write when that is unknown) and then revision 2 for the edit.\n",
+    )
+    edited_by: constr(max_length=128) = Field(
+        ...,
+        description="Snapshot of the editor's real name (falling back to their account name when no real name is on file), taken at the time. Revision 1 names the review's author: it is a copy of `Review.author`, whoever pressed submit, so for a review a music director recorded on someone's behalf it is the name the music director typed. A later revision names whoever made that edit; for a music director's edit of someone else's review, the music director. Station-only, with the caveat on `Review.author`; not for any public or anonymous surface, because it holds a legal name.\n",
+    )
+    edited_by_user_id: str = Field(
+        ...,
+        description="Revision 1 carries the review's `author_user_id` (null for an author with no linked account); a later revision carries the editor's account. `null` once that account has been deleted.\n",
+    )
+    edited_at: AwareDatetime
+    review: str = Field(..., description="The review text as saved by this edit.")
+    artist_blurb: str = Field(..., description="The artist blurb as saved by this edit.")
+    buzzwords: str = Field(..., description="The buzzwords as saved by this edit.")
+    recommended_tracks: str = Field(
+        ..., description="The recommended tracks as saved by this edit."
+    )
+    fcc: str = Field(
+        ..., description="The FCC notes as saved by this edit. Never published outside the station."
+    )
+
+
+class IntakeSlipFccNote(BaseModel):
+    track: str
+    note: str
+
+
+class FccNoteStatus(StrEnum):
+    reported = "reported"
+    confirmed = "confirmed"
+
+
+class FccNote(BaseModel):
+    id: int
+    album_id: int = Field(..., description="The library release the note is about.")
+    intake_item_id: int = Field(
+        ...,
+        description="The intake item the note is about. At least one of the two is set. Filing an intake item stamps its notes with the release it was filed as, so a note reported against an item then carries both.\n",
+    )
+    track: str = Field(
+        ..., description="Which track, as the reporter wrote it (for example `B2` or `Back, Baby`)."
+    )
+    note: str = Field(..., description="What is in it.")
+    status: FccNoteStatus = Field(
+        ...,
+        description="`reported`: visible to every DJ as reported and not yet confirmed. `confirmed`: a music director has confirmed it; only confirmed notes print on the slip (`IntakeSlip.fcc_notes`).\n",
+    )
+    reported_by: constr(max_length=128) = Field(
+        ...,
+        description="Snapshot of the reporter's real name as shown inside the station, taken when the note was written, falling back to their account name (on-air handle, else username) when no real name is on file. Shown inside the station only; not for any public or anonymous surface, because it holds a legal name; never for client telemetry.\n",
+    )
+    reported_by_user_id: str = Field(..., description="`null` once that account has been deleted.")
+    reported_at: AwareDatetime
+    confirmed_by: constr(max_length=128) = Field(
+        ...,
+        description="Snapshot of the confirming music director's real name as shown inside the station, taken when the note was confirmed, falling back to their account name (on-air handle, else username) when no real name is on file; `null` while `reported`. Shown inside the station only; not for any public or anonymous surface, because it holds a legal name; never for client telemetry. There is no account-id field for the confirmer.\n",
+    )
+    confirmed_at: AwareDatetime
+    artist_name: constr(max_length=128) = Field(
+        ...,
+        description="The record the note is about, read at response time: the library release's artist and title when `album_id` is set, otherwise the intake item's. Carried on every note so a list that spans records can render a row without a second request.\n",
+    )
+    album_title: constr(max_length=128) = Field(
+        ...,
+        description="The record the note is about, read at response time: the library release's artist and title when `album_id` is set, otherwise the intake item's. Carried on every note so a list that spans records can render a row without a second request.\n",
+    )
+
+
+class NewFccNoteRequest(BaseModel):
+    album_id: conint(ge=1, le=2147483647) | None = None
+    intake_item_id: conint(ge=1, le=2147483647) | None = None
+    track: str
+    note: str
+
+
+class ReviewFields(BaseModel):
+    buzzwords: str | None = None
+    artist_blurb: str | None = None
+    review: str | None = None
+    recommended_tracks: str | None = None
+    fcc: str | None = Field(
+        None,
+        description="The review's own FCC line. Never published outside the station. Notes on the record that any DJ can report are `FccNote`.\n",
+    )
+    publish_website: bool | None = None
+    publish_apps: bool | None = None
+    publish_instagram: bool | None = None
+    credit: ReviewCredit | None = Field(
+        None, description="How the author asks to be credited. `null` clears the choice."
+    )
+
+
+class Medium(StrEnum):
+    typed = "typed"
+    handwritten = "handwritten"
+
+
+class NewReviewRequest(ReviewFields):
+    intake_item_id: int | None = None
+    album_id: int | None = None
+    author: constr(max_length=128) | None = Field(
+        None,
+        description="Only a caller with `reviews: manage` may send this. The reviewer's name as typed, free text (see `Review.author`). A value longer than 128 code points is a 400; it is never cut.\n",
+    )
+    author_user_id: str | None = Field(
+        None,
+        description="Only a caller with `reviews: manage` may send this. Optionally links the reviewer's account on an on-behalf review.\n",
+    )
+    medium: Medium | None = Field(
+        None,
+        description="Only a caller with `reviews: manage` may send this. A write path takes `typed` or `handwritten`; `printed` (see `ReviewMedium`) is for the later OCR backfill and is never sent here.\n",
+    )
+    accept: bool | None = Field(
+        None,
+        description="Only a caller with `reviews: manage` may send this, and it only has meaning on an on-behalf or handwritten create whose subject is an `intake_item_id`. When `true` or left out on such a create, the review is created already `submitted` (revision 1 is written) and is accepted for the item in the same step, exactly as `POST /intake/{id}/accept-review` would: there is no draft and no separate submit. Because the review is submitted at once, a `typed` review with a `null` `review` is a 400 at create. `false` creates a draft that is not accepted, like any other create. Sent with an `album_id` subject, with either value, it is a 400.\n",
+    )
+    copied_from_submission_id: int | None = Field(
+        None,
+        description="Only a caller with `reviews: manage` may send this, and only with an `intake_item_id` subject (a 400 with `album_id`). The `id` of the form review (`AlbumReview`, from `GET /album-reviews`) whose text this review was copied from. Sending it makes the create an on-behalf create, so `author` is required. An id naming no form review is a 400. It is kept with the review and never returned. How it affects `GET /album-reviews` is set out in Backend-Service ADR 0011.\n",
+    )
+
+
+class ReviewPatch(ReviewFields):
+    pass
+
+
+class ReviewConflictReason(StrEnum):
+    not_draft = "not_draft"
+    subject_not_held = "subject_not_held"
+    in_use = "in_use"
+    accepted_review = "accepted_review"
+
+
+class ReviewConflictError(BaseModel):
+    message: str
+    reason: ReviewConflictReason
+
+
+class RotationRowSummary(BaseModel):
+    id: int = Field(..., description="The rotation row's own id — the id Kill/Unkill/link act on.")
+    album_id: int | None = Field(
+        None,
+        description="Linked `library.id`, or null while uncatalogued. Rows from `/library/rotation/uncatalogued` are null by construction.\n",
+    )
+    rotation_bin: RotationBin
+    add_date: date_aliased = Field(
+        ...,
+        description="Always present — `rotation.add_date` is NOT NULL with a `defaultNow()`, and it is the queue's sort key (newest first).\n",
+    )
+    kill_date: date_aliased | None = Field(
+        None,
+        description="May be future-dated: a scheduled kill leaves the row active until the date passes.\n",
+    )
     artist_name: str | None = None
     album_title: str | None = None
-    record_label: str | None = None
-    genre_name: str | None = None
-    format_name: str | None = None
-    rotation_id: int | None = None
-    add_date: date_aliased | None = None
-    play_freq: RotationBin | None = None
-    kill_date: date_aliased | None = None
-    plays: int | None = None
-    legacy_release_id: int | None = Field(
+    record_label: str | None = Field(
         None,
-        description="The library row's surrogate key (BS#1963). Nullable here (unlike AlbumSearchResult/BinLibraryDetails/AlbumInfoResponse): a library-unlinked rotation row has no library row at all, hence no legacy id.\n",
+        description="Free-text label snapshot. Retained even when `label_id` is set, for rows whose text never resolved to a `labels` row.\n",
+    )
+    format_id: int | None = Field(
+        None,
+        description="Pre-catalog `format(id)` reference (BS#2409). Null on every row created before the dj-site classic add form began sending it; the legacy backfill is WXYC/Backend-Service#2412.\n",
+    )
+    label_id: int | None = Field(
+        None,
+        description="Pre-catalog `labels(id)` reference (BS#2409). Same null population and backfill story as `format_id`.\n",
+    )
+
+
+class LinkRotationRequest(BaseModel):
+    album_id: conint(ge=1) = Field(..., description="The `library.id` to link the rotation row to.")
+
+
+class ArtistSearchMatch(BaseModel):
+    id: int
+    artist_name: str
+    code_letters: str
+    code_number: int = Field(
+        ...,
+        description="The artist's genre-scoped code number (`genre_artist_crossreference.artist_genre_code`) — one row per (artist, genre) membership, so a multi-genre artist appears once per genre with different numbers.\n",
+    )
+    genre_id: int | None = Field(
+        None,
+        description='The genre whose membership this row represents. Declared because the library-wide search (the mode with no `genre_id` parameter) returns memberships from mixed genres, where the row alone no longer says which genre its `code_number` belongs to.\nPresent on every row Backend returns, in both search modes: one query builder serves both, its `genre_artist_crossreference` and `genres` joins are INNER either way, and `genre_artist_crossreference.genre_id` is NOT NULL with an FK. Optional here all the same — no consumer requires the guarantee, and narrowing a published response field breaks any client generated against the loose shape. Read "optional" as "the contract declines to promise it", not "the server omits it".\n',
+    )
+    genre_name: str | None = Field(
+        None,
+        description="The genre's display name, from the same INNER join as `genre_id` (`genres.genre_name` is NOT NULL). Same treatment: returned on every row, optional in the contract for the same reason.\n",
+    )
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+
+
+class ArtistSearchResponse(BaseModel):
+    artists: list[ArtistSearchMatch]
+
+
+class ArtistCard(BaseModel):
+    artist_id: int
+    artist_name: str
+    alphabetical_name: str
+    genre_id: int
+    code_letters: str
+    code_artist_number: int
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+
+
+class ArtistCardWithDependentCounts(ArtistCard):
+    release_count: int = Field(
+        ...,
+        description="Catalog releases filed to this artist (`library.artist_id`). A non-zero count is the primary `DELETE /library/artists/{id}` refusal — move or delete the releases first.\n",
+    )
+    cross_reference_source_count: int = Field(
+        ...,
+        description="Legacy artist-to-artist cross-references naming this artist as the source (tubafrenzy's `LIBRARY_CODE_CROSS_REFERENCE`). A non-zero count refuses the delete.\n",
+    )
+    cross_reference_target_count: int = Field(
+        ...,
+        description="The same legacy cross-reference collection, naming this artist as the target. A non-zero count refuses the delete.\n",
+    )
+    library_cross_reference_count: int = Field(
+        ...,
+        description="Legacy release cross-references pointing at this artist (tubafrenzy's `RELEASE_CROSS_REFERENCE`). A non-zero count refuses the delete.\n",
+    )
+    compilation_credit_count: int = Field(
+        ...,
+        description="Compilation-track credits attributed to this artist (`compilation_track_artist.track_artist_id`). Informational only — never a delete refusal. The FK is `ON DELETE SET NULL` (the `concerts.headlining_artist_id` precedent): a delete drops the credit's canonicalization link rather than being blocked by it.\n",
+    )
+
+
+class UpdateArtistRequest(BaseModel):
+    artist_name: constr(min_length=1, max_length=128) | None = Field(
+        None,
+        description="Trimmed and NFC-normalized before storage, then measured in code points against the `varchar(128)` column. Checked against a folded-name collision probe (case/diacritic/Unicode-form insensitive) across every genre the artist is filed in; a hit is a 409 (`ArtistNameConflictError`). Cascades: `library.artist_name` is rewritten on every release the artist holds, and `library.artwork_lookup_attempted_at` is cleared on those rows. `flowsheet.artist_name` is deliberately NOT rewritten — it is a historical on-air snapshot.\n",
+    )
+    alphabetical_name: constr(min_length=1, max_length=128) | None = Field(
+        None,
+        description="The filing name that governs shelf order. Trimmed and NFC-normalized before storage, then measured in code points against the `varchar(128)` column.\n",
+    )
+
+
+class Reason(StrEnum):
+    artist_name_conflict = "artist_name_conflict"
+
+
+class Artist1(BaseModel):
+    artist_id: int
+    artist_name: str
+    code_letters: str
+
+
+class ArtistNameConflictError(BaseModel):
+    message: str
+    reason: Reason
+    artist: Artist1 = Field(
+        ...,
+        description="The conflicting artist, so a client can offer merging into it rather than reporting a bare failure.\n",
+    )
+
+
+class RefileArtistRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    genre_id: conint(ge=1, le=2147483647) = Field(
+        ...,
+        description="The genre membership to re-file. Required: an artist id alone does not identify a membership.\n",
+    )
+    code_artist_number: conint(ge=0, le=2147483647) = Field(
+        ...,
+        description="The artist call number the membership should have. Within the same genre it is the new number in that shelf; on a genre move it is the number in the destination shelf.\n",
+    )
+    code_letters: str | None = Field(
+        None,
+        description='Optional. The new call letters: 1 to 4 characters from A-Z, a-z, 0-9 and `/`, after trimming surrounding whitespace (the set `GET /library/artists/by-code` accepts). The server trims and upper-cases it. Not constrained by a schema pattern; the server validates. `V/A` (after trimming and upper-casing) is a 400, before any lock. Omit it to keep the current letters; sending the stored value back is not a change (see "What counts as a change" on `RefileArtistRequest`). Letters are artist-global: a change on an artist with another genre membership, or any release in another genre, is refused (409 `letters_shared_across_genres`).\n',
+    )
+    to_genre_id: conint(ge=1, le=2147483647) | None = Field(
+        None,
+        description="Optional. The destination genre. Absent or equal to `genre_id` means the artist stays in that genre; an equal value is treated as absent before any check, so the `genre_not_found` check does not apply to it. An unknown id is a 404 `genre_not_found`; a different genre in which the artist already has a membership or any release is refused (409 `already_filed_in_genre`).\n",
+    )
+
+
+class ArtistRefileResult(ArtistCard):
+    changed: bool = Field(
+        ...,
+        description='`false` when the letters, the genre and the number all were unchanged, by the rule in `RefileArtistRequest` ("What counts as a change"); nothing was written.\n',
+    )
+    previous_code_artist_number: int = Field(
+        ..., description="The artist number before this request."
+    )
+    previous_code_letters: str = Field(
+        ...,
+        description="The call letters before this request. Equals the card's `code_letters` when the letters did not change.\n",
+    )
+    previous_genre_id: int = Field(
+        ...,
+        description="The genre before this request. Equals the card's `genre_id` when the artist did not move. The card is the destination membership, so after a genre move its `genre_id` is `to_genre_id`.\n",
+    )
+    releases_to_relabel: int = Field(
+        ...,
+        description="How many releases are filed under the destination (artist, genre) membership, counted after the writes. Every one re-labels in the database at once, so this is the count of physical records whose shelf labels now need replacing. Also present when `changed` is `false`, where nothing re-labelled and the count is informational; the `previous_*` fields then equal the card's values.\n",
+    )
+
+
+class ArtistRefileConflictReason(StrEnum):
+    artist_code_conflict = "artist_code_conflict"
+    lettered_compilation_section = "lettered_compilation_section"
+    various_artists_section = "various_artists_section"
+    letters_shared_across_genres = "letters_shared_across_genres"
+    already_filed_in_genre = "already_filed_in_genre"
+
+
+class ArtistRefileNotFoundCode(StrEnum):
+    artist_not_found = "artist_not_found"
+    artist_not_filed_in_genre = "artist_not_filed_in_genre"
+    genre_not_found = "genre_not_found"
+
+
+class ArtistRefileNotFoundError(BaseModel):
+    message: str
+    code: ArtistRefileNotFoundCode
+
+
+class ArtistGenreMembership(BaseModel):
+    genre_id: int
+    code_artist_number: int
+
+
+class Reason1(StrEnum):
+    artist_has_releases = "artist_has_releases"
+    artist_crossreference_source = "artist_crossreference_source"
+    artist_crossreference_target = "artist_crossreference_target"
+    artist_library_crossreference = "artist_library_crossreference"
+
+
+class ArtistDeleteRefusal(BaseModel):
+    message: str
+    reason: Reason1 = Field(
+        ...,
+        description="Which of the four `/wxycdb` refusals fired, checked in that order. `compilation_credit_count` never appears here — that dependent is informational only and never refuses a delete (see its own description on `ArtistCardWithDependentCounts`).\n",
+    )
+    count: int = Field(
+        ...,
+        description="How many rows the refusing predicate found: releases on file, cross-references in the naming direction, or release cross-references. Scoped to the one predicate named by `reason`, never a sum across them.\n",
+    )
+
+
+class ArtistByCodeMatch(BaseModel):
+    id: int
+    artist_name: str
+    code_letters: str
+    code_number: int = Field(
+        ...,
+        description="Mode-dependent. Fully specified (`code_number` given on the request), this is an ECHO of the request value, identical on every row — NOT the row's own `artist_genre_code` the way the same-named field on `ArtistSearchMatch` is. Browsing (`code_number` omitted on the request), it is the row's real `artist_genre_code` and varies across the list.\n",
+    )
+    genre_id: int = Field(
+        ..., description="Echo of the request's `genre_id`, identical on every row."
+    )
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+
+
+class ArtistByCodeResponse(BaseModel):
+    artists: list[ArtistByCodeMatch]
+
+
+class Reason2(StrEnum):
+    genre_not_found = "genre_not_found"
+    code_not_assigned = "code_not_assigned"
+
+
+class ArtistByCodeError(BaseModel):
+    message: str
+    reason: Reason2
+
+
+class ArtistRelease(BaseModel):
+    id: int
+    last_modified: AwareDatetime
+    format_name: str
+    genre_id: int
+    code_letters: str
+    code_artist_number: int
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+    code_number: int
+    code_volume_letters: str | None = None
+    album_title: str
+    alternate_artist_name: str | None = None
+
+
+class ArtistReleasesPage(BaseModel):
+    artist_id: int
+    releases: list[ArtistRelease]
+    total: int
+    page: int
+    totalPages: int
+
+
+class NextCodeNumberResponse(BaseModel):
+    next_code_number: int = Field(
+        ...,
+        description="Shared shape for `GET /library/artists/peek-code` (next ARTIST code number in a `(genre_id, code_letters)` bucket) and `GET /library/artists/{id}/next-release-number` (next RELEASE code number for one artist's shelf, within one genre). Pure read, no side effects, in both cases.\n",
+    )
+
+
+class Reason3(StrEnum):
+    lock_unavailable = "lock_unavailable"
+
+
+class LockUnavailableRefusal(BaseModel):
+    message: str = Field(
+        ...,
+        examples=[
+            "Could not delete: the release is being written to right now. Try again in a moment."
+        ],
+    )
+    reason: Reason3
+
+
+class DigitalAssetReference(BaseModel):
+    id: int
+    provenance: str = Field(
+        ...,
+        description="Open vocabulary, not a closed enum. `rotation_upload` and `cd_rip` are the values in use today.\n",
+        examples=["rotation_upload"],
+    )
+    disc_number: int
+    status: str = Field(
+        ...,
+        description="Open vocabulary, not a closed enum. `needs_review`, `bound` and `rejected` are in use today; the CD-rip phase adds `pulled`, `ripped` and `exception`.\n",
+        examples=["needs_review"],
+    )
+
+
+class Reason4(StrEnum):
+    digital_asset_references = "digital_asset_references"
+
+
+class ReleaseDeleteRefusal(BaseModel):
+    message: str = Field(
+        ..., examples=["Cannot delete: release has 2 digital assets on record (ids: 41, 42)"]
+    )
+    reason: Reason4
+    asset_count: int = Field(
+        ...,
+        description="Number of LIVE `digital_asset` rows blocking this delete (`assets.length`).",
+    )
+    assets: list[DigitalAssetReference]
+
+
+class FlowsheetPlayCounts(BaseModel):
+    direct: int = Field(
+        ...,
+        description="Plays linked via `flowsheet.album_id`; unlinked (not deleted) by the delete.\n",
+    )
+    rotation_linked: int = Field(
+        ...,
+        description="Plays reachable only via `flowsheet.rotation_id` -> `rotation.album_id`; unlinked by the delete's rotation cascade. Excludes any play already counted in `direct`.\n",
+    )
+    legacy_linked: int = Field(
+        ...,
+        description="Plays naming the release only by a bare `flowsheet.legacy_release_id`, awaiting `jobs/legacy-linkage-resolve`. Deleting STRANDS whatever is still in this arm at delete time (unless the batch is restored) rather than unlinking it — see the schema description above for why this is exactly the count that must never be folded into a total.\n",
+    )
+
+
+class CatalogDeleteActor(BaseModel):
+    user_id: str | None = None
+    role: str | None = None
+
+
+class CatalogDeleteEntity(BaseModel):
+    entity_kind: str | None = None
+    table: str | None = None
+    row: dict[str, Any] | None = Field(
+        None, description="The deleted parent row itself, every non-generated column."
+    )
+    children: dict[str, int] | None = Field(
+        None,
+        description="Child table name -> COUNT of rows that referenced the deleted parent, never the rows themselves. The archive's own storage holds the full unprojected child rows so a restore has every column it needs, but this listing is read by any `catalog: ['write']` principal, not by whoever has a legitimate need to see e.g. another DJ's bin contents or review text.\n",
+    )
+
+
+class CatalogDeleteBatch(BaseModel):
+    batch_id: UUID
+    restorable: bool = Field(
+        ...,
+        description="Whether this batch's kind and captured envelope allow a `POST /library/deleted/{batchId}/restore` attempt (WXYC/Backend-Service#2616), not whether an attempt can succeed. It is computed off the same restore-plan set the restore's `409 unrestorable_kind` refusal reads, so the two cannot drift.\n\n`false` when any entity's `entity_kind` has no replay plan OR that entity's captured envelope is missing its row. An `artist` batch reads `false` on the first count today: the delete does capture a snapshot, but an artist's shelf slot has no tombstone and needs its own conflict probe, so no replay plan exists for it. The envelope half is the same corruption the restore endpoint's own 500 guards against, so this field answers for envelope health, not just `entity_kind`. A batch holding several entities is restorable only if every one of them is, since the restore refuses the whole batch on the first kind it cannot replay — and a batch whose rows read back empty is `false` rather than vacuously `true`. A `library` batch with an intact envelope reads `true`.\n\n`true` is NOT a promise that a restore attempt will succeed — it means this batch's kind has a working replay plan and a parseable envelope, nothing more. The envelope half is settled here, at listing time, against an immutable capture, so a batch that reads `true` cannot go on to fail on a corrupt envelope; it can still answer `already_restored`, `resolution_required` (a shelf-slot conflict a client must resolve), `lock_unavailable`, or `missing_reference` (a restored row's `NO ACTION` reference to a row deleted since). `already_restored` is terminal (the batch is back); `resolution_required` and `lock_unavailable` clear on a retry; `missing_reference` is PERMANENT today, because no declared endpoint puts the missing row back under its captured id (a deleted artist, or a removed `auth_user` referenced by `digital_asset.ripped_by`), so a `true` batch can be listed with a live Restore that will never succeed. `false` for an unrestorable KIND is the hard guarantee: the endpoint refuses every such batch with `409 unrestorable_kind` before any row lock or write. A batch that reads `false` because its envelope is missing its row passes that check, takes the global advisory restore lock (so it can instead answer 503 `lock_unavailable`), and answers 500, still before any row lock or write.\n",
+    )
+    captured_at: AwareDatetime
+    actor: CatalogDeleteActor
+    entities: list[CatalogDeleteEntity]
+    unrecoverable: list[str] = Field(
+        ...,
+        description="Names the dependents no envelope ever captures, so a restore cannot bring them back. It depends on what kind of entity the batch holds (`entities[].entity_kind`) — a release and an artist lose different tables, not one constant list.\nFor a `library` batch: `album_metadata`, `library_identity`, `library_identity_source`, `uncovered_release_search_markers`, `album_review_submissions`.\nFor an `artist` batch: `artist_search_alias`, `artist_similar_artists`, `artist_station_plays`, `concerts`, `concert_performers`.\n",
+    )
+
+
+class DeletedArchivePage(BaseModel):
+    results: list[CatalogDeleteBatch]
+    total: int
+    page: int
+    totalPages: int
+
+
+class RestoreDeviationKind(StrEnum):
+    nulled = "nulled"
+    dropped = "dropped"
+
+
+class RestoreDeviation(BaseModel):
+    kind: RestoreDeviationKind
+    table: str = Field(..., description="The table of the affected row.")
+    row_id: int = Field(..., description="The affected row's primary key (the captured id).")
+    column: str = Field(
+        ..., description="The reference column that was nulled; `null` for a dropped row."
+    )
+    captured_value: str = Field(
+        ...,
+        description="The referenced id the snapshot carried for that column (for `dropped`, the missing parent's id), as a string because some referenced keys (`auth_user.id`) are text.\n",
+    )
+
+
+class RestoreSlotConflict(BaseModel):
+    entity_id: int = Field(
+        ...,
+        description="The archive row's `entity_id` — the `library.id` the card held when it was deleted, and the id it would come back under.\n",
+    )
+    artist_id: int
+    genre_id: int
+    code_number: int = Field(
+        ...,
+        description="The card's ORIGINAL call number, still on the archive record whichever arm the caller picks.\n",
+    )
+    code_volume_letters: str
+    occupied_by_library_id: int = Field(
+        ...,
+        description="`library.id` of the release holding that slot right now — the one fact that lets a librarian go look at what is in the way.\n",
+    )
+    next_free_code_number: int = Field(
+        ...,
+        description="The call number the `next_free_code` resolution would file this card under instead.\n",
+    )
+
+
+class Reason5(StrEnum):
+    resolution_required = "resolution_required"
+
+
+class RestoreResolutionRequiredRefusal(BaseModel):
+    message: str
+    reason: Reason5
+    conflicts: list[RestoreSlotConflict]
+
+
+class Reason6(StrEnum):
+    restore_declined = "restore_declined"
+
+
+class RestoreDeclinedRefusal(BaseModel):
+    message: str
+    reason: Reason6
+    conflicts: list[RestoreSlotConflict]
+
+
+class Reason7(StrEnum):
+    already_restored = "already_restored"
+
+
+class RestoreAlreadyRestoredRefusal(BaseModel):
+    message: str
+    reason: Reason7
+    entity_ids: list[int] = Field(
+        ..., description="The captured `entity_id`s already present in the catalog.\n"
+    )
+
+
+class Reason8(StrEnum):
+    unrestorable_kind = "unrestorable_kind"
+
+
+class RestoreUnrestorableKindRefusal(BaseModel):
+    message: str
+    reason: Reason8
+    entity_kind: str
+
+
+class Reason9(StrEnum):
+    missing_reference = "missing_reference"
+
+
+class RestoreMissingReferenceRefusal(BaseModel):
+    message: str
+    reason: Reason9
+    table: str = Field(..., description="The table of the captured row that holds the reference.")
+    row_id: int = Field(
+        ...,
+        description="The captured row's primary key; `null` for a row with no single-column primary key (`artist_library_crossreference`, keyed only by its `(artist_id, library_id)` pair). Such a row is identified by `table`, `column` and `captured_value` together with the entity being restored.\n",
+    )
+    column: str = Field(..., description="The reference column whose target is missing.")
+    target_table: str = Field(..., description="The table the reference points into.")
+    captured_value: str = Field(
+        ...,
+        description="The referenced id the snapshot carried, as a string because some referenced keys (`auth_user.id`) are text.\n",
     )
 
 
@@ -840,36 +1943,9 @@ class AddToBinRequest(BaseModel):
     album_id: int
 
 
-class Playlist(BaseModel):
-    id: int
-    dj_id: int
-    name: str
-    created_at: AwareDatetime
-    updated_at: AwareDatetime
-
-
-class PlaylistEntry(BaseModel):
-    id: int
-    playlist_id: int
-    album_id: int
-    track_title: str | None = None
-    position: int
-    album_title: str
-    artist_name: str
-
-
-class PlaylistWithEntries(Playlist):
-    entries: list[PlaylistEntry]
-
-
 class DJBinResponse(BaseModel):
     dj_id: int
     entries: list[BinEntry]
-
-
-class DJPlaylistsResponse(BaseModel):
-    dj_id: int
-    playlists: list[Playlist]
 
 
 class BinLibraryDetails(BaseModel):
@@ -879,7 +1955,19 @@ class BinLibraryDetails(BaseModel):
     label: str | None = None
     code_letters: str | None = None
     code_artist_number: int | None = None
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
     code_number: int | None = None
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="The per-release volume letter, `library.code_volume_letters` (varchar(4)). Volumes of one set share a call number, so this tells them apart. Stored RAW: the wire does not trim or case-fold it. NOT the compilation-section letter (`code_comp_letter`, a separate field). Optional.\n",
+    )
+    genre_id: int | None = Field(
+        None,
+        description="The release's shelf genre (`library.genre_id`). The id that gates `code_comp_letter`: a consumer rendering the section letter needs it to know whether the letter applies. Optional.\n",
+    )
     format_name: str | None = None
     genre_name: str | None = None
     legacy_release_id: int | None = Field(
@@ -911,10 +1999,220 @@ class AddScheduleShiftRequest(BaseModel):
     specialty_id: int | None = None
 
 
-class SpecialtyShow(BaseModel):
+class SpotlightRole(StrEnum):
+    performer = "performer"
+    dj = "dj"
+    reader = "reader"
+    guest = "guest"
+    host = "host"
+
+
+class RequestLineMode(StrEnum):
+    requests = "requests"
+    feedback = "feedback"
+    closed = "closed"
+
+
+class SpecialtyShowArtwork(BaseModel):
+    square_url: AnyUrl = Field(..., description="1024x1024 sRGB, immutable")
+    master_url: AnyUrl | None = Field(None, description="3000x3000")
+    wide_url: AnyUrl | None = Field(None, description="3:1 banner")
+
+
+class Cadence(StrEnum):
+    weekly = "weekly"
+    some_weeks = "some_weeks"
+    last_of_month = "last_of_month"
+
+
+class SpecialtyShowSlot(BaseModel):
+    day: conint(ge=0, le=6) = Field(..., description="0 = Monday, matching Schedule.day")
+    start_time: constr(pattern=r"^([01]\d|2[0-3]):[0-5]\d$") = Field(
+        ..., description="America/New_York wall clock, `HH:MM`"
+    )
+    duration_minutes: conint(ge=1, le=720)
+    cadence: Cadence
+
+
+class SpecialtyShowRef(BaseModel):
     id: int
-    specialty_name: str
+    slug: constr(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    name: str
+    short_name: str
+    tagline: str | None = Field(None, description="One line for the show card")
+    logs_playcuts: bool = Field(
+        ...,
+        description="Whether this program normally logs tracks. When `false`, DJ clients stop prompting for songs and history can say the show has no tracklist.",
+    )
+    default_spotlight_role: SpotlightRole | None = Field(
+        None, description="What to call the person in the spotlight, when the show has one."
+    )
+    artwork: SpecialtyShowArtwork | None = None
+    accent_color: constr(pattern=r"^#[0-9A-Fa-f]{6}$") | None = Field(
+        None,
+        description="One color serves light and dark mode. The catalog refuses a color unless white text on it reaches 4.5:1 contrast and the color reaches 3:1 against the app's darkest surface.",
+    )
+
+
+class SpecialtyShow(SpecialtyShowRef):
     description: str | None = None
+    slots: list[SpecialtyShowSlot]
+    active: bool
+    default_request_mode: RequestLineMode | None = Field(
+        None,
+        description="The request line mode a show of this program starts with. `null` means `requests`.",
+    )
+
+
+class SpecialtyShowManaged(SpecialtyShow):
+    created_by: str | None = Field(
+        None, description="Public DJ handle of whoever created the program."
+    )
+    updated_by: str | None = Field(None, description="Public DJ handle of whoever last edited it.")
+    retired_by: str | None = Field(
+        None, description="Public DJ handle of whoever retired it. Null while active."
+    )
+    retired_at: AwareDatetime | None = Field(
+        None, description="When it was retired. Null while active."
+    )
+    future_poster_count: conint(ge=0) | None = Field(
+        None,
+        description="Posters waiting for a broadcast date that has not yet passed, for the list and the retire dialog. Absent when the server does not supply it; read `GET /specialty-posters` instead.",
+    )
+
+
+class SpecialtyShowCreateRequest(BaseModel):
+    slug: constr(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=64) = Field(
+        ..., description="The stable public id. Never reused, even by a retired program."
+    )
+    name: constr(max_length=64)
+    short_name: constr(max_length=32)
+    tagline: constr(max_length=120) | None = None
+    description: str | None = None
+    slots: list[SpecialtyShowSlot]
+    logs_playcuts: bool | None = None
+    default_spotlight_role: SpotlightRole | None = None
+    default_request_mode: RequestLineMode | None = None
+    accent_color: constr(pattern=r"^#[0-9A-Fa-f]{6}$") | None = Field(
+        None,
+        description="Refused with 400 `accent_too_light` or `accent_too_dark` unless white text on it reaches 4.5:1 and it reaches 3:1 against the app's darkest surface.",
+    )
+
+
+class SpecialtyShowUpdateRequest(BaseModel):
+    slug: constr(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", max_length=64) | None = Field(
+        None, description="Changes only while nothing uses the slug; otherwise 409 `slug_in_use`."
+    )
+    name: constr(max_length=64) | None = None
+    short_name: constr(max_length=32) | None = None
+    tagline: constr(max_length=120) | None = None
+    description: str | None = None
+    slots: list[SpecialtyShowSlot] | None = None
+    logs_playcuts: bool | None = None
+    default_spotlight_role: SpotlightRole | None = None
+    default_request_mode: RequestLineMode | None = None
+    accent_color: constr(pattern=r"^#[0-9A-Fa-f]{6}$") | None = Field(
+        None, description="The same refusal as on create."
+    )
+    active: bool | None = Field(
+        None, description="`false` retires the program; `true` brings it back."
+    )
+
+
+class Rendition1(BaseModel):
+    width: int
+    height: int
+    url: AnyUrl
+
+
+class ShowPoster(BaseModel):
+    id: int
+    aspect_ratio: float = Field(
+        ...,
+        description="Width divided by height, 0.667 to 1.0, so a client can lay out before the image loads.",
+    )
+    renditions: list[Rendition1] = Field(
+        ...,
+        description="The poster at its own aspect ratio, never cropped or padded, one entry per width, ascending. Today 600 and 1200 px wide, never upscaled, so the largest entry may be narrower than 1200.",
+    )
+
+
+class Status1(StrEnum):
+    uploading = "uploading"
+    published = "published"
+    replaced = "replaced"
+    removed = "removed"
+    purged = "purged"
+    failed = "failed"
+
+
+class PosterFailureCode(StrEnum):
+    not_uploaded = "not_uploaded"
+    unsupported_type = "unsupported_type"
+    too_large = "too_large"
+    too_small = "too_small"
+    bad_aspect = "bad_aspect"
+    animated = "animated"
+    decode_failed = "decode_failed"
+
+
+class PosterCompletionFailure(ApiErrorResponse):
+    failure_code: PosterFailureCode
+
+
+class ContentType(StrEnum):
+    image_jpeg = "image/jpeg"
+    image_png = "image/png"
+    image_webp = "image/webp"
+
+
+class PosterFileDeclaration(BaseModel):
+    content_type: ContentType
+    byte_length: conint(ge=1, le=10485760)
+
+
+class PosterUploadRequest(BaseModel):
+    specialty_id: int
+    broadcast_date: date_aliased
+    title: constr(max_length=128) | None = None
+    poster: PosterFileDeclaration
+
+
+class PresignedUpload(BaseModel):
+    url: AnyUrl = Field(..., description="Presigned PUT. Never logged.")
+    headers: dict[str, str] = Field(
+        ...,
+        description="The Content-Type to send exactly. Content-Length is not included because a browser sets it itself; the server checks the size with HEAD on complete.",
+    )
+    expires_at: AwareDatetime
+
+
+class ContentType1(StrEnum):
+    image_png = "image/png"
+    image_jpeg = "image/jpeg"
+
+
+class LogoFileDeclaration(BaseModel):
+    content_type: ContentType1
+    byte_length: conint(ge=1, le=10485760)
+
+
+class LogoUploadResponse(BaseModel):
+    upload: PresignedUpload
+
+
+class LogoFailureCode(StrEnum):
+    not_uploaded = "not_uploaded"
+    unsupported_type = "unsupported_type"
+    too_large = "too_large"
+    too_small = "too_small"
+    not_square = "not_square"
+    animated = "animated"
+    decode_failed = "decode_failed"
+
+
+class LogoCompletionFailure(ApiErrorResponse):
+    failure_code: LogoFailureCode
 
 
 class Schedule(BaseModel):
@@ -955,22 +2253,6 @@ class ParsedSongRequest(BaseModel):
     album: str | None = None
     confidence: confloat(ge=0.0, le=1.0)
     interpretation: str | None = None
-
-
-class MatchType(StrEnum):
-    exact = "exact"
-    fuzzy = "fuzzy"
-    partial = "partial"
-
-
-class DeviceRegistration(BaseModel):
-    device_id: str
-    registered_at: AwareDatetime
-
-
-class DeviceToken(BaseModel):
-    token: str
-    expires_at: AwareDatetime
 
 
 class Venue(BaseModel):
@@ -1117,8 +2399,54 @@ class SongLikeTallyResponse(BaseModel):
     )
 
 
+class Provider(StrEnum):
+    apns = "apns"
+    fcm = "fcm"
+
+
+class Environment(StrEnum):
+    production = "production"
+    sandbox = "sandbox"
+
+
+class PushTokenRegistration(BaseModel):
+    provider: Provider = Field(
+        ...,
+        description="The push provider the token was issued by. `fcm` is reserved for the Android fast-follow — no server accepts it in v1.",
+    )
+    token: str = Field(..., description="The opaque provider-issued push token.")
+    environment: Environment = Field(
+        ...,
+        description="Debug builds register `sandbox` tokens. This column exists so a sandbox token is never wrongly invalidated by production APNs.",
+    )
+    bundle_id: str = Field(
+        ..., description="The app's bundle identifier, which becomes the `apns-topic`."
+    )
+
+
+class ListenerRequestReply(BaseModel):
+    request_id: UUID = Field(..., description="The request this reply answers.")
+    reply_id: UUID = Field(..., description="This reply's own identity.")
+    body: constr(min_length=1, max_length=500) = Field(..., description="The reply text.")
+    sent_at: AwareDatetime = Field(..., description="When the reply was sent.")
+    on_air_dj_name: str | None = Field(
+        None,
+        description="The flowsheet's on-air DJ name, stamped at send time. `null` for confirmed automation or when no name was available to stamp. Provenance only, never an authorization input — the listener-facing card does not render it.",
+    )
+
+
+class ListenerRequestRepliesResponse(BaseModel):
+    replies: list[ListenerRequestReply] = Field(
+        ..., description="Replies addressed to the caller. Empty when nothing is addressed to them."
+    )
+
+
 class AlbumReview(BaseModel):
     id: int
+    reviewer: str = Field(
+        ...,
+        description="The form's 'Name of reviewer, and date' answer, verbatim: free text, usually a real name followed by a date. Not parsed. `null` when the row has none. For use inside the station only: never show it on a public surface, and never send it to analytics, error reports or logs.",
+    )
     album_id: int = Field(
         ...,
         description="WXYC library album id when the free-text artist/album resolved to exactly one catalog row; null otherwise.",
@@ -1385,6 +2713,41 @@ class LookupEmailResponse(BaseModel):
     email: str
 
 
+class UpdateIdentityRequest(BaseModel):
+    realName: constr(max_length=255) | None = Field(
+        None,
+        description="The DJ's legal name — PII (docs/pii.md), never rendered to a public surface. Maps to auth_user.real_name.\n",
+    )
+    djName: constr(max_length=255) | None = Field(
+        None,
+        description='The on-air HANDLE, not a legal name — this is the value public surfaces display. Maps to auth_user.dj_name. The literal "Anonymous" (case-insensitive) is rejected: resolveDjDisplayName treats it as unusable, so accepting it would leave dj_name and the derived auth_user.name in disagreement.\n',
+    )
+
+
+class UpdateIdentityAck(Enum):
+    boolean_True = True
+
+
+class UpdateIdentityResponse(BaseModel):
+    status: UpdateIdentityAck
+    userId: str
+    realName: str | None = None
+    djName: str | None = None
+
+
+class UpdateIdentityErrorCode(StrEnum):
+    UNAUTHORIZED = "UNAUTHORIZED"
+    FORBIDDEN = "FORBIDDEN"
+    INVALID_REQUEST = "INVALID_REQUEST"
+    INVALID_DJ_NAME = "INVALID_DJ_NAME"
+    UPDATE_FAILED = "UPDATE_FAILED"
+
+
+class UpdateIdentityErrorResponse(BaseModel):
+    error: str
+    code: UpdateIdentityErrorCode
+
+
 class OTPType(StrEnum):
     sign_in = "sign-in"
     email_verification = "email-verification"
@@ -1454,23 +2817,23 @@ class AlbumMetadata(BaseModel):
     release_year: int | None = None
     spotify_url: AnyUrl | None = Field(
         None,
-        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     apple_music_url: AnyUrl | None = Field(
         None,
-        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     youtube_music_url: AnyUrl | None = Field(
         None,
-        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     bandcamp_url: AnyUrl | None = Field(
         None,
-        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     soundcloud_url: AnyUrl | None = Field(
         None,
-        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     last_fetched: AwareDatetime | None = None
 
@@ -1485,90 +2848,26 @@ class ArtistMetadata(BaseModel):
     last_fetched: AwareDatetime | None = None
 
 
-class MetadataFetchRequest(BaseModel):
-    album_id: int | None = None
-    artist_id: int | None = None
-    force_refresh: bool | None = None
-
-
-class MetadataFetchResponse(BaseModel):
-    album: AlbumMetadata | None = None
-    artist: ArtistMetadata | None = None
-    source: MetadataSource
-    cached: bool
-
-
-class Type(StrEnum):
-    release = "release"
-    master = "master"
-    artist = "artist"
-
-
-class DiscogsSearchResult(BaseModel):
-    id: int
-    title: str
-    year: int | None = None
-    thumb: str | None = None
-    cover_image: str | None = None
-    resource_url: str
-    type: Type
-
-
-class DiscogsArtistRef(BaseModel):
-    name: str
-    id: int
-
-
-class DiscogsLabelRef(BaseModel):
-    name: str
-    id: int
-
-
-class DiscogsTrack(BaseModel):
-    position: str
-    title: str
-    duration: str | None = None
-
-
-class DiscogsImage(BaseModel):
-    type: str
-    uri: str
-    width: int
-    height: int
-
-
-class DiscogsRelease(BaseModel):
-    id: int
-    title: str
-    year: int | None = None
-    artists: list[DiscogsArtistRef]
-    labels: list[DiscogsLabelRef]
-    genres: list[str]
-    styles: list[str]
-    tracklist: list[DiscogsTrack]
-    images: list[DiscogsImage] | None = None
-
-
 class StreamingLinks(BaseModel):
     spotify_url: AnyUrl | None = Field(
         None,
-        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     apple_music_url: AnyUrl | None = Field(
         None,
-        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     youtube_music_url: AnyUrl | None = Field(
         None,
-        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     bandcamp_url: AnyUrl | None = Field(
         None,
-        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     soundcloud_url: AnyUrl | None = Field(
         None,
-        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
 
 
@@ -1638,7 +2937,7 @@ class LibraryCatalogItem(BaseModel):
     label: str | None = Field(None, description="Record label name from the library catalog")
     call_number: str = Field(
         ...,
-        description='Full call number for shelf lookup, e.g. "Rock CD ABC 123/45". Computed from genre, format, call_letters, artist_call_number, and release_call_number.\n',
+        description='A display string: the shelf locator as a librarian reads it. Clients must not parse it or recompose it from other fields. Named artists render as "Rock cd S 1/1"; compilations render as "Hiphop cd V/A-651", "Rock cd V/A M-121" or "Soundtracks cd M-12", with no artist number and a "-" separator. A release with a volume letter may carry it after the release number as "-<Letter>". The artist half follows tubafrenzy\'s `ArtistLibraryCode.getCallLettersAndNumbersWithPunctuation` and the release half its `LibraryRelease.getCallNumbersAndLetters`; unlike tubafrenzy\'s `LibraryRelease.getEntireLibraryCode`, this string also names the format. A row-less item (`id` 0) carries the sentinel "(external)" instead.\n',
     )
     library_url: str = Field(
         ...,
@@ -1846,7 +3145,7 @@ class TracksContractVersion(IntEnum):
 class BulkResolveLibrariesResponse(BaseModel):
     tracks_contract_version: TracksContractVersion | None = Field(
         None,
-        description='Present and equal to 1 only when the request set `include_tracks: true`, the producer understands the flag, AND the producer has emitted `tracks_attempted` for both `kind: single_artist` and `kind: compilation` results — see `BulkResolveResult.tracks_attempted`. The two producer arms ship independently (LML#1138, LML#1021); setting the marker with one arm unimplemented tells a consumer to trust `tracks_attempted` on rows where it is still meaningless.\n\nAbsent or NULL otherwise: both when `include_tracks` was false or omitted, and when the producer predates this field entirely, or has implemented only one of the two arms above. LML does not set this field anywhere yet and serves this endpoint without `response_model_exclude_none`, so it ships `null` — never an omitted key — on every response in production today (WXYC/wxyc-shared#310); `nullable: true` documents that wire instead of describing one nobody emits, the same treatment as `tracks` / `tracks_attempted` above.\n\nBecause of that, a consumer MUST test for the value `1` and must never test for key presence — `!== undefined` against the generated TypeScript reads TRUE for a producer that implements none of this, the inverse of what the marker exists to signal. Absent, `null`, and a producer that predates this field must all read "not supported", and only the literal value `1` reads "supported" — which keeps the check immune to whether any given producer omits or nulls its unset optionals. Same precedent as `LookupResponse.api_version` (`LookupRequest.include_identity`): a producer-echoed capability marker that lets a consumer distinguish "the producer understood my flag and the answer is genuinely nothing" from "the producer predates my flag" — a distinction `tracks_attempted`/`tracks` cannot make alone, because both are spelled `null` in either case (WXYC/wxyc-shared#303). No schema-level `default`, for the same `openapi-typescript` `defaultNonNullable` reason documented on `BulkResolveLibrariesRequest.include_tracks`.\n',
+        description='Present and equal to 1 only when the request set `include_tracks: true`, the producer understands the flag, AND the producer has emitted `tracks_attempted` for both `kind: single_artist` and `kind: compilation` results — see `BulkResolveResult.tracks_attempted`. The two producer arms ship independently (LML#1138, LML#1021); setting the marker with one arm unimplemented tells a consumer to trust `tracks_attempted` on rows where it is still meaningless.\n\nAbsent or NULL otherwise: both when `include_tracks` was false or omitted, and when the producer predates this field entirely, or has implemented only one of the two arms above. LML serves this endpoint without `response_model_exclude_none`, so when LML leaves the field unset it ships `null` — never an omitted key (WXYC/wxyc-shared#310); `nullable: true` documents that wire, the same treatment as `tracks` / `tracks_attempted` above.\n\nBecause of that, a consumer MUST test for the value `1` and must never test for key presence — `!== undefined` against the generated TypeScript reads TRUE for a producer that implements none of this, the inverse of what the marker exists to signal. Absent, `null`, and a producer that predates this field must all read "not supported", and only the literal value `1` reads "supported" — which keeps the check immune to whether any given producer omits or nulls its unset optionals. Same precedent as `LookupResponse.api_version` (`LookupRequest.include_identity`): a producer-echoed capability marker that lets a consumer distinguish "the producer understood my flag and the answer is genuinely nothing" from "the producer predates my flag" — a distinction `tracks_attempted`/`tracks` cannot make alone, because both are spelled `null` in either case (WXYC/wxyc-shared#303). No schema-level `default`, for the same `openapi-typescript` `defaultNonNullable` reason documented on `BulkResolveLibrariesRequest.include_tracks`.\n',
     )
     results: list[BulkResolveResult]
     cache_stats: CacheStats | None = None
@@ -1889,6 +3188,7 @@ class ArtistSearchAliasSource(StrEnum):
     discogs_alias = "discogs_alias"
     discogs_member = "discogs_member"
     wxyc_library_alt = "wxyc_library_alt"
+    wxyc_library_credit = "wxyc_library_credit"
 
 
 class ArtistSearchAliasMethod(StrEnum):
@@ -1916,7 +3216,7 @@ class ArtistSearchAliasVariant(BaseModel):
     method: ArtistSearchAliasMethod
     confidence: confloat(ge=0.0, le=1.0) = Field(
         ...,
-        description="Per-source default confidence (e.g. 0.95 for discogs_name_variation, 0.85 for discogs_alias / wxyc_library_alt, 0.70 for discogs_member). v1 search ignores this; stored for v2 ranking calibration.\n",
+        description="Per-source default confidence (e.g. 0.95 for discogs_name_variation, 0.85 for discogs_alias / wxyc_library_alt, 0.70 for discogs_member / wxyc_library_credit). v1 search ignores this; stored for v2 ranking calibration.\n",
     )
 
 
@@ -2180,7 +3480,7 @@ class DiscogsReleaseMetadata(BaseModel):
     videos: list[DiscogsReleaseVideo] | None = Field([], validate_default=True)
 
 
-class Type1(StrEnum):
+class Type(StrEnum):
     plainText = "plainText"
     artistLink = "artistLink"
     labelName = "labelName"
@@ -2193,7 +3493,7 @@ class Type1(StrEnum):
 
 
 class DiscogsResolvedToken(BaseModel):
-    type: Type1
+    type: Type
     text: str | None = Field(None, description="Content for plainText tokens")
     name: str | None = Field(None, description="Name for artistLink and labelName tokens")
     display_name: str | None = Field(
@@ -2299,7 +3599,10 @@ class LibrarySearchItem(BaseModel):
     alternate_artist_name: str | None = None
     label: str | None = None
     on_streaming: bool | None = None
-    call_number: str | None = Field(None, description='Computed call number (e.g. "Rock CD S 1/1")')
+    call_number: str | None = Field(
+        None,
+        description='A display string: the shelf locator as a librarian reads it. Clients must not parse it or recompose it from other fields. Named artists render as "Rock cd S 1/1"; compilations render as "Hiphop cd V/A-651", "Rock cd V/A M-121" or "Soundtracks cd M-12", with no artist number and a "-" separator. A release with a volume letter may carry it after the release number as "-<Letter>". The artist half follows tubafrenzy\'s `ArtistLibraryCode.getCallLettersAndNumbersWithPunctuation` and the release half its `LibraryRelease.getCallNumbersAndLetters`; unlike tubafrenzy\'s `LibraryRelease.getEntireLibraryCode`, this string also names the format.\n',
+    )
     library_url: str | None = Field(
         None,
         description="Per-release dj.wxyc.org permalink for this release. Points at the dj-site legacy front door `/dashboard/album/legacy/{id}`, whose `{id}` segment is the `legacy_release_id` above — not this row's `id`, which the proxy re-map (WXYC/Backend-Service#2168) moves into Backend's serial space. The front door resolves that legacy id to the canonical release route server-side and 308-redirects. Null when unavailable.\n",
@@ -2310,7 +3613,7 @@ class LibrarySearchItem(BaseModel):
     )
     matched_via_alias: list[ArtistMatchHint] | None = Field(
         None,
-        description="Sibling to `matched_via`. Reserved for the day LML composes artist-alias hits itself; not produced in v1 of the artist-search-alias plan (BS-local cache only). Optional and backward-compatible.\n",
+        description="Sibling to `matched_via`. Carries an artist-alias hint when one brought the row in. LML fills the same field on `LookupResultItem` (`POST /api/v1/lookup`) since LML#1444; no path returns this schema today. Optional and backward-compatible.\n",
     )
 
 
@@ -2347,6 +3650,21 @@ class StreamingCheckResponse(BaseModel):
         None,
         description="Names of services whose check raised an exception (transient network/rate-limit/\nscraping failure). Empty when every dispatched check completed without raising.\nWhen non-empty, callers should consider the listed services unchecked and may\nschedule a selective retry. Independent of `on_streaming`: a service can both\nmatch (populating `sources.<service>`) and other services can error.\n",
     )
+
+
+class FeatureAudience(StrEnum):
+    off = "off"
+    staff = "staff"
+    everyone = "everyone"
+
+
+class FeatureAccessEntry(BaseModel):
+    audience: FeatureAudience
+    can_see: bool = Field(..., description="Whether the calling account can see the feature now.")
+
+
+class FeatureAccessResponse(BaseModel):
+    reviews: FeatureAccessEntry
 
 
 class AppConfig(BaseModel):
@@ -2491,7 +3809,7 @@ class ArtworkSearchResponse(BaseModel):
     confidence: float | None = Field(None, description="Confidence score of the match (0-1)")
 
 
-class Type2(StrEnum):
+class Type1(StrEnum):
     artist = "artist"
     release = "release"
     master = "master"
@@ -2499,7 +3817,7 @@ class Type2(StrEnum):
 
 class EntityResolveResponse(BaseModel):
     name: str = Field(..., description="Entity name")
-    type: Type2 = Field(..., description="Discogs entity type")
+    type: Type1 = Field(..., description="Discogs entity type")
     id: int = Field(..., description="Discogs entity ID")
 
 
@@ -2510,11 +3828,11 @@ class SpotifyTrackResponse(BaseModel):
     artworkUrl: str | None = Field(None, description="Album artwork URL from Spotify")
 
 
-class Type3(StrEnum):
+class Type2(StrEnum):
     update = "update"
 
 
-class Type4(StrEnum):
+class Type3(StrEnum):
     refetch = "refetch"
 
 
@@ -2530,7 +3848,7 @@ class LiveFsRefetchEvent(BaseModel):
     timestamp: AwareDatetime
 
 
-class Type5(StrEnum):
+class Type4(StrEnum):
     insert = "insert"
 
 
@@ -2590,7 +3908,7 @@ class AutoDJLastTrack(BaseModel):
     posted_at: int = Field(..., description="Unix timestamp")
 
 
-class Type6(StrEnum):
+class Type5(StrEnum):
     heartbeat = "heartbeat"
 
 
@@ -2623,7 +3941,7 @@ class AutoDJHeartbeat(BaseModel):
     )
 
 
-class Type7(StrEnum):
+class Type6(StrEnum):
     command = "command"
 
 
@@ -2635,11 +3953,11 @@ class AutoDJCommand(BaseModel):
     value: str | None = Field(None, description="Config value (only for set_config)")
 
 
-class Type8(StrEnum):
+class Type7(StrEnum):
     ack = "ack"
 
 
-class Status1(StrEnum):
+class Status2(StrEnum):
     ok = "ok"
     error = "error"
     unknown_command = "unknown_command"
@@ -2648,14 +3966,14 @@ class Status1(StrEnum):
 class AutoDJAck(BaseModel):
     type: Literal["ack"]
     id: str = Field(..., description="The id from the command being acknowledged")
-    status: Status1
+    status: Status2
     error: str | None = Field(None, description="Error message (only when status is error)")
     result: dict[str, Any] | None = Field(
         None, description="Optional result data (e.g. { active: boolean } for button_toggle acks)"
     )
 
 
-class Type9(StrEnum):
+class Type8(StrEnum):
     now_playing = "now_playing"
 
 
@@ -2668,7 +3986,7 @@ class AutoDJNowPlaying(BaseModel):
     is_live: bool = Field(..., description="Whether a live DJ is streaming")
 
 
-class Type10(StrEnum):
+class Type9(StrEnum):
     error = "error"
 
 
@@ -2684,7 +4002,7 @@ class AutoDJErrorReport(BaseModel):
     count: int = Field(..., description="Occurrences since last report")
 
 
-class Type11(StrEnum):
+class Type10(StrEnum):
     button_toggle = "button_toggle"
 
 
@@ -2777,8 +4095,24 @@ class AutoDJDeactivateResponse(BaseModel):
     deactivatedAt: AwareDatetime
 
 
-class ShowAlreadyOpenErrorDetails(BaseModel):
-    show: ShowAlreadyOpenShow | None = None
+class ShowAlreadyOpenShow(BaseModel):
+    id: int = Field(
+        ...,
+        description="`shows.id` of the open show. This is the value a follow-up `intent: takeover` must send as `expected_show_id`.\n",
+    )
+    dj_name: str | None = Field(
+        None,
+        description='The show OWNER\'s public handle, resolved through the same PII-safe chain as `OpenShow.dj_name` (BS#1371): per-show override -> the DJ\'s chosen handle -> the legacy tubafrenzy handle -> `null` when unresolvable.\n\n**Null is the common case, not the edge.** Essentially the whole open-show backlog this handshake exists to unstick reaches nothing through that chain (2,813 of production\'s 2,814 open shows carried a NULL `primary_dj_id` as of 2026-08-21), so a prompt that interpolates it unguarded renders "null is on air". Fall back to generic phrasing.\n\nFor an abandoned show this names the DJ who LEFT. A client showing "who is on air right now" should prefer `GET /flowsheet/djs-on-air`, whose active-membership answer is the one that disagrees with this field precisely when it matters.\n',
+    )
+    start_time: AwareDatetime
+    show_name: str | None = Field(
+        None,
+        description="This airing's free-text title, such as a Thursday Night Feature topic; not the program name. The program name comes from `specialty`. `null` when it has none. Optional so a server that predates it stays valid.",
+    )
+    specialty: SpecialtyShowRef | None = Field(
+        None,
+        description="The specialty program the open show was signed on as, so a Go Live handoff prompt can name it. `null` for an ordinary show. Optional so a server that predates it stays valid.",
+    )
 
 
 class FlowsheetEntryFields(BaseModel):
@@ -2787,7 +4121,14 @@ class FlowsheetEntryFields(BaseModel):
     album_title: str | None = None
     artist_name: str | None = None
     record_label: str | None = None
-    label_id: int | None = None
+    rotation_label: str | None = Field(
+        None,
+        description="The rotation release's CANONICAL label, resolved server-side `flowsheet.rotation_id -> rotation.label_id -> labels.label_name` (WXYC/Backend-Service#2505).\n\nDistinct from `record_label` above, which is the free text a DJ typed mid-show and is UNCHANGED by this field's addition — it stays the snapshot and the fallback. The two exist together because the weekly airplay report names each ranked line from the FIRST rotation-linked play of the week, and 2.5% of rotation releases carry more than one label spelling across their weekly plays (2.2% differing by more than case), so one variant or one wrong early entry names the whole line. Resolving from the linked release removes the spelling contest at the root: every play of a release reads one row.\n\nNull when the entry has no rotation link, and null when the linked release has no `label_id` — the state of every row until WXYC/Backend-Service#2412 backfills it from tubafrenzy's `COMPANY_ID`, and the permanent state of a release whose label never resolved to a `labels` row. Consumers must fall back to `record_label` on null.\n\nResolved by rotation id with no status filter, so a KILLED release with plays in the window still names its label — unlike `GET /library/rotation`, which serves active rows only. A historical report must not lose the releases that were retired since the week it covers.",
+    )
+    label_id: int | None = Field(
+        None,
+        description="`labels.id` for `record_label`, or `null` when the row's label was never linked to a catalog row — the state of the large majority of rows, not an edge case. Passed straight through from `flowsheet.label_id`, which carries no NOT NULL. Consumers must fall back to the free-text `record_label` on null. Same column and same contract as `FlowsheetV2TrackEntry.label_id`; the V1 and V2 field sets are separate for historical reasons, not because the column differs between them.",
+    )
     rotation_id: int | None = None
     rotation_bin: RotationBin | None = None
     request_flag: bool
@@ -2798,30 +4139,30 @@ class FlowsheetEntryFields(BaseModel):
     release_year: int | None = None
     discogsUnavailable: bool | None = Field(
         None,
-        description='Rides the same MD-set "not on Discogs" flag as the Album surfaces (see `Album.discogsUnavailable`), non-nullable to match them. Deliberately camelCase — unlike its snake_case siblings in this block — to match Backend\'s `withDiscogsUnavailableCamelCase` serializer. Contract-first: the V2 flowsheet album embed will carry this field once the BS-emit piece (WXYC/Backend-Service#1908) lands; it is not emitted there yet.',
+        description='Rides the same MD-set "not on Discogs" flag as the Album surfaces (see `Album.discogsUnavailable`), non-nullable to match them. Deliberately camelCase — unlike its snake_case siblings in this block — to match Backend\'s `withDiscogsUnavailableCamelCase` serializer. The V2 union declares this field with the identical shape (`FlowsheetV2TrackEntry.discogsUnavailable`); one writer emits both surfaces, so the two declarations must not drift.',
     )
     discogsUnavailableNote: constr(max_length=500) | None = Field(
         None, description="Optional free-text reason for `discogsUnavailable`."
     )
     spotify_url: AnyUrl | None = Field(
         None,
-        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     apple_music_url: AnyUrl | None = Field(
         None,
-        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     youtube_music_url: AnyUrl | None = Field(
         None,
-        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     bandcamp_url: AnyUrl | None = Field(
         None,
-        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     soundcloud_url: AnyUrl | None = Field(
         None,
-        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     artist_bio: str | None = None
     artist_wikipedia_url: str | None = None
@@ -2848,19 +4189,57 @@ class FlowsheetEntryResponse(FlowsheetEntryBase, FlowsheetEntryFields):
     pass
 
 
-class FlowsheetRangeEntry(FlowsheetRangeEntryBase, FlowsheetEntryFields):
-    pass
+class FlowsheetRangeShow(BaseModel):
+    id: int = Field(
+        ..., description="Matches `entries[].show_id` for every entry belonging to this show."
+    )
+    show_name: str | None = Field(
+        None,
+        description="This airing's free-text title, such as a Thursday Night Feature topic; not the program name. The program name comes from `specialty`.",
+    )
+    dj_name: str | None = Field(
+        None,
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371): per-show override -> the DJ's chosen handle (`user.djName`) -> the legacy tubafrenzy handle (`shows.legacy_dj_name`, tubafrenzy's `DJ_HANDLE`) -> `null`.",
+    )
+    specialty_id: int | None = None
+    specialty: SpecialtyShowRef | None = Field(
+        None,
+        description="The catalog entry for `specialty_id`, embedded so a now-playing surface needs no second request. `null` for a regular show.",
+    )
+    poster: ShowPoster | None = Field(
+        None,
+        description="This airing's poster, or `null` when it has none; fall back to the program's artwork, then to the text tile. Optional so a server that predates it stays valid.",
+    )
+    start_time: AwareDatetime = Field(..., description="When the DJ signed on (ISO 8601).")
+    end_time: AwareDatetime | None = Field(
+        None,
+        description='When the DJ signed off (ISO 8601), or `null`. Null has **two** causes and they are not distinguishable from this field alone: the show is genuinely on the air, or its `show_end` delivery was dropped and the column stayed null permanently (nothing re-closes it on a schedule). Do not render a null `end_time` as "on air now"; compare `start_time` against the present, or read the `show_end` marker row in `entries`, which is the second independent signal.',
+    )
 
 
-class FlowsheetRangeResponse(BaseModel):
-    shows: list[FlowsheetRangeShow] = Field(
-        ...,
-        description="Every show overlapping the window, ordered by `start_time` ascending. Empty when the window contains no shows.",
+class FlowsheetCreateSpotlight(BaseModel):
+    entry_type: EntryType1
+    spotlight_role: SpotlightRole
+    spotlight_name: constr(min_length=1, max_length=128)
+
+
+class FlowsheetUpdateRequest(BaseModel):
+    spotlight_role: SpotlightRole | None = None
+    spotlight_name: constr(min_length=1, max_length=128) | None = Field(
+        None,
+        description="`spotlight_role` and `spotlight_name` each correct a spotlight row in place, alone or together, such as a misspelled band. They apply to spotlight rows only; on a track row they get a 400. `entry_type` is not client-writable.",
     )
-    entries: list[FlowsheetRangeEntry] = Field(
-        ...,
-        description="Every flowsheet row in the window, ordered by `add_time` ascending and tie-broken on `id` — NOT by `play_order`, which is per-show and interleaves a multi-show window (see the endpoint description). Includes the `show_start` / `show_end` marker rows. Those markers are a convenience, not a guarantee: a show whose `show_end` delivery was dropped has no closing marker (the same failure that leaves `FlowsheetRangeShow.end_time` null), so a consumer that segments purely on markers will run one show's entries into the next. Segment on `show_id` and treat the markers as labels.",
+    track_title: str | None = None
+    track_position: str | None = Field(
+        None,
+        description='Track position on the release (e.g., "A1", "B2", "5", "1-12"). Set when re-picking a track via the flowsheet picker; cleared (omitted) when a DJ edits the entry to a free-text track_title. String-typed to match Discogs\'s `release_track.position`.\n',
     )
+    artist_name: str | None = None
+    album_title: str | None = None
+    record_label: str | None = None
+    label_id: int | None = None
+    request_flag: bool | None = None
+    segue: bool | None = None
 
 
 class FlowsheetV2TrackEntry(FlowsheetV2Base):
@@ -2879,6 +4258,10 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
         description='Track position on the release (e.g., "A1", "B2", "5", "1-12"). Set by the dj-site flowsheet picker (catalog-track-search plan §5.3 / Track 3) when the DJ selected a track from the resolved release, or supplied directly on a freeform (LML-only) entry; null when the DJ entered a free-text track_title without a tracklist lookup. String-typed to match Discogs\'s `release_track.position`.\n',
     )
     record_label: str | None = None
+    rotation_label: str | None = Field(
+        None,
+        description="The rotation release's CANONICAL label, resolved server-side `flowsheet.rotation_id -> rotation.label_id -> labels.label_name` (WXYC/Backend-Service#2505).\n\nDistinct from `record_label` above, which is the free text a DJ typed mid-show and is UNCHANGED by this field's addition — it stays the snapshot and the fallback. The two exist together because the weekly airplay report names each ranked line from the FIRST rotation-linked play of the week, and 2.5% of rotation releases carry more than one label spelling across their weekly plays (2.2% differing by more than case), so one variant or one wrong early entry names the whole line. Resolving from the linked release removes the spelling contest at the root: every play of a release reads one row.\n\nNull when the entry has no rotation link, and null when the linked release has no `label_id` — the state of every row until WXYC/Backend-Service#2412 backfills it from tubafrenzy's `COMPANY_ID`, and the permanent state of a release whose label never resolved to a `labels` row. Consumers must fall back to `record_label` on null.\n\nResolved by rotation id with no status filter, so a KILLED release with plays in the window still names its label — unlike `GET /library/rotation`, which serves active rows only. A historical report must not lose the releases that were retired since the week it covers.",
+    )
     request_flag: bool
     segue: bool | None = None
     rotation_bin: RotationBin | None = None
@@ -2887,23 +4270,23 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
     release_year: int | None = None
     spotify_url: AnyUrl | None = Field(
         None,
-        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     apple_music_url: AnyUrl | None = Field(
         None,
-        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     youtube_music_url: AnyUrl | None = Field(
         None,
-        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     bandcamp_url: AnyUrl | None = Field(
         None,
-        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     soundcloud_url: AnyUrl | None = Field(
         None,
-        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     artist_bio: str | None = None
     artist_wikipedia_url: str | None = None
@@ -2922,13 +4305,32 @@ class FlowsheetV2TrackEntry(FlowsheetV2Base):
         None,
         description="An optional embedded upcoming Triangle-area concert whose headliner is this track's resolved catalog artist, attached server-side at feed-assembly time so the iOS \"On Tour\" Box Office CTA renders inline with no second round-trip.\n\nMatch rule (mirrors `GET /concerts?curated=true`): the track's resolved artist — `flowsheet.album_id → library.artist_id` — is matched against `concerts.headlining_artist_id` on curated, non-tombstoned, upcoming rows (`headlining_artist_id IS NOT NULL`, `removed_at IS NULL`, `starts_on >= today` America/New_York). When an artist has several upcoming dates the **soonest** wins (`ORDER BY starts_on ASC LIMIT 1`), so at most one concert rides each playcut.\n\nAbsent/null when the track has no resolved artist (free-form entries with no `album_id`, or an `album_id` whose library row has no matched artist) or when that artist has no curated upcoming date. The field is additive and optional — older app builds that don't decode it are unaffected. Reuses the `Concert` schema verbatim so iOS decodes one type across the On Tour tab and the playcut CTA; the `BoxOfficeTicketPresenter` reads `id`, `title` / `headlining_artist_raw`, `venue` (name + city), `starts_on`, `doors_at`, `status`, `price_min` / `price_max`, `ticket_url`, and `image_url` off it.\n",
     )
+    label_id: int | None = Field(
+        None,
+        description="`labels.id` for `record_label`, or `null` when the row's label was never linked to a catalog row — the state of the large majority of rows, not an edge case. Passed straight through from `flowsheet.label_id`, which carries no NOT NULL.",
+    )
+    discogsUnavailable: bool | None = Field(
+        None,
+        description='MD-set "not on Discogs" marker for this track\'s resolved release, the same flag `Album.discogsUnavailable` carries. Deliberately camelCase among snake_case siblings, matching Backend\'s `withDiscogsUnavailableCamelCase` serializer.\n\n**Absent — never `null`, never `false`-by-default — when the track resolved to no library row.** The key\'s absence is the only "unknown"; do not read a missing key as "available on Discogs". This is why the field is optional and NOT nullable: a nullable declaration would offer a second spelling of unknown that the wire never sends.',
+    )
+    discogsUnavailableNote: constr(max_length=500) | None = Field(
+        None,
+        description="Optional free-text reason for `discogsUnavailable`. Emitted independently of the flag — a library row can carry the flag with no note — so its presence implies nothing about the flag's.",
+    )
     critic_reviews: list[CriticReviewItem] | None = Field(
         None,
         description="An optional array of attributed external critic-review snippets for this track's resolved album, attached server-side at feed-assembly time so the iOS Reviews card can render inline for enriched playcuts with no second round-trip — iOS skips the `/proxy/metadata/album` fetch for terminal rows (wxyc-ios-64#685/#691).\n\nPopulated only on `track` entries whose linked `album_id` has rows in Backend-Service's `album_critic_reviews` table; attached via one batched query per page (no per-row lookups). Capped at 5 items (`CRITIC_REVIEWS_LIMIT`), ordered `published_at DESC NULLS LAST`. Absent — never `null` or empty — when the track has no matching album, when the attach is skipped, or on servers where Backend's `CRITIC_REVIEWS_ENABLED` env flag (ADR 0012) is off, including older servers that predate this field. Reuses the `CriticReviewItem` schema verbatim — the same shape `AlbumMetadataResponse.criticReviews` already serves — so clients decode one type across both surfaces.\n",
     )
 
 
-class Entries(
+class FlowsheetV2SpotlightEntry(FlowsheetV2Base):
+    entry_type: Literal["spotlight"]
+    spotlight_role: SpotlightRole
+    spotlight_name: str
+    message: str = Field(..., description="Server-composed fallback label")
+
+
+class FlowsheetV2Entry(
     RootModel[
         FlowsheetV2TrackEntry
         | FlowsheetV2ShowStartEntry
@@ -2938,6 +4340,7 @@ class Entries(
         | FlowsheetV2TalksetEntry
         | FlowsheetV2BreakpointEntry
         | FlowsheetV2MessageEntry
+        | FlowsheetV2SpotlightEntry
     ]
 ):
     root: (
@@ -2949,28 +4352,95 @@ class Entries(
         | FlowsheetV2TalksetEntry
         | FlowsheetV2BreakpointEntry
         | FlowsheetV2MessageEntry
-    ) = Field(..., discriminator="entry_type")
+        | FlowsheetV2SpotlightEntry
+    ) = Field(
+        ...,
+        description="One row of the V2 flowsheet projection — the discriminated union every `projectEntriesV2` caller emits.\n\nDeclared once and referenced from all four of its sites (`FlowsheetV2PaginatedResponse.entries`, `ShowPlaylist.entries`, `FlowsheetRangeResponse.entries`, and the array branches of `GET /flowsheet`) rather than inlined per site. It was previously pasted into two of them, which is how the copies come to disagree: nothing makes an inlined `oneOf` track a variant added to its twin. Add a variant here and to `entry_type`'s mapping, never to a call site.\n\nThe set of `entry_type` values grows without a coordinated release. A client that meets an unrecognized `entry_type` must not fail the page. It renders the row's server-composed `message` when its surface shows marker rows, or else skips the row.",
+        discriminator="entry_type",
+    )
 
 
-class FlowsheetV2PaginatedResponse(BaseModel):
-    entries: list[Entries]
-    page: int
-    limit: int
-    total: int = Field(..., description="Total number of entries")
-    totalPages: int = Field(..., description="Total number of pages")
-    on_air: OnAirInfo | None = Field(
+class RequestLine(BaseModel):
+    mode: RequestLineMode
+    source: Source = Field(
+        ...,
+        description="Which rule produced `mode`: `dj` the show's own choice (`request_mode` on `PATCH /flowsheet/shows/{id}`), `program` the specialty program's `default_request_mode`, `spotlight` the person in the spotlight (a band or a reader hides the button by default), `default` none of those applied.",
+    )
+
+
+class OnAirInfo(BaseModel):
+    dj_name: str = Field(
+        ...,
+        description="The DJ's public on-air handle, never the DJ's legal name. Same PII-safe resolution chain as `FlowsheetEntryFields.dj_name` (BS#1371), except when unresolvable this substitutes the station name (\"WXYC\") rather than `null` — it's the enclosing `on_air` field that goes `null`, not this one.",
+    )
+    show_id: int | None = Field(
         None,
-        description='The DJ currently on air, when known. An object with `dj_name` means a named DJ is live; JSON `null` means the station is confirmed on automation ("Auto DJ"); the field being absent entirely means the server does not report on-air status (older backends / non-default query branches) and clients should treat it as unknown rather than asserting automation. Not in `required` so absence stays distinct from an explicit `null`.\n\nCodegen note: this three-way distinction (object / null / absent) survives openapi-typescript (`on_air?: OnAirInfo | null`), but a *synthesized* decoder in Swift (Codable `decodeIfPresent`), Kotlin (kotlinx default value), or Python (pydantic `| None = None`) collapses JSON `null` and an absent key into the same value. A consumer that needs the third state must decode by key presence (e.g. Swift\'s `container.contains` + `decodeNil`), as the iOS app does — do not rely on a generated model to tell `null` from absent.',
+        description="`shows.id` of the live show, so a client can tell which show a flowsheet entry belongs to (an entry's own `show_id` names the same key).",
+    )
+    show_name: str | None = Field(
+        None,
+        description="This airing's free-text title, such as a Thursday Night Feature topic; not the program name. The program name comes from `specialty`. `null` when the show has none.",
+    )
+    specialty: SpecialtyShowRef | None = Field(
+        None,
+        description="The specialty program, set only when a DJ signed on as that show or tagged it afterwards. Never inferred from the time slot. `null` for an ordinary show. The tag can be set, changed or cleared mid-show through `PATCH /flowsheet/shows/{id}`, so the value can change for the same `show_id`; re-read it on every poll.",
+    )
+    poster: ShowPoster | None = Field(
+        None,
+        description="This airing's poster, or `null` when it has none; fall back to the program's artwork, then to the text tile. Optional so a server that predates it stays valid.",
+    )
+    spotlight: FlowsheetV2SpotlightEntry | None = Field(
+        None,
+        description="The current spotlight: the newest spotlight row in the open show, computed by the server so a client never searches a window of entries for it. `null` or absent when the show has none.",
+    )
+    request_line: RequestLine | None = Field(
+        None,
+        description='What the listener request button does right now, computed once on the server so every client agrees. Apps obey `mode` and nothing else; `source` lets the DJ site explain itself ("Closed while a band is on"). Absent from an older server. When nobody is on the air `on_air` is `null` and there is no answer here: apps keep today\'s behaviour.',
     )
 
 
 class ShowPlaylist(BaseModel):
-    show_name: str | None = None
-    specialty_show: str | None = None
-    start_time: AwareDatetime | None = None
-    end_time: AwareDatetime | None = None
-    show_djs: list[OnAirDJ] | None = None
-    entries: list[FlowsheetEntryResponse] | None = None
+    id: int = Field(
+        ...,
+        description="`shows.id` — the same value passed as `show_id`, and the value to pass back for a neighbour. The row is spread, so the key is `id`, not `show_id`.",
+    )
+    specialty_id: int
+    specialty: SpecialtyShowRef | None = Field(
+        None,
+        description="The catalog entry for `specialty_id`, embedded. `null` for a regular show. `specialty_show_name` stays for compatibility.",
+    )
+    poster: ShowPoster | None = Field(
+        None,
+        description="This airing's poster, or `null` when it has none; fall back to the program's artwork, then to the text tile. Optional so a server that predates it stays valid.",
+    )
+    show_name: str
+    start_time: AwareDatetime
+    end_time: AwareDatetime = Field(
+        ...,
+        description='Null does NOT mean "still on the air". It has two causes this column cannot distinguish: the show is genuinely live, or its `show_end` delivery was dropped and the column stayed null permanently. 2,813 of the ~2,814 null-`end_time` shows are legacy imports going back to 2006.',
+    )
+    primary_dj_id: str
+    legacy_show_id: int
+    legacy_dj_name: str
+    legacy_dj_id: int
+    dj_name_override: str
+    specialty_show_name: str = Field(
+        ...,
+        description="The resolved specialty-show name, or the empty string when the show is not a specialty show. Empty string, never null.",
+    )
+    show_djs: list[ShowPlaylistDJ]
+    previous_show_id: int = Field(
+        ...,
+        description="The show that aired immediately before this one, or null on the oldest show in the archive.\n\nOrdered by `(start_time, id)`, not by `id`: ids were airtime-ordered while tubafrenzy assigned them, but the import left 32 of ~72,900 shows carrying a lower id than a show that aired earlier. Null is the end of the archive and nothing else — never `0`, the sentinel the legacy JSP linked to and then failed to resolve.",
+    )
+    next_show_id: int = Field(
+        ...,
+        description="The show that aired immediately after this one, or null on the newest show.\n\nPoints at the live show while one is on the air: nothing filters on `end_time` (see the field's own note), matching the legacy behaviour. A client caching this response should exclude the newest show — the hazard is freezing a null `next_show_id` after a later show has started, not linking to a show still in progress.",
+    )
+    entries: list[FlowsheetV2Entry] = Field(
+        ...,
+        description="The V2 discriminated union, the same shape `GET /flowsheet` serves. The handler projects through `projectEntriesV2`; there is no V1 variant of this response.",
+    )
 
 
 class ShowPeek(BaseModel):
@@ -2990,10 +4460,28 @@ class AlbumSearchResult(BaseModel):
     code_letters: str
     code_number: int
     code_artist_number: int
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="The per-release volume letter, library.code_volume_letters (varchar(4)). Volumes of one set share a call number (e.g. volumes A-G of one compilation at one shelf location), so this tells them apart. Stored RAW: the wire does not trim or case-fold it. NOT the compilation-section letter (code_comp_letter, a separate field). Optional: both GET /library and GET /library/query send it.\n",
+    )
+    genre_id: int | None = Field(
+        None,
+        description="The release's shelf genre (`library.genre_id`). The id that gates `code_comp_letter`: a consumer rendering the section letter needs it to know whether the letter applies. Optional.\n",
+    )
     format_name: str
     genre_name: str
-    label: str
-    label_id: int | None = None
+    label: str = Field(
+        ...,
+        description='`library.label`. Nullable in the database; the key is always present because the projection always selects it. `GET /library` sends that null through, while `GET /library/query` currently coalesces it to `""` — treat both as "no label on file".\n',
+    )
+    label_id: int | None = Field(
+        None,
+        description="`library.label_id`. Nullable in the database (no NOT NULL, no FK-driven default) — the same shape as `label`, one line above. `library_artist_view` selects it straight off the base `library` row (no COALESCE), and neither `/library/query` mapper nor `GET /library`'s serializer coalesces it, so a release with no catalogued label reaches the wire with `label_id: null`.\n",
+    )
     artist_id: int | None = Field(
         None,
         description="The WXYC catalog artist id, sharing the `library.artist_id` keyspace. Optional here (never required): it lands ahead of the Backend-Service change that populates it (BS#2227), so a consumer compiled against this field must still tolerate its absence until that deploys.\n",
@@ -3004,14 +4492,24 @@ class AlbumSearchResult(BaseModel):
     )
     album_dist: float | None = None
     artist_dist: float | None = None
-    rotation_bin: RotationBin | None = None
+    rotation_bin: RotationBin | None = Field(
+        None,
+        description="Current-rotation bin, from the CURRENT_DATE-filtered LEFT JOIN against `rotation`. Null whenever the release is not actively rotating — never added, or added and since killed — which is most of the catalog. That filtering happens server-side, so `rotation_bin != null` is this endpoint's in-rotation test, unlike CatalogExportRow's, which ships rotation raw and defers expiry to the client. `card` below is NOT a substitute for that test: it rides a further join through the nullable `rotation.card_id`, so a release that is actively rotating but filed on no card carries a bin and a null card. A present value is always exactly one of H/M/L/S — `rotation.rotation_bin` is a NOT NULL Postgres enum, so the null here comes from the absent join row, never the column.\n",
+    )
     rotation_id: int | None = None
+    card: RotationCard | None = Field(
+        None,
+        description="The card this release is on, from the same CURRENT_DATE-filtered JOIN as rotation_bin. Non-null only while actively rotating, never on a killed row.\n",
+    )
     plays: int | None = None
     on_streaming: bool | None = Field(
         None,
         description="True if this release is available on at least one streaming service. False means only available in the WXYC physical library. Null if unknown.",
     )
-    album_artist: str | None = Field(None, description="Credited album artist for compilations.")
+    album_artist: str | None = Field(
+        None,
+        description="Credited album artist for compilations. `library.album_artist` is nullable (most releases are not compilations); the view and both `/library/query` mappers, plus `GET /library`'s serializer, all pass it through unchanged, so a non-compilation row reaches the wire with `album_artist: null`.\n",
+    )
     date_lost: AwareDatetime | None = Field(
         None,
         description="When the release was marked missing from the physical library. Null if in library.",
@@ -3041,6 +4539,11 @@ class AlbumSearchResult(BaseModel):
     matched_via_alias: list[ArtistMatchHint] | None = Field(
         None,
         description="Populated by Backend's catalog search when an artist-alias match (from `artist_search_alias`) drove this release into the results, per artist-search-alias plan PR 5. Sibling field to `matched_via` (which is track-title provenance). Empty or absent on normal artist/album hits. Backward-compatible — existing consumers ignore the field.\n",
+    )
+    urls: list[Url] | None = Field(
+        None,
+        description="The release's definitive external links (label page, Bandcamp, streaming, press), in storage order — position IS the contract, so a consumer renders them in array order. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. Release-scoped and rotation-independent: set replace-wholesale via `PUT /library/{id}/urls`. Bounded identically to that write shape (`AlbumUrlsUpdate.urls`) and `RotationCreateFields.urls` — at most 20 links, 2048 characters each — so the one `urls` vocabulary is the same on read and write. Optional here (never required) and absent until Backend-Service persists it (BS#2491); a consumer must tolerate its absence.\n",
+        max_length=20,
     )
 
 
@@ -3089,6 +4592,14 @@ class AlbumDetail(BaseModel):
         ...,
         description="Joined from `genre_artist_crossreference.artist_genre_code` — the artist's number *within* this release's genre, so the same artist has a different one per genre. Part of the call number, not an id.\n",
     )
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="`library.code_volume_letters`, varchar(4). Writable via `UpdateAlbumRequest.code_volume_letters` since BS#2564; see that field's description for the null-clearing rule this nullability exists to support.\n",
+    )
     format_name: str = Field(..., description="Joined from `format.format_name`.")
     genre_name: str = Field(
         ...,
@@ -3120,21 +4631,213 @@ class AlbumDetail(BaseModel):
         None,
         description="Stamped on every recheck attempt by the\n`library-discogs-unavailable-recheck` cron. Read-only from the\nclient side.\n",
     )
+    urls: list[Url] | None = Field(
+        None,
+        description="The release's definitive external links (label page, Bandcamp, streaming, press), in storage order — position IS the contract, so a consumer renders them in array order. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. Release-scoped and rotation-independent: set replace-wholesale via `PUT /library/{id}/urls`. Same `urls` vocabulary and bounds as the search read (`AlbumSearchResult.urls`) and the write shape (`AlbumUrlsUpdate.urls`) — at most 20 links, 2048 characters each. Optional here (never required) and absent until Backend-Service persists it (BS#2491); a consumer must tolerate its absence.\n",
+        max_length=20,
+    )
     reconciled_identity: ReconciledIdentity | None = None
 
 
-class LibraryMatch(BaseModel):
-    album: AlbumSearchResult
-    confidence: confloat(ge=0.0, le=1.0)
-    matchType: MatchType
-    reasoning: str | None = None
+class RotationThresholds(BaseModel):
+    window_days: RotationWindowDays
+    card_stale_days: conint(ge=1) = Field(
+        ...,
+        description="How many days a rotation card may go without a recorded change (see `last_changed_at` on `GET /library/rotation/cards`) before a client flags it as stale. One number across all bins.\n",
+    )
 
 
-class EnhancedRequest(SongRequest):
-    parsed: ParsedSongRequest | None = None
-    matches: list[LibraryMatch] | None = None
-    artwork_url: str | None = None
-    discogs_url: str | None = None
+class UpdateRotationThresholdsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    window_days: UpdateRotationWindowDays | None = None
+    card_stale_days: conint(ge=1, le=365) | None = None
+
+
+class IntakeSlip(BaseModel):
+    artist_name: constr(max_length=128)
+    album_title: constr(max_length=128)
+    record_label: constr(max_length=128)
+    buzzwords: str
+    artist_blurb: str
+    review: str
+    author: constr(max_length=128) = Field(
+        ...,
+        description="The printed review's `Review.author`, snapshotted when written (a real name or account name for a DJ's own review, the music director's typed text for an on-behalf or handwritten one), with the same station-only caveat; not for any public or anonymous surface, because it holds a legal name; never for client telemetry.",
+    )
+    submitted_at: AwareDatetime
+    recommended_tracks: str
+    fcc: str
+    revision_id: int = Field(
+        ...,
+        description="The id of the review revision this slip printed. Its `id` is one of the entries of `GET /reviews/{id}/revisions`.\n",
+    )
+    fcc_notes: list[IntakeSlipFccNote] = Field(
+        ...,
+        description="The record's confirmed FCC notes, printed beside the review's own `fcc` line. A note that is reported but not yet confirmed does not print. Empty when there are none. See `GET /fcc-notes`.\n",
+    )
+
+
+class Rotation(BaseModel):
+    id: int | None = Field(
+        None,
+        description="Linked `library.id`, or null on an uncatalogued row (album_id IS NULL has no library row to join).\n",
+    )
+    code_letters: str | None = Field(
+        None,
+        description="`artists.code_letters` via the library/artists join. Null on an uncatalogued row for the same reason as `id`.\n",
+    )
+    code_artist_number: int | None = Field(
+        None,
+        description="`genre_artist_crossreference.artist_genre_code`. Null on an uncatalogued row (no `library.artist_id` to join the crossreference on).\n",
+    )
+    code_comp_letter: constr(pattern=r"^[A-Z]$", max_length=1) | None = Field(
+        None,
+        description="The section letter of a Rock or Soundtracks compilation (`V/A`) shelf slot (release numbers restart per section, so *Music for Plants* is `Rock V/A M-121`); null on every other slot. It stands where the artist number would be in the call number: Rock renders `V/A <L>-<n>`, Soundtracks `<L>-<n>`. Not `code_volume_letters`, the per-release volume letter. Optional: a server that predates WXYC/Backend-Service#2835, which exposes it, omits it.\n",
+    )
+    code_volume_letters: constr(max_length=4) | None = Field(
+        None,
+        description="The per-release volume letter, `library.code_volume_letters` (varchar(4)). Volumes of one set share a call number, so this tells them apart. Stored RAW: the wire does not trim or case-fold it. NOT the compilation-section letter (`code_comp_letter`, a separate field). Null when the release has no volume letter (most catalogued rows), and always null on an unlinked rotation row (no library row). Optional.\n",
+    )
+    genre_id: int | None = Field(
+        None,
+        description="The release's shelf genre (`library.genre_id`), the id that gates `code_comp_letter`. Null on an unlinked rotation row (no library row). Optional.\n",
+    )
+    code_number: int | None = Field(
+        None,
+        description="`library.code_number`. Null on an uncatalogued row for the same reason as `id`.\n",
+    )
+    artist_name: str | None = Field(
+        None,
+        description="COALESCE(artists.artist_name, rotation.artist_name) — the same expression and the same fallback as `alphabetical_name` below, nullable for the identical reason: `rotation.artist_name` carries no NOT NULL.\n",
+    )
+    alphabetical_name: str | None = Field(
+        None,
+        description="COALESCE(artists.alphabetical_name, rotation.artist_name) — the library-linked artist's shelf-order name (\"Beatles, The\") on a catalogued row, falling back to this row's own denormalized artist_name snapshot on an uncatalogued one (album_id IS NULL has no artists row to join). Nullable because that fallback itself carries no NOT NULL. Derived, not stored: PATCH /library/rotation/:id rejects the field outright rather than silently no-op writing it — there is no rotation.alphabetical_name column, so edit artists.alphabetical_name via PATCH /library/artists/:id on a catalogued row, or artist_name on an uncatalogued one.\n",
+    )
+    album_title: str | None = Field(
+        None,
+        description="COALESCE(library.album_title, rotation.album_title). Nullable for two independent reasons: `library.album_title` is NOT NULL but the `library` join misses entirely on an uncatalogued row, and its fallback `rotation.album_title` carries no NOT NULL of its own.\n",
+    )
+    record_label: str | None = Field(
+        None,
+        description="COALESCE(library.label, rotation.record_label). `library.label` is already nullable in the database, and an uncatalogued row has no `library` row to join at all; the fallback `rotation.record_label` carries no NOT NULL either.\n",
+    )
+    label_id: int | None = Field(
+        None,
+        description="library.label_id, the FK to the labels table for a catalogued row's linked label. Nullable for two independent reasons: the column itself carries no NOT NULL (a catalogued release can have no resolved label), and an uncatalogued rotation row (album_id IS NULL) has no library row to join at all. Distinct from record_label, the free-text display snapshot.\n",
+    )
+    genre_name: str | None = Field(
+        None,
+        description="`genres.genre_name` via the library/genres join. Null on an uncatalogued row for the same reason as `id`, and also on a catalogued row whose release has no genre link.\n",
+    )
+    format_name: str | None = Field(
+        None,
+        description="`format.format_name` via the library/format join. Null on an uncatalogued row for the same reason as `id`, and also on a catalogued row whose release has no format link.\n",
+    )
+    rotation_id: int | None = None
+    add_date: str | None = Field(
+        None,
+        description="`library.add_date` — the catalog release's own add date. Null on an uncatalogued row (album_id IS NULL has no library row to join). No `format` is declared: `library.add_date` is a `timestamptz`, and `getRotationFromDB` reads it via a raw `db.execute` call — drizzle's postgres-js driver installs a transparent (pass-through) parser for timestamp/date OIDs on that path, so the wire carries Postgres' own text rendering (`YYYY-MM-DD HH:MI:SS±TZ`, e.g. `2026-08-20 00:00:00+00`) rather than a parsed-and-reformatted value. That satisfies neither RFC 3339 date-time (`T` separator, colon-delimited offset) nor an RFC 3339 full-date (10 bytes), so no `format` is declared here — see WXYC/Backend-Service#2349 for the identical defect already tracked on `PlaylistSearchResult.play_date`; normalizing the server's own serialization is that ticket's job, not this contract's.\n",
+    )
+    rotation_add_date: date_aliased | None = Field(
+        None,
+        description="rotation.add_date — when this rotation record itself was added, distinct from add_date (the library release's own catalog add date, absent on an uncatalogued row). Always present: rotation is this query's driving table, so every returned row carries its own rotation.add_date regardless of whether it ever linked to a library row.\n",
+    )
+    rotation_bin: RotationBin | None = None
+    rotation_kill_date: date_aliased | None = Field(
+        None, description="rotation.kill_date — null while the record is still active."
+    )
+    plays: int | None = Field(
+        None,
+        description="`library.plays`. Null on an uncatalogued row for the same reason as `id`.\n",
+    )
+    legacy_release_id: int | None = Field(
+        None,
+        description="The library row's surrogate key (BS#1963). Nullable here (unlike AlbumSearchResult/BinLibraryDetails/AlbumInfoResponse): a library-unlinked rotation row has no library row at all, hence no legacy id.\n",
+    )
+    reconciled_identity: ReconciledIdentity | None = Field(
+        None,
+        description="The library-linked artist's external identifiers (toReconciledIdentity), or null both when the row is uncatalogued (no artists row to join) and when a catalogued artist has resolved none of the six IDs yet.\n",
+    )
+    card: RotationCard | None = None
+    urls: list[str] | None = Field(
+        None,
+        description="Storage order. Plain strings, not `format: uri` — MDs paste bare domains, so a value carries no scheme guarantee and a renderer must not bind one into an href without checking it. Deliberately an inline twin: `Rotation.urls` and `RotationEntry.urls` are pinned identical by a spec test rather than `$ref`ing a named array schema, because naming a top-level array makes the Python generator wrap the field in a RootModel (`.root` to reach the list) while every other target keeps a plain string list.\n",
+    )
+
+
+class ArtistRefileConflictError(BaseModel):
+    message: str
+    reason: ArtistRefileConflictReason
+    artist: Artist | None = Field(
+        None,
+        description="Present on `artist_code_conflict`: the first holder of the target slot, ordered by `artist_name` then id, excluding the artist being re-filed. Its `code_artist_number` is the contested target number, and its `code_letters` and `genre_id` are those of the destination bucket. Absent on `lettered_compilation_section`, `various_artists_section`, `letters_shared_across_genres` and `already_filed_in_genre`, which have no occupant to name.\n",
+    )
+    memberships: list[ArtistGenreMembership] | None = Field(
+        None,
+        description="Present only on `letters_shared_across_genres`: lists every genre membership, including the requested one, so the client can show which shelves a letters change would touch.\n",
+    )
+
+
+class RestoredEntity(BaseModel):
+    entity_kind: str = Field(
+        ...,
+        description="The archive row's queryable label, matching `CatalogDeleteEntity.entity_kind`.\n",
+    )
+    table: str = Field(
+        ...,
+        description="The table the row was re-inserted into. This, not `entity_kind`, is what names the rows.\n",
+    )
+    entity_id: int = Field(
+        ..., description="The restored row's primary key — the captured id, unchanged.\n"
+    )
+    relocated_code_number: int = Field(
+        ...,
+        description="The call number the card actually came back under, and non-null ONLY when the `next_free_code` resolution ran because the original slot was taken. `null` means the original slot was free and the captured `code_number` was re-used as-is. The archive record keeps the ORIGINAL code either way: this is what the live row carries now, not a correction to history.\n",
+    )
+    children: dict[str, int] = Field(
+        ...,
+        description="Child table name to the number of rows actually re-inserted under this entity. It follows the shape of `CatalogDeleteEntity.children` from the listing, but counts replayed rows rather than captured ones: a captured child row left out of the replay is not counted here and is listed in `deviations` as `dropped`. A table with no captured rows is present with `0` rather than omitted, the same absent-versus-empty distinction the capture itself keeps.\n",
+    )
+    deviations: list[RestoreDeviation] = Field(
+        ...,
+        description="The departures from the snapshot in this entity's replay, one `RestoreDeviation` per nulled reference or dropped child row. Always present on the 200 (empty when nothing departed).\n",
+    )
+
+
+class RestoreBatchResponse(BaseModel):
+    batch_id: UUID
+    entities: list[RestoredEntity]
+
+
+class SpecialtyPoster(BaseModel):
+    id: int
+    specialty_id: int
+    broadcast_date: date_aliased = Field(
+        ..., description="America/New_York broadcast day, starting 06:00."
+    )
+    title: constr(max_length=128) | None = None
+    status: Status1
+    status_changed_by: str | None = Field(
+        None, description="Public DJ handle of whoever replaced, removed, restored or purged it."
+    )
+    status_changed_at: AwareDatetime | None = None
+    replaced_by_poster_id: int | None = None
+    restorable_until: AwareDatetime | None = Field(
+        None, description="When the held renditions expire. Null unless replaced or removed."
+    )
+    show_id: int | None = Field(None, description="The airing it is bound to, if any.")
+    poster: ShowPoster | None = Field(None, description="Null until published.")
+    uploaded_by: str | None = Field(None, description="The uploader's public DJ handle.")
+    failure_code: PosterFailureCode | None = None
+    created_at: AwareDatetime
+
+
+class PosterUploadResponse(BaseModel):
+    poster: SpecialtyPoster
+    upload: PresignedUpload
 
 
 class DiscogsMatchResult(BaseModel):
@@ -3159,23 +4862,23 @@ class DiscogsMatchResult(BaseModel):
     wikipedia_url: str | None = Field(None, description="Wikipedia URL for the artist")
     spotify_url: AnyUrl | None = Field(
         None,
-        description="Spotify album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     apple_music_url: AnyUrl | None = Field(
         None,
-        description="Apple Music album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     youtube_music_url: AnyUrl | None = Field(
         None,
-        description="YouTube Music search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     bandcamp_url: AnyUrl | None = Field(
         None,
-        description="Bandcamp album URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Album deep link -- a URL for this specific release. The three deep-link fields are `spotify_url`, `apple_music_url`, and `bandcamp_url`; they are the services that carry a `StreamingResolution` verdict. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations -- `bandcamp_url` is not host-checked at every seam it passes through.\n",
     )
     soundcloud_url: AnyUrl | None = Field(
         None,
-        description="SoundCloud search URL. Contract-level `format: uri` only, not enforced by generated types. Contract-first: shape enforcement lands with the LML client boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2350) and the LML writer seam (`streaming_links` read seam, WXYC/library-metadata-lookup#1295); both are open, and neither has merged. The guard already shipped (BS#1714) covers only `spotify_url`/`apple_music_url`, not the other three fields here, and only at the LML-response boundary -- not every path these fields reach the wire through.\n",
+        description="Search URL -- a query URL for the release, not a deep link to it. The two search fields are `youtube_music_url` and `soundcloud_url`; neither carries a `StreamingResolution` verdict, because a search URL can always be constructed and so has no probe/absence distinction. Contract-level `format: uri` only. TypeScript (`string | null`) and Swift (`String?`) treat `format: uri` as documentation-only; this repo's Python codegen pin (`pin_streaming_url_fields_to_str`, WXYC/wxyc-shared#428) holds Python to `str`, and the two downstream Python regen scripts (library-metadata-lookup, request-o-matic) must adopt the same pin -- tracked in WXYC/library-metadata-lookup#1299 and WXYC/request-o-matic#282 -- a Python consumer's `str` holds only where that pin is in place. Kotlin does not treat it as documentation-only: its generator maps `format: uri` to `java.net.URI`, so Kotlin consumers regenerating models must pin these five fields to `String` (as Python pins to `str`) or accept construction-time parse failures on rows stored before 2026-08-31. Shape enforcement lives at two runtime seams, both shipped: the Backend-Service LML-response boundary guard (`sanitizeLookupStreamingUrls`, WXYC/Backend-Service#2351) -- a host allowlist for spotify/apple_music/youtube_music/soundcloud, and well-formedness only for bandcamp (deliberate: custom-domain deep links, see the guard's own doc comment) -- and the LML read seam (`streaming_links` copy-out, `lookup/enrichment/streaming_link_validation.py`, WXYC/library-metadata-lookup#1296; read-path suppression -- the persisted row is never rewritten) -- a host check on all five, plus a well-formedness floor on youtube_music/bandcamp/soundcloud only. Those are the two seams that enforce shape, not every path these fields reach the wire through: neither is on the Backend-Service flowsheet read path, where `GET /flowsheet` host-guards only `spotify_url`/`apple_music_url` (WXYC/Backend-Service#1714) and emits the other three as stored, so a row persisted before 2026-08-31 can still carry an unchecked value. The two seams deliberately disagree on bandcamp because they see different URL populations.\n",
     )
     streaming_status: StreamingResolution | None = Field(
         None,
@@ -3226,7 +4929,7 @@ class LookupResultItem(BaseModel):
     )
     matched_via_alias: list[ArtistMatchHint] | None = Field(
         None,
-        description="Sibling to `matched_via`. Reserved for the day LML composes artist-alias hits itself; not produced in v1 of the artist-search-alias plan (BS-local cache only). Optional and backward-compatible.\n",
+        description="Sibling to `matched_via`. LML fills it since LML#1444 when a row is in the results because its alternate artist name credits the requested artist: one hint, with the stored credit line as `matched_variant` and `wxyc_library_alt` as `source`. LML does not emit `wxyc_library_credit`. Optional and backward-compatible.\n",
     )
 
 
@@ -3302,10 +5005,19 @@ class LiveFsEvent(RootModel[LiveFsUpdateEvent | LiveFsRefetchEvent | LiveFsInser
     )
 
 
-class ShowAlreadyOpenError(BaseModel):
-    message: str
-    code: ShowAlreadyOpenErrorCode | None = None
-    details: ShowAlreadyOpenErrorDetails | None = None
+class ShowAlreadyOpenErrorDetails(BaseModel):
+    show: ShowAlreadyOpenShow | None = None
+
+
+class FlowsheetRangeResponse(BaseModel):
+    shows: list[FlowsheetRangeShow] = Field(
+        ...,
+        description="Every show overlapping the window, ordered by `start_time` ascending. Empty when the window contains no shows.",
+    )
+    entries: list[FlowsheetV2Entry] = Field(
+        ...,
+        description="Every flowsheet row in the window, ordered by `add_time` ascending and tie-broken on `id` — NOT by `play_order`, which is per-show and interleaves a multi-show window (see the endpoint description). Includes the `show_start` / `show_end` marker rows. Those markers are a convenience, not a guarantee: a show whose `show_end` delivery was dropped has no closing marker (the same failure that leaves `FlowsheetRangeShow.end_time` null), so a consumer that segments purely on markers will run one show's entries into the next. Segment on `show_id` and treat the markers as labels.\n\nThe rows are `FlowsheetV2Entry` — the same discriminated union `GET /flowsheet` serves, discriminated on `entry_type` — so a marker row carries only the marker's own fields and not the track field set. Sharing the union with `GET /flowsheet` is a contract requirement rather than a convenience: iOS V2 decodes both endpoints with a single decoder (tubafrenzy-decommissioning plan §2.5, consumer #3). `show_id` is nullable here as it is everywhere in the union; see `FlowsheetV2Base.show_id` for the unattributed case a window of historical entries can contain.",
+    )
 
 
 class LibraryQueryResponse(BaseModel):
@@ -3313,3 +5025,25 @@ class LibraryQueryResponse(BaseModel):
     total: int
     page: int
     totalPages: int
+
+
+class FlowsheetV2PaginatedResponse(BaseModel):
+    entries: list[FlowsheetV2Entry]
+    page: int
+    limit: int
+    total: int = Field(..., description="Total number of entries")
+    totalPages: int = Field(..., description="Total number of pages")
+    on_air: OnAirInfo | None = Field(
+        None,
+        description='The DJ currently on air, when known. An object with `dj_name` means a named DJ is live; JSON `null` means the station is confirmed on automation ("Auto DJ"); the field being absent entirely means the server does not report on-air status (older backends / non-default query branches) and clients should treat it as unknown rather than asserting automation. Not in `required` so absence stays distinct from an explicit `null`.\n\nCodegen note: this three-way distinction (object / null / absent) survives openapi-typescript (`on_air?: OnAirInfo | null`), but a *synthesized* decoder in Swift (Codable `decodeIfPresent`), Kotlin (kotlinx default value), or Python (pydantic `| None = None`) collapses JSON `null` and an absent key into the same value. A consumer that needs the third state must decode by key presence (e.g. Swift\'s `container.contains` + `decodeNil`), as the iOS app does — do not rely on a generated model to tell `null` from absent.',
+    )
+    shows: list[FlowsheetRangeShow] | None = Field(
+        None,
+        description='The shows behind `entries`, so a client can group rows under a per-show header: every show referenced by an entry\'s `show_id`, plus the open show if there is one, each once. It reuses the `GET /flowsheet/range` show shape (`FlowsheetRangeShow`, including the embedded `specialty` program) on purpose, so one decoder serves both endpoints. Order is unspecified; key it by `id`. Carries public DJ handles only, never a legal name. Not in `required`: an older server that omits it stays valid, and a client treats absence as "no headers".',
+    )
+
+
+class ShowAlreadyOpenError(BaseModel):
+    message: str
+    code: ShowAlreadyOpenErrorCode | None = None
+    details: ShowAlreadyOpenErrorDetails | None = None
