@@ -34,6 +34,9 @@ init_sentry(
     service_name="request-o-matic",
     environment=settings.deployment_environment,
     release=settings.app_version,
+    # Tracing is off until the Sentry removal (#302). init_sentry defaults this
+    # to 1.0; error capture stays on for the parity window (Backend-Service#3415).
+    traces_sample_rate=0.0,
 )
 
 install_groq_retry_breadcrumbs()
