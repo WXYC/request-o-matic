@@ -43,6 +43,33 @@ def test_main_calls_init_sentry_with_request_o_matic_service_name(monkeypatch):
     assert kwargs["release"] == Settings().app_version
 
 
+def test_main_pins_sentry_traces_sample_rate_to_zero(monkeypatch):
+    """Tracing is off until the Sentry removal (#302); error capture stays on.
+
+    `init_sentry` defaults `traces_sample_rate` to 1.0, so `main` must pass 0.0
+    explicitly. Error events (`sample_rate`) keep the default so the
+    Sentry-vs-PostHog parity window (WXYC/Backend-Service#3415) still has data.
+    """
+    monkeypatch.setenv("GROQ_API_KEY", "test_key")
+    monkeypatch.setenv("SENTRY_DSN", "https://test@sentry.io/123")
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "1.0")
+
+    from config import settings as settings_module
+
+    sys.modules.pop("main", None)
+    settings_module.get_settings.cache_clear()
+
+    with patch("wxyc_fastapi.observability.sentry.sentry_sdk.init") as mock_sdk_init:
+        importlib.import_module("main")
+
+    mock_sdk_init.assert_called_once()
+    kwargs = mock_sdk_init.call_args.kwargs
+    assert kwargs["traces_sample_rate"] == 0.0
+    assert "traces_sampler" not in kwargs
+    assert "profiles_sample_rate" not in kwargs
+    assert kwargs["sample_rate"] == 1.0
+
+
 @pytest.mark.parametrize(
     ("railway_env", "expected_ceiling"),
     [("staging", 50), ("stage", 50), ("Staging", 50), ("production", 100), ("local", 100)],
