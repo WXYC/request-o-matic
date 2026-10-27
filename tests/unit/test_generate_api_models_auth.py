@@ -88,6 +88,33 @@ def _install_curl_stub(tmp_path: Path) -> None:
     stub.chmod(0o755)
 
 
+# The script's #428 pin (request-o-matic#282) reads the generator's output file,
+# so the codegen stub must write one: the five pinned fields, as the generator
+# emits them. Token handling, not the pin, is under test in this module.
+_CODEGEN_OUTPUT_SNIPPET = (
+    'out=""\n'
+    "while [[ $# -gt 0 ]]; do\n"
+    '  if [[ "$1" == "--output" ]]; then out="$2"; shift; fi\n'
+    "  shift\n"
+    "done\n"
+    'mkdir -p "$(dirname "$out")"\n'
+    "{\n"
+    "  echo 'from pydantic import AnyUrl, BaseModel'\n"
+    "  echo 'class StreamingLinks(BaseModel):'\n"
+    + "".join(
+        f"  echo '    {f}: AnyUrl | None = None'\n"
+        for f in (
+            "spotify_url",
+            "apple_music_url",
+            "youtube_music_url",
+            "bandcamp_url",
+            "soundcloud_url",
+        )
+    )
+    + '} > "$out"\n'
+)
+
+
 def _install_env_recording_stub(tmp_path: Path, name: str) -> None:
     """Install a stub ``name`` on ``PATH`` that records its own environment.
 
@@ -101,7 +128,8 @@ def _install_env_recording_stub(tmp_path: Path, name: str) -> None:
     stub.write_text(
         "#!/usr/bin/env bash\n"
         f"env | grep -E '^(GITHUB_TOKEN|GH_TOKEN)=' > \"{tmp_path}/{name}.env\" || true\n"
-        "exit 0\n"
+        + (_CODEGEN_OUTPUT_SNIPPET if name == "datamodel-codegen" else "")
+        + "exit 0\n"
     )
     stub.chmod(0o755)
 
