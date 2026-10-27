@@ -6,7 +6,6 @@ schema is data-only, so this behavior lives in ``models.py`` now.
 """
 
 import pytest
-from pydantic import ValidationError
 
 from models import preview_url
 from tests.factories import make_release_metadata
@@ -81,30 +80,21 @@ def test_returns_none_when_no_streaming_urls_set():
     assert preview_url(metadata) is None
 
 
-def test_empty_string_url_is_rejected_by_the_contract():
-    """An empty string can no longer reach the helper at all.
-
-    ``preview_url`` used to fall through empty strings to the next source. Now
-    that the contract types the streaming fields as ``AnyUrl``, an empty string
-    fails validation upstream, so the fall-through can only be reached by
-    ``None``. The helper keeps its truthiness guard for exactly that case.
-    """
-    with pytest.raises(ValidationError):
-        make_release_metadata(bandcamp_url="")
+def test_empty_string_url_falls_through_to_the_next_source():
+    """The streaming fields are plain ``str`` (the #428 pin), so an empty string
+    is accepted at decode time and the helper's truthiness guard skips it."""
+    metadata = make_release_metadata(bandcamp_url="", spotify_url="https://s.example/1")
+    assert preview_url(metadata) == "https://s.example/1"
 
 
-def test_bare_domain_bandcamp_url_gains_a_trailing_slash():
-    """Pin the ``AnyUrl`` normalization on the most commonly posted link shape.
+def test_bare_domain_bandcamp_url_is_returned_unchanged():
+    """Pin the absence of ``AnyUrl`` normalization on the most commonly posted link shape.
 
-    The shared contract types the five streaming fields as ``AnyUrl``, and
-    pydantic normalizes a bare-domain URL by appending a trailing slash.
-    Bandcamp artist URLs are exactly that shape, and Bandcamp is the highest
-    priority in ``preview_url``, so this is what the request channel sees. The
-    link resolves identically -- but the behavior is now a property of this
-    code, and should fail loudly rather than change silently again.
+    With the five streaming fields held at ``str`` (#428 pin), a bare-domain URL is
+    not given a trailing slash; the value is returned exactly as posted.
     """
     metadata = make_release_metadata(bandcamp_url="https://juanamolina.bandcamp.com")
-    assert preview_url(metadata) == "https://juanamolina.bandcamp.com/"
+    assert preview_url(metadata) == "https://juanamolina.bandcamp.com"
 
 
 def test_url_carrying_a_path_is_returned_byte_for_byte():
